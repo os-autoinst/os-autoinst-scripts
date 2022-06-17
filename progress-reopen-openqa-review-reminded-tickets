@@ -1,0 +1,26 @@
+#!/bin/sh -e
+
+# This script reopens all closed tickets that have received an openqa-review
+# reminder comment and have not been handled yet.
+#
+
+dry_run="${dry_run:-"0"}"
+query_id="${query_id:-737}"
+ticket_limit="${ticket_limit:-200}"
+host="${host:-"https://progress.opensuse.org"}"
+# status ID of "Feedback", see https://progress.opensuse.org/issue_statuses (as admin)
+status_id="${status_id:-4}"
+issues=$(mktemp)
+jquery=".issues | .[]"
+
+redmine_api_key="${redmine_api_key:?"Need redmine API key"}"
+curl -s -H "X-Redmine-API-Key: $redmine_api_key" "$host/issues.json?query_id=$query_id&limit=$ticket_limit" | jq -r "$jquery" > "$issues"
+
+[ "$dry_run" = "1" ] && prefix="echo"
+
+for id in $(jq .id "$issues"); do
+    echo "Re-opening ticket $id"
+    $prefix curl -v -H "X-Redmine-API-Key: $redmine_api_key" -H 'Content-Type: application/json' -X PUT \
+        -d "{\"issue\": {\"status_id\": $status_id, \"notes\": \"Re-opening tickets with unhandled openqa-review reminder comment, see https://progress.opensuse.org/projects/openqatests/wiki/Wiki#openqa-review-reminder-handling\"}}" \
+        "$host/issues/$id.json"
+done
