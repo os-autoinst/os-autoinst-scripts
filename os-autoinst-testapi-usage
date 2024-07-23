@@ -9,10 +9,29 @@ rgg() {
     rg --engine pcre2 --stats "(?<!_)${1}" "${2}" || :
 }
 
-[ "$#" -ne 0 ] || {
-    echo "Usage: $0 path_to_testapi path_to_code_repository [path_to_another_repository] [...]"
-    exit 1
+usage() {
+    cat << EOF
+Usage: $0 path_to_testapi path_to_code_repository [path_to_another_repository] [...]
+
+Options:
+ -h, --help         display this help
+EOF
+    exit "$1"
 }
+
+opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
+eval set -- "$opts"
+while true; do
+    case "$1" in
+        -h | --help) usage 0 ;;
+        --)
+            shift
+            break
+            ;;
+        *) break ;;
+    esac
+done
+
 which rg &> /dev/null || {
     echo "rg (ripgrep) not found, please install it first" >&2
     exit 2
