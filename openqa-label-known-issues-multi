@@ -1,8 +1,5 @@
 #!/bin/bash -e
 
-# Usage
-# echo https://openqahost/tests/1234 | openqa-label-known-issues-multi
-
 set -o pipefail -o errtrace
 
 source "$(dirname "$0")"/openqa-label-known-issues
@@ -26,5 +23,31 @@ main() {
     done
     print_summary
 }
+
+usage() {
+    cat << EOF
+Usage: echo job_url | $0 [OPTIONS]
+
+Calls 'openqa-label-known-issues' on a list of multiple specified openQA job
+URLs.
+
+Options:
+ -h, --help         display this help
+EOF
+    exit "$1"
+}
+
+opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
+eval set -- "$opts"
+while true; do
+    case "$1" in
+        -h | --help) usage 0 ;;
+        --)
+            shift
+            break
+            ;;
+        *) break ;;
+    esac
+done
 
 caller 0 > /dev/null || main "$@"
