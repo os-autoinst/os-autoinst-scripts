@@ -1,4 +1,4 @@
-#!/bin/sh -e
+#!/bin/bash -e
 host="${host:-"openqa.opensuse.org openqa.suse.de"}"
 scheme="${scheme:-"https"}"
 interval="${interval:-"30 day"}"
@@ -24,21 +24,25 @@ EOF
     exit "$1"
 }
 
-opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
-eval set -- "$opts"
-while true; do
-    case "$1" in
-        -h | --help) usage 0 ;;
-        --)
-            shift
-            break
-            ;;
-        *) break ;;
-    esac
-done
+main() {
+    opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
+    eval set -- "$opts"
+    while true; do
+        case "$1" in
+            -h | --help) usage 0 ;;
+            --)
+                shift
+                break
+                ;;
+            *) break ;;
+        esac
+    done
 
-[ "$dry_run" = "1" ] && _dry_run="echo"
-for h in $host; do
-    $_dry_run ssh "$h" "cd /tmp; sudo -u geekotest psql --no-align --tuples-only --command=\"$query\" openqa"
-done
-:
+    [ "$dry_run" = "1" ] && _dry_run="echo"
+    for h in $host; do
+        $_dry_run ssh "$h" "cd /tmp; sudo -u geekotest psql --no-align --tuples-only --command=\"$query\" openqa"
+    done
+    :
+}
+
+caller 0 > /dev/null || main "$@"
