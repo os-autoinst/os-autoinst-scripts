@@ -2,12 +2,36 @@
 
 set -o pipefail
 
-# "hook script" intended to be called by openQA instances taking a job ID as
-# parameter and forwarding a complete job URL to "openqa-label-known-issues-multi"
-# on stdin
-
 id="${1:?"Need 'job_id'"}"
 host="${host:-"openqa.opensuse.org"}"
 scheme="${scheme:-"https"}"
+
+usage() {
+    cat << EOF
+Usage: $0 [OPTIONS]
+
+"hook script" intended to be called by openQA instances taking a job ID as
+parameter and forwarding a complete job URL to
+"openqa-label-known-issues-multi" on stdin.
+
+Options:
+ -h, --help         display this help
+EOF
+    exit "$1"
+}
+
+opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
+eval set -- "$opts"
+while true; do
+    case "$1" in
+        -h | --help) usage 0 ;;
+        --)
+            shift
+            break
+            ;;
+        *) break ;;
+    esac
+done
+
 host_url="$scheme://$host"
 echo "$host_url/tests/$id" | "$(dirname "$0")"/openqa-label-known-issues-multi
