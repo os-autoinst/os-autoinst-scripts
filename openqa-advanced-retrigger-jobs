@@ -1,119 +1,98 @@
-#!/bin/bash -e
-host="${host:-"openqa.opensuse.org"}"
-failed_since="${failed_since:-"$(date -I)"}"
-instance_string="${INSTANCE+" and instance='$INSTANCE'"}"
-worker_string="${WORKER+"assigned_worker_id in (select id from workers where (host='$WORKER'$instance_string)) and "}"
-result="${result:-"result='incomplete'"}"
-additional_filters="${additional_filters+" and $additional_filters"}"
-comment="${comment:-""}"
-max_jobs_per_request=25
-dry_run="${dry_run:-"0"}"
+#!/usr/bin/env python3
 
-usage() {
-    cat << EOF
-Usage: $0 [OPTIONS]
-
+"""
 Retrigger openQA jobs based on database queries.
 
-By default retriggers openQA jobs with result '$result' since '$failed_since'
-on '$host'.
+Needs SSH access to the specified target openQA host.
 
-Can be restricted to jobs that ran on worker by setting the variable 'WORKER'
-and optionally 'INSTANCE'.
+Simple example call retriggering all recent incompletes on the default host:
+    %(prog)s
 
-Needs SSH access to the target openQA host '$host'.
+Advanced example retriggering failed instead of incompletes, verbose output, with custom starting date,
+custom host and excluding jobs with \":investigate:\" in the name, executed as dry-run:
+    %(prog)s -vvvv --host openqa.example.org --failed-since '2000-01-01T10:00' --result failed \
+--additional-filters \"test not like '%%:investigate:%%'\" --dry-run
+"""
 
-Options:
- -h, --help         display this help
-EOF
-    exit "$1"
-}
+import argparse
+import logging
+import subprocess
+import sys
+from datetime import datetime
 
-opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
-eval set -- "$opts"
-while true; do
-    case "$1" in
-        -h | --help) usage 0 ;;
-        --)
-            shift
-            break
-            ;;
-        *) break ;;
-    esac
-done
+logging.basicConfig()
+log = logging.getLogger(sys.argv[0] if __name__ == "__main__" else __name__)
 
-[ "$dry_run" = "1" ] && client_prefix="echo"
-sql_command="select id from jobs where (${worker_string}${result} and clone_id is null and t_finished >= '$failed_since'$additional_filters);"
-# shellcheck disable=SC2029
-job_ids=${JOB_IDS:-$(ssh "$host" "sudo -u geekotest psql --no-align --tuples-only --command=\"$sql_command\" openqa")}
 
-usage() {
-    cat << EOF
-Usage: $0 [OPTIONS]
+class CustomFormatter(argparse.ArgumentDefaultsHelpFormatter, argparse.RawDescriptionHelpFormatter):
+    """Preserve multi-line __doc__ and provide default arguments in help strings."""
 
-Retrigger openQA jobs based on database queries.
+    pass
 
-By default retriggers openQA jobs with '$result' since '$failed_since' on
-'$host'.
 
-Needs SSH access to the target openQA host '$host' to query the database
-unless 'JOB_IDS' is provided.
+def parse_args():
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=CustomFormatter)
+    parser.add_argument(
+        "-v",
+        "--verbose",
+        help="Increase verbosity level, specify multiple times to increase verbosity",
+        action="count",
+        default=1,
+    )
+    parser.add_argument("-H", "--host", default="openqa.opensuse.org", help="Target openQA host")
+    parser.add_argument(
+        "-s",
+        "--failed-since",
+        default=datetime.today().isoformat(),
+        help="Filter jobs failed since this date",
+    )
+    parser.add_argument("-w", "--worker", default=None, help="Filter jobs assigned to this worker")
+    parser.add_argument("-i", "--instance", default=None, help="Instance of the worker")
+    parser.add_argument("-r", "--result", default="incomplete", help="Filter jobs with this result")
+    parser.add_argument(
+        "-a",
+        "--additional-filters",
+        default=None,
+        help="Additional filters for the SQL query",
+    )
+    parser.add_argument("-c", "--comment", default=None, help="Comment to add to the retriggered jobs")
+    parser.add_argument(
+        "-d",
+        "--dry-run",
+        action="store_true",
+        help="If set, only print the actions without executing",
+    )
+    args = parser.parse_args()
+    logging_level = (5 - min(args.verbose, 4)) * 10
+    log.setLevel(logging_level)
+    return args
 
-Options:
- -h, --help           display this help
+def post(dry_run: bool, host: str, route: str, *args):
+    cmd=('openqa-cli', 'api', '--host', host, '-X', 'POST', route, *args)
+    if dry_run:
+        return print(f"dry run: {cmd}")
+    subprocess.run(cmd, check=True)
 
-Environment variables:
- host                 target openQA host (default: $host)
- failed_since         retrigger jobs finished since this date (default: $failed_since)
- result               retrigger jobs with this result (default: $result)
- additional_filters   additional SQL filters for the job query
- comment              comment to add to retriggered jobs
- dry_run              set to 1 to only print what would be done
- WORKER               restrict to jobs that ran on this worker host
- INSTANCE             restrict to jobs that ran on this worker instance
- sql_command          custom SQL command to fetch job IDs
- JOB_IDS              comma or space separated list of job IDs to retrigger
- cli_protocol         protocol for openqa-cli (e.g. https)
- cli_port             port for openqa-cli
-EOF
-    exit "$1"
-}
+def main(args):
+    log.debug(args)
+    instance_string = f" and instance='{args.instance}'" if args.instance else ""
+    worker_string = f"assigned_worker_id in (select id from workers where (host='{args.worker}'{instance_string})) and " if args.worker else ""
+    additional_filters = f" and {args.additional_filters}" if args.additional_filters else ""
 
-restart-jobs() {
-    [[ ${#query_params[@]} -lt 1 ]] && return
-    [[ $comment ]] && query_params+=("comment=$comment")
-    $client_prefix openqa-cli api --host "$host" -X POST jobs/restart "${query_params[@]}"
-    query_params=()
-}
+    query = (
+        f"select id from jobs where ({worker_string}result='{args.result}' "
+        f"and clone_id is null and t_finished >= '{args.failed_since}'{additional_filters});"
+    )
 
-main() {
-    opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
-    eval set -- "$opts"
-    while true; do
-        case "$1" in
-            -h | --help) usage 0 ;;
-            --)
-                shift
-                break
-                ;;
-            *) break ;;
-        esac
-    done
+    log.debug(f"Using SQL query: '{query}' on {args.host}")
+    ssh_command = ('ssh', args.host, f"sudo -u geekotest psql --no-align --tuples-only --command=\"{query}\" openqa")
+    job_ids = subprocess.check_output(ssh_command).decode().splitlines()
 
-    [ "$dry_run" = "1" ] && client_prefix="echo"
-    sql_command=${sql_command:-"select id from jobs where (${worker_string}${result} and clone_id is null and t_finished >= '$failed_since'$additional_filters);"}
-    # shellcheck disable=SC2029
-    job_ids=${JOB_IDS:-$(ssh "$host" "sudo -u geekotest psql --no-align --tuples-only --command=\"$sql_command\" openqa")}
+    for job_id in job_ids:
+        post(args.dry_run, args.host, f"jobs/{job_id}/restart")
+        if args.comment:
+            post(args.dry_run, args.host, f"jobs/{job_id}/comments", f'text={args.comment}')
 
-    query_params=()
-    [[ $cli_protocol ]] && host=$cli_protocol://$host
-    [[ $cli_port ]] && host+=:$cli_port
 
-    for job_id in $job_ids; do
-        query_params+=("jobs=$job_id")
-        [[ ${#query_params[@]} -ge "$max_jobs_per_request" ]] && restart-jobs
-    done
-    restart-jobs
-}
-
-caller 0 > /dev/null || main "$@"
+if __name__ == "__main__":
+    main(parse_args())
