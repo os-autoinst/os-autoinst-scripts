@@ -41,6 +41,18 @@ label() {
 }
 
 hook() {
+    opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
+    eval set -- "$opts"
+    while true; do
+        case "$1" in
+            -h | --help) usage 0 ;;
+            --)
+                shift
+                break
+                ;;
+            *) break ;;
+        esac
+    done
     local id="${1:?"Need 'job_id'"}"
     local url=$host_url/tests/$id
     local rc=0
@@ -80,18 +92,5 @@ Options:
 EOF
     exit "$1"
 }
-
-opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
-eval set -- "$opts"
-while true; do
-    case "$1" in
-        -h | --help) usage 0 ;;
-        --)
-            shift
-            break
-            ;;
-        *) break ;;
-    esac
-done
 
 caller 0 > /dev/null || hook "$@"
