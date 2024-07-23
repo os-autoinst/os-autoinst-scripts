@@ -29,27 +29,6 @@ EOF
     exit "$1"
 }
 
-opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
-eval set -- "$opts"
-while true; do
-    case "$1" in
-        -h | --help) usage 0 ;;
-        --)
-            shift
-            break
-            ;;
-        *) break ;;
-    esac
-done
-
-[ "$dry_run" = "1" ] && client_prefix="echo"
-sql_command="select id from jobs where (${worker_string}${result} and clone_id is null and t_finished >= '$failed_since'$additional_filters);"
-# shellcheck disable=SC2029
-job_ids=${JOB_IDS:-$(ssh "$host" "sudo -u geekotest psql --no-align --tuples-only --command=\"$sql_command\" openqa")}
-
-query_params=()
-[[ $cli_protocol ]] && host=$cli_protocol://$host
-[[ $cli_port ]] && host+=:$cli_port
 restart-jobs() {
     [[ ${#query_params[@]} -lt 1 ]] && return
     [[ $comment ]] && query_params+=("comment=$comment")
@@ -57,8 +36,34 @@ restart-jobs() {
     query_params=()
 }
 
-for job_id in $job_ids; do
-    query_params+=("jobs=$job_id")
-    [[ ${#query_params[@]} -ge "$max_jobs_per_request" ]] && restart-jobs
-done
-restart-jobs
+main() {
+    opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
+    eval set -- "$opts"
+    while true; do
+        case "$1" in
+            -h | --help) usage 0 ;;
+            --)
+                shift
+                break
+                ;;
+            *) break ;;
+        esac
+    done
+
+    [ "$dry_run" = "1" ] && client_prefix="echo"
+    sql_command="select id from jobs where (${worker_string}${result} and clone_id is null and t_finished >= '$failed_since'$additional_filters);"
+    # shellcheck disable=SC2029
+    job_ids=${JOB_IDS:-$(ssh "$host" "sudo -u geekotest psql --no-align --tuples-only --command=\"$sql_command\" openqa")}
+
+    query_params=()
+    [[ $cli_protocol ]] && host=$cli_protocol://$host
+    [[ $cli_port ]] && host+=:$cli_port
+
+    for job_id in $job_ids; do
+        query_params+=("jobs=$job_id")
+        [[ ${#query_params[@]} -ge "$max_jobs_per_request" ]] && restart-jobs
+    done
+    restart-jobs
+}
+
+caller 0 > /dev/null || main "$@"
