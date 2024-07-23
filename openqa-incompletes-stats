@@ -6,6 +6,39 @@ interval="${interval:-"24 hour"}"
 failed_since="${failed_since:-"(timezone('UTC', now()) - interval '$interval')"}"
 width="${width:-80}"
 threshold="${threshold:-0}"
+
+usage() {
+    cat << EOF
+Usage: $0 [OPTIONS]
+
+Get statistics about recent incomplete openQA jobs.
+
+By default queries incomplete openQA jobs since '$failed_since'
+on '$host'.
+
+Can be additionally configured with environment variables.
+
+Needs SSH access to the target openQA host '$ssh_host'.
+
+Options:
+ -h, --help         display this help
+EOF
+    exit "$1"
+}
+
+opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
+eval set -- "$opts"
+while true; do
+    case "$1" in
+        -h | --help) usage 0 ;;
+        --)
+            shift
+            break
+            ;;
+        *) break ;;
+    esac
+done
+
 [[ ${show_job_ids:-} ]] && additional_columns+=', array_agg(jobs.id) as job_ids'
 if [[ ${show_worker_hosts:-} ]]; then
     additional_columns+=', array(select distinct host from workers where id = any(array_agg(jobs.assigned_worker_id))) as worker_hosts'
