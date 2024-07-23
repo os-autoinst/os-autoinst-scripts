@@ -54,7 +54,7 @@ main() {
         SCHEDULE=tests/boot/tianocore_set_resolution \
         ISO="$image" \
         "${CLI_ARGS[@]}"
-    }
+}
 
 usage() {
     cat << EOF
@@ -70,4 +70,4 @@ EOF
     exit "$1"
 }
 
-main
+caller 0 > /dev/null || main "$@"
