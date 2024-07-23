@@ -4,6 +4,37 @@ ssh_host="${ssh_host:-"$host"}"
 scheme="${scheme:-"https"}"
 failed_since="${failed_since:-"(timezone('UTC', now()) - interval '24 hour')"}"
 query="${query:-"select id,test from jobs where (result='incomplete' and (reason is null or (reason not like 'quit%' and reason not like 'abandoned%' and reason not like 'tests died%')) and t_finished >= $failed_since and id not in (select job_id from comments where job_id is not null) and id not in (select job_id from job_settings where key='CASEDIR'));"}"
+
+usage() {
+    cat << EOF
+Usage: $0 [OPTIONS]
+
+Prints a list of incomplete openQA jobs from '$ssh_host' since '$failed_since'
+as result of a database query.
+
+Needs SSH access to the target openQA host '$ssh_host'.
+
+Can be configured additionally with environment variables.
+
+Options:
+ -h, --help         display this help
+EOF
+    exit "$1"
+}
+
+opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
+eval set -- "$opts"
+while true; do
+    case "$1" in
+        -h | --help) usage 0 ;;
+        --)
+            shift
+            break
+            ;;
+        *) break ;;
+    esac
+done
+
 # shellcheck disable=SC2029
 for i in $(ssh "$ssh_host" "cd /tmp; sudo -u geekotest psql --no-align --tuples-only --command=\"$query\" openqa"); do
     url="$scheme://$host/tests/${i%|*}"
