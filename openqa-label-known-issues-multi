@@ -17,6 +17,19 @@ print_summary() {
 }
 
 main() {
+    opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
+    eval set -- "$opts"
+    while true; do
+        case "$1" in
+            -h | --help) usage 0 ;;
+            --)
+                shift
+                break
+                ;;
+            *) break ;;
+        esac
+    done
+
     # shellcheck disable=SC2013
     for testurl in $(cat - | sed 's/ .*$//'); do
         label_issue "$testurl"
@@ -36,18 +49,5 @@ Options:
 EOF
     exit "$1"
 }
-
-opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
-eval set -- "$opts"
-while true; do
-    case "$1" in
-        -h | --help) usage 0 ;;
-        --)
-            shift
-            break
-            ;;
-        *) break ;;
-    esac
-done
 
 caller 0 > /dev/null || main "$@"
