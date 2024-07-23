@@ -1,11 +1,5 @@
 #!/bin/bash -e
 
-# Motivation: https://progress.opensuse.org/issues/154723
-# 1. fetch requirements from package spec file,
-# 2. look for package names for such requirements
-# 3. search all relevant instances where the package is maintained
-# 4. fetch version info from spec file and from Tumbleweed repo
-
 osc="${osc:-"osc --apiurl https://api.opensuse.org"}"
 
 BLUE="\e[94m"
@@ -154,6 +148,35 @@ list_versions() {
         echo -e "$stream\t${version:--}\t${tw:--}"
     done | sort | column -t -N Origin,Version,TW-Version
 }
+
+usage() {
+    cat << EOF
+Usage: $0 [OPTIONS]
+
+Motivation: https://progress.opensuse.org/issues/154723
+1. fetch requirements from package spec file,
+2. look for package names for such requirements
+3. search all relevant instances where the package is maintained
+4. fetch version info from spec file and from Tumbleweed repo
+
+Options:
+ -h, --help         display this help
+EOF
+    exit "$1"
+}
+
+opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
+eval set -- "$opts"
+while true; do
+    case "$1" in
+        -h | --help) usage 0 ;;
+        --)
+            shift
+            break
+            ;;
+        *) break ;;
+    esac
+done
 
 init_check
 [ $# -eq 0 ] && {
