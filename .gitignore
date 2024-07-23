@@ -3,3 +3,5 @@
 /__pycache__/
 .*.swp
 /uv.lock
+test-more-bash/
+
