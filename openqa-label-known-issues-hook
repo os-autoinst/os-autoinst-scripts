@@ -33,5 +33,9 @@ while true; do
     esac
 done
 
-host_url="$scheme://$host"
-echo "$host_url/tests/$id" | "$(dirname "$0")"/openqa-label-known-issues-multi
+main() {
+    host_url="$scheme://$host"
+    echo "$host_url/tests/$id" | "$(dirname "$0")"/openqa-label-known-issues-multi
+}
+
+caller 0 > /dev/null || main "$@"
