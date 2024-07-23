@@ -41,23 +41,6 @@ EOF
     exit "$1"
 }
 
-opts=$(getopt -o hH: -l help -l host: -n "$0" -- "$@") || usage 1
-eval set -- "$opts"
-while true; do
-    case "$1" in
-        -h | --help) usage 0 ;;
-        -H | --host)
-            host=$2
-            shift
-            ;;
-        --)
-            shift
-            break
-            ;;
-        *) break ;;
-    esac
-done
-
 out="${REPORT_FILE:-$(mktemp -t openqa-label-known-issues--output-XXXX)}"
 trap 'error-handler "$LINENO"' ERR
 trap '_cleanup' EXIT
@@ -206,6 +189,24 @@ investigate_issue() {
 }
 
 label_issue() {
+    local opts
+    opts=$(getopt -o hH: -l help -l host: -n "$0" -- "$@") || usage 1
+    eval set -- "$opts"
+    while true; do
+        case "$1" in
+            -h | --help) usage 0 ;;
+            -H | --host)
+                host=$2
+                shift 2
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *) break ;;
+        esac
+    done
+
     local testurl="${1:?"Need 'testurl'"}"
     [[ "$dry_run" = "1" ]] && client_prefix="echo"
     if [[ -z "$client_call" ]]; then
