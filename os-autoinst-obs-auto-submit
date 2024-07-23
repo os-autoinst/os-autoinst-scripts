@@ -275,6 +275,34 @@ handle_auto_submit() {
     )
 }
 
+usage() {
+    cat << EOF
+Usage: $0 [OPTIONS]
+
+Prepare and submit os-autoinst packages to target projects like
+openSUSE:Factory.
+
+Can be configured additionally with environment variables.
+
+Options:
+ -h, --help         display this help
+EOF
+    exit "$1"
+}
+
+opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
+eval set -- "$opts"
+while true; do
+    case "$1" in
+        -h | --help) usage 0 ;;
+        --)
+            shift
+            break
+            ;;
+        *) break ;;
+    esac
+done
+
 get_project_packages() {
     echo "${packages:-$(debug_osc ls "$dst_project" | grep -v '\-test$')}"
 }
