@@ -27,7 +27,33 @@ scenario_definitions="${scenario_definitions:-"scenario-definitions.yaml"}"
 # shellcheck source=/dev/null
 . "$(dirname "$0")"/_common
 
+usage() {
+    cat << EOF
+Usage: $0 [OPTIONS]
+
+Triggers tests on an openQA instance testing openQA itself.
+
+Can be configured additionally with environment variables.
+
+Options:
+ -h, --help         display this help
+EOF
+    exit "$1"
+}
+
 main() {
+    opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
+    eval set -- "$opts"
+    while true; do
+        case "$1" in
+            -h | --help) usage 0 ;;
+            --)
+                shift
+                break
+                ;;
+            *) break ;;
+        esac
+    done
     [[ $dry_run == 1 ]] && client_prefix="echo" osc="echo $osc"
     local qcow build rc=0
     download_scenario
@@ -140,31 +166,4 @@ trigger() {
     rm full_job_post_response
 }
 
-usage() {
-    cat << EOF
-Usage: $0 [OPTIONS]
-
-Triggers tests on an openQA instance testing openQA itself.
-
-Can be configured additionally with environment variables.
-
-Options:
- -h, --help         display this help
-EOF
-    exit "$1"
-}
-
-opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
-eval set -- "$opts"
-while true; do
-    case "$1" in
-        -h | --help) usage 0 ;;
-        --)
-            shift
-            break
-            ;;
-        *) break ;;
-    esac
-done
-
-main
+caller 0 > /dev/null || main "$@"
