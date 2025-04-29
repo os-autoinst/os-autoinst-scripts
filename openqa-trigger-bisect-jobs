@@ -1,5 +1,13 @@
 #!/usr/bin/env python3
 
+"""
+Trigger openQA tests bisecting which pending operating system maintenance
+update, called "incident", might be the reason for an openQA test failure.
+Can be called manually and is also called by openQA hook scripts, see
+http://open.qa/docs/#_enable_custom_hook_scripts_on_job_done_based_on_result
+"""
+
+
 import argparse
 from functools import total_ordering
 import hashlib
