@@ -20,6 +20,7 @@ build_tag=${BUILD_TAG:-}
 client_prefix=${client_prefix:-}
 flavor=${flavor:-"dev"}
 full_run=${FULL:-}
+full_run_args=${full_run_args:-}
 group_id="${group_id:-"openQA"}"
 osc=${osc:-retry -e -- osc}
 src_project=${src_project:-devel:openQA}
@@ -126,9 +127,9 @@ trigger() {
     # prevent host access problem when running within o3 infrastructure
     # where o3 is not reachable over https
     declare -a ARGS
-    if [ "$target_host" = "openqa.opensuse.org" ]; then
-        ARGS=("OPENQA_HOST=http://openqa.opensuse.org")
-    fi
+    [[ $target_host = "openqa.opensuse.org" ]] && ARGS+=("OPENQA_HOST=http://openqa.opensuse.org")
+    # shellcheck disable=SC2206
+    [[ $full_run_args ]] && ARGS+=($full_run_args)
 
     # shellcheck disable=SC2086
     ${client_prefix} ${openqa_cli} \
