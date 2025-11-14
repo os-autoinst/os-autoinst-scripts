@@ -196,6 +196,68 @@ environment variables:
 * `from_email` - The From address for notification emails
 * `force_result` - If set to `1` tickets in the [tracker openqa-force-result](https://progress.opensuse.org/projects/openqav3/issues?query_id=700) can override job results
 
+## Auto submission scripts for `devel:openQA`
+
+There are three scripts/pipelines responsible for managing submissions in OBS:
+* Trigger: `trigger-openqa_in_openqa`
+* Monitor: `monitor-openqa_job`
+* Submit: `os-autoinst-obs-auto-submit` / `cleanup-obs-project`
+
+They are called in [Jenkins](http://jenkins.qa.suse.de/)
+
+There are three projects in OBS:
+* [devel:openQA](https://build.opensuse.org/project/show/devel:openQA)
+* [devel:openQA:testing](https://build.opensuse.org/project/show/devel:openQA:testing)
+* [devel:openQA:tested](https://build.opensuse.org/project/show/devel:openQA:tested)
+
+[devel:openQA](https://build.opensuse.org/project/show/devel:openQA) is the
+project where the packages are automatically updated with every commit in git.
+
+[devel:openQA:tested](https://build.opensuse.org/project/show/devel:openQA:tested)
+contains the devel projects for `openSUSE:Factory`. They should always be
+present and can be created like this:
+
+```
+osc linkpac openSUSE:Factory openQA devel:openQA:tested
+osc changedevelrequest openSUSE:Factory openQA devel:openQA:tested openQA -m "assign a devel project"
+osc linktobranch devel:openQA:tested openQA
+```
+
+### `trigger-openqa_in_openqa`
+
+This script is called first. Its primary purpose is to regularly schedule
+[`os-autoinst-distri-openqa` tests](https://openqa.opensuse.org/group_overview/24)
+using `devel:openQA`. The monitor and autosubmit pipeline will be called
+but having no effect.
+
+Only if there are no packages in `devel:openQA:testing`, it will `osc release`
+all packages present in `devel:openQA:tested` from `devel:openQA` to
+`devel:openQA:testing`.
+
+Then it triggers `os-autoinst-distri-openqa` tests using `devel:openQA:testing`,
+logging to `job_post_response`.
+
+### `monitor-openqa_job`
+
+This monitors `job_post_response` until all jobs are finished. If all jobs
+passed, the auto submit pipeline will be run.
+
+Otherwise, it will delete packages from `devel:openQA:testing` again and
+return an error.
+
+### `os-autoinst-obs-auto-submit`
+
+This script will copy contents from each `devel:openQA` package to
+`devel:openQA:tested`, generate the changelog, and
+submit the packages to `openSUSE:Factory` and potentially other target
+projects.
+
+In order to give reviewers time to review existing submit requests it will not
+create new ones in a certain timeframe.
+
+After creating submit requests, it calls `cleanup-obs-project` to delete all
+packages in `devel:openQA:testing`.
+
 ## Contribute
 
 This project lives in https://github.com/os-autoinst/os-autoinst-scripts
