@@ -16,17 +16,17 @@ menu iPXE boot menu for ${server-name}
 
 item --gap --             -- OS Inst (You will be prompted to edit cmdline after selecting an os) --
 item --gap --             -------------------------------- x86_64 ----------------------------------
-item --key l leapS1       (L)Boot openSUSE Leap15.6 from download.opensuse.org / ttyS1 (http)
-item --key e leapS2       (E)Boot openSUSE Leap15.6 from download.opensuse.org / ttyS2 (http)
-item --key a leapS1auto   (A)Boot openSUSE Leap15.6 / ttyS1 autoyast=https://is.gd/oqaay4
+item --key l leapS1       (L)Boot openSUSE Leap16.0 from download.opensuse.org / ttyS1 (http)
+item --key e leapS2       (E)Boot openSUSE Leap16.0 from download.opensuse.org / ttyS2 (http)
+item --key a leapS1auto   (A)Boot openSUSE Leap16.0 / ttyS1 autoyast=https://is.gd/oqaay4
 item --key k tumbleweed_KVM_autoyast (K)Boot openSUSE Tumbleweed KVM server from O3 repo with autoyast/ ttyS1 (http)
 item --key z tumbleweed_XEN_autoyast (Z)Boot openSUSE Tumbleweed XEN server from O3 repo with autoyast/ ttyS1 (http)
 item --key t tumbleweedS1 (T)Boot openSUSE Tumbleweed from download.opensuse.org / ttyS1 (http)
 item --key s tumbleweedS2 (S)Boot openSUSE Tumbleweed from download.opensuse.org / ttyS2 (http)
 item --key M memtest64efi (M)Memtest 64 EFI
 item --gap --             -------------------------------- AArch64 ---------------------------------
-item --key o leapS1aarch64auto (o)Boot openSUSE Leap15.6 / ttyS1 autoyast=https://is.gd/oqaay4
-item --key O leapS1aarch64man  (O)Boot openSUSE Leap15.6
+item --key o leapS1aarch64auto (o)Boot openSUSE Leap16.0 / ttyS1 autoyast=https://is.gd/oqaay4
+item --key O leapS1aarch64man  (O)Boot openSUSE Leap16.0
 item --gap --             ------------------------- Advanced options -------------------------------
 item --key N nbxyz        (N)Netboot.xyz (x86_64 / aarch64)
 item --key c config       Configure settings
@@ -40,21 +40,21 @@ set menu-timeout 0
 goto ${selected}
 
 :leapS1
-set kernel http://download.opensuse.org/distribution/leap/15.6/repo/oss/boot/x86_64/loader/linux
-set cmdline usessh=1 sshpassword=linux network=1 install=http://download.opensuse.org/distribution/leap/15.6/repo/oss/ console=tty console=ttyS1,115200n8 root=/dev/ram0 initrd=initrd textmode=1
-set initrd http://download.opensuse.org/distribution/leap/15.6/repo/oss/boot/x86_64/loader/initrd
+set kernel http://download.opensuse.org/distribution/leap/16.0/repo/oss/boot/x86_64/loader/linux
+set cmdline usessh=1 sshpassword=linux network=1 install=http://download.opensuse.org/distribution/leap/16.0/repo/oss/ console=tty console=ttyS1,115200n8 root=/dev/ram0 initrd=initrd textmode=1
+set initrd http://download.opensuse.org/distribution/leap/16.0/repo/oss/boot/x86_64/loader/initrd
 goto editandboot
 
 :leapS2
-set kernel http://download.opensuse.org/distribution/leap/15.6/repo/oss/boot/x86_64/loader/linux
-set cmdline usessh=1 sshpassword=linux network=1 install=http://download.opensuse.org/distribution/leap/15.6/repo/oss/ console=tty console=ttyS2,115200n8 root=/dev/ram0 initrd=initrd textmode=1
-set initrd http://download.opensuse.org/distribution/leap/15.6/repo/oss/boot/x86_64/loader/initrd
+set kernel http://download.opensuse.org/distribution/leap/16.0/repo/oss/boot/x86_64/loader/linux
+set cmdline usessh=1 sshpassword=linux network=1 install=http://download.opensuse.org/distribution/leap/16.0/repo/oss/ console=tty console=ttyS2,115200n8 root=/dev/ram0 initrd=initrd textmode=1
+set initrd http://download.opensuse.org/distribution/leap/16.0/repo/oss/boot/x86_64/loader/initrd
 goto editandboot
 
 :leapS1auto
-set kernel http://download.opensuse.org/distribution/leap/15.6/repo/oss/boot/x86_64/loader/linux
-set cmdline network=1 install=http://download.opensuse.org/distribution/leap/15.6/repo/oss/ root=/dev/ram0 initrd=initrd textmode=1 console=tty console=ttyS1,115200 autoyast=https://is.gd/oqaay4 rootpassword=opensuse
-set initrd http://download.opensuse.org/distribution/leap/15.6/repo/oss/boot/x86_64/loader/initrd
+set kernel http://download.opensuse.org/distribution/leap/16.0/repo/oss/boot/x86_64/loader/linux
+set cmdline network=1 install=http://download.opensuse.org/distribution/leap/16.0/repo/oss/ root=/dev/ram0 initrd=initrd textmode=1 console=tty console=ttyS1,115200 autoyast=https://is.gd/oqaay4 rootpassword=opensuse
+set initrd http://download.opensuse.org/distribution/leap/16.0/repo/oss/boot/x86_64/loader/initrd
 goto editandboot
 
 :tumbleweed_KVM_autoyast
@@ -93,15 +93,15 @@ iseq ${buildarch} arm64 && chain --autofree http://boot.netboot.xyz/ipxe/netboot
 chain --autofree http://boot.netboot.xyz/ipxe/netboot.xyz-snponly.efi
 
 :leapS1aarch64auto
-set kernel http://download.opensuse.org/distribution/leap/15.6/repo/oss/boot/aarch64/linux
-set cmdline network=1 install=http://download.opensuse.org/distribution/leap/15.6/repo/oss/ root=/dev/ram0 initrd=initrd textmode=1 console=tty console=ttyS1,115200 autoyast=https://is.gd/oqaay4 rootpassword=opensuse
-set initrd http://download.opensuse.org/distribution/leap/15.6/repo/oss/boot/aarch64/initrd
+set kernel http://download.opensuse.org/distribution/leap/16.0/repo/oss/boot/aarch64/linux
+set cmdline network=1 install=http://download.opensuse.org/distribution/leap/16.0/repo/oss/ root=/dev/ram0 initrd=initrd textmode=1 console=tty console=ttyS1,115200 autoyast=https://is.gd/oqaay4 rootpassword=opensuse
+set initrd http://download.opensuse.org/distribution/leap/16.0/repo/oss/boot/aarch64/initrd
 goto editandboot
 
 :leapS1aarch64man
-set kernel http://download.opensuse.org/distribution/leap/15.6/repo/oss/boot/aarch64/linux
-set cmdline network=1 install=http://download.opensuse.org/distribution/leap/15.6/repo/oss/ sshd=1 sshpassword=linux console=tty
-set initrd http://download.opensuse.org/distribution/leap/15.6/repo/oss/boot/aarch64/initrd
+set kernel http://download.opensuse.org/distribution/leap/16.0/repo/oss/boot/aarch64/linux
+set cmdline network=1 install=http://download.opensuse.org/distribution/leap/16.0/repo/oss/ sshd=1 sshpassword=linux console=tty
+set initrd http://download.opensuse.org/distribution/leap/16.0/repo/oss/boot/aarch64/initrd
 goto editandboot
 
 :editandboot
