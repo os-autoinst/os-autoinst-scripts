@@ -18,6 +18,7 @@ arch="${arch:-"x86_64"}"
 machine="${machine:-"uefi"}"
 build_tag=${BUILD_TAG:-}
 client_prefix=${client_prefix:-}
+flavor=${flavor:-"dev"}
 full_run=${FULL:-}
 group_id="${group_id:-"openQA"}"
 osc=${osc:-retry -e -- osc}
@@ -110,7 +111,8 @@ trigger() {
     fi
     # in full run use only openqa_install+publish test
     if [ "$full_run" ]; then
-        ARGS+=('TEST=openqa_install+publish' "FULL_OPENSUSE_TEST=1")
+        flavor="dev-full"
+        ARGS+=("FULL_OPENSUSE_TEST=1")
     fi
 
     # shellcheck disable=SC2086
@@ -118,7 +120,7 @@ trigger() {
         schedule --host "${target_host_proto}://${target_host}" \
         --param-file SCENARIO_DEFINITIONS_YAML=/var/tmp/sd.yaml \
         VERSION=Tumbleweed \
-        DISTRI=openqa FLAVOR=dev ARCH="${arch}" \
+        DISTRI=openqa FLAVOR="${flavor}" ARCH="${arch}" \
         HDD_1="$qcow" BUILD="${build}" _GROUP="${group_id}" \
         OPENQA_OBS_PROJECT="$staging_project" \
         "${ARGS[@]}" \
