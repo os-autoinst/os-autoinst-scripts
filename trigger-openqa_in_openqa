@@ -40,6 +40,7 @@ main() {
     # and use for submit requests
     if [[ $full_run ]]; then
         staging_project=$src_project
+        flavor="dev-full" # Note: overrides any user-provided flavor
     else
         create_devel_openqa_snapshot || rc=$?
         if [[ $rc != 0 ]]; then
@@ -108,11 +109,6 @@ trigger() {
     declare -a ARGS
     if [ "$target_host" = "openqa.opensuse.org" ]; then
         ARGS=("OPENQA_HOST=http://openqa.opensuse.org")
-    fi
-    # in full run use only openqa_install_full+publish test
-    if [ "$full_run" ]; then
-        flavor="dev-full"
-        ARGS+=("FULL_OPENSUSE_TEST=1")
     fi
 
     # shellcheck disable=SC2086
