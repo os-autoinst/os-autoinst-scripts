@@ -18,12 +18,14 @@ arch="${arch:-"x86_64"}"
 machine="${machine:-"uefi"}"
 build_tag=${BUILD_TAG:-}
 client_prefix=${client_prefix:-}
+flavor=${flavor:-"dev"}
 full_run=${FULL:-}
 group_id="${group_id:-"openQA"}"
 osc=${osc:-retry -e -- osc}
 src_project=${src_project:-devel:openQA}
 staging_project=${staging_project:-${src_project}:testing}
 dst_project=${dst_project:-${src_project}:tested}
+scenario_definitions="${scenario_definitions:-"scenario-definitions.yaml"}"
 
 # shellcheck source=/dev/null
 . "$(dirname "$0")"/_common
@@ -38,6 +40,7 @@ main() {
     # and use for submit requests
     if [[ $full_run ]]; then
         staging_project=$src_project
+        flavor="dev-full" # Note: overrides any user-provided flavor
     else
         create_devel_openqa_snapshot || rc=$?
         if [[ $rc != 0 ]]; then
@@ -64,7 +67,7 @@ download_latest_published_tumbleweed_image() {
 
 download_scenario() {
     rm -f /var/tmp/sd.yaml
-    curl https://raw.githubusercontent.com/os-autoinst/os-autoinst-distri-openQA/master/scenario-definitions.yaml -o /var/tmp/sd.yaml
+    curl https://raw.githubusercontent.com/os-autoinst/os-autoinst-distri-openQA/master/"${scenario_definitions}" -o /var/tmp/sd.yaml
 }
 
 create_snapshots() {
@@ -107,17 +110,13 @@ trigger() {
     if [ "$target_host" = "openqa.opensuse.org" ]; then
         ARGS=("OPENQA_HOST=http://openqa.opensuse.org")
     fi
-    # in full run use only openqa_install+publish test
-    if [ "$full_run" ]; then
-        ARGS+=('TEST=openqa_install+publish' "FULL_OPENSUSE_TEST=1")
-    fi
 
     # shellcheck disable=SC2086
     ${client_prefix} ${openqa_cli} \
         schedule --host "${target_host_proto}://${target_host}" \
         --param-file SCENARIO_DEFINITIONS_YAML=/var/tmp/sd.yaml \
         VERSION=Tumbleweed \
-        DISTRI=openqa FLAVOR=dev ARCH="${arch}" \
+        DISTRI=openqa FLAVOR="${flavor}" ARCH="${arch}" \
         HDD_1="$qcow" BUILD="${build}" _GROUP="${group_id}" \
         OPENQA_OBS_PROJECT="$staging_project" \
         "${ARGS[@]}" \
