@@ -1,6 +1,7 @@
 SH_FILES ?= $(shell file --mime-type $$(git ls-files) test/*.t | sed -n 's/^\(.*\):.*text\/x-shellscript.*$$/\1/p')
 SH_SHELLCHECK_FILES ?= $(shell file --mime-type * | sed -n 's/^\(.*\):.*text\/x-shellscript.*$$/\1/p')
 PY_FILES ?= $(shell git ls-files | xargs file --mime-type 2>/dev/null | grep -E 'text/x-script\.python|text/x-python' | cut -d: -f1)
+RUNNER ?= uv run
 
 ifndef CI
 include .setup.mk
@@ -34,8 +35,9 @@ test-unit: test-bash test-python
 test-bash: $(BPAN)
 	"${PROVE}" -r $(if $v,-v )$(test)
 
+.PHONY: test-python
 test-python:
-	py.test tests
+	$(RUNNER) pytest
 
 test-online:
 	dry_run=1 bash -x ./openqa-label-known-issues-multi < ./tests/incompletes
@@ -48,6 +50,11 @@ checkstyle: test-shellcheck test-yaml checkstyle-python check-code-health test-g
 shfmt:
 	shfmt -w ${SH_FILES}
 
+.PHONY: tidy
+tidy:
+	$(RUNNER) ruff format
+	$(RUNNER) ruff check --fix
+
 test-shellcheck:
 	@which shfmt >/dev/null 2>&1 || echo "Command 'shfmt' not found, can not execute shell script formating checks"
 	shfmt -d ${SH_FILES}
@@ -58,10 +65,11 @@ test-yaml:
 	@which yamllint >/dev/null 2>&1 || echo "Command 'yamllint' not found, can not execute YAML syntax checks"
 	yamllint --strict $$(git ls-files "*.yml" "*.yaml" ":!external/")
 
+.PHONY: checkstyle-python
 checkstyle-python: check-ruff check-conventions check-ty
 check-ruff:
 	@which ruff >/dev/null 2>&1 || echo "Command 'ruff' not found, can not execute python style checks"
-	@if [ -n "$(PY_FILES)" ]; then ruff format --check $(PY_FILES) && ruff check $(PY_FILES); fi
+	@if [ -n "$(PY_FILES)" ]; then $(RUNNER) ruff format --check $(PY_FILES) && $(RUNNER) ruff check $(PY_FILES); fi
 
 check-conventions:
 	@if git grep -nE '^\s*@(unittest\.mock\.|mock\.)?patch' tests/; then \
@@ -76,7 +84,15 @@ check-ty: ## Run ty type checker
 
 check-code-health:
 	@echo "Checking code health…"
-	@vulture $$(git ls-files "**.py") --min-confidence 80
+	@$(RUNNER) vulture $$(git ls-files "**.py") --min-confidence 80
+
+.PHONY: test-with-coverage
+test-with-coverage:
+	$(RUNNER) pytest --cov=src/os-autoinst-scripts tests/
+
+.PHONY: install-python-deps
+install-python-deps:
+	$(RUNNER) sync
 
 .PHONY: test-gitlint
 test-gitlint: ## Run commit message checks using gitlint
