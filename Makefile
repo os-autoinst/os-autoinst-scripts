@@ -33,6 +33,7 @@ test-unit: test-bash test-python
 test-bash: $(BPAN)
 	"${PROVE}" -r $(if $v,-v )$(test)
 
+.PHONY: test-python
 test-python:
 	py.test tests
 
@@ -47,6 +48,11 @@ checkstyle: test-shellcheck test-yaml checkstyle-python check-code-health
 shfmt:
 	shfmt -w ${SH_FILES}
 
+.PHONY: tidy
+tidy:
+	ruff format
+	ruff check --fix
+
 test-shellcheck:
 	@which shfmt >/dev/null 2>&1 || echo "Command 'shfmt' not found, can not execute shell script formating checks"
 	shfmt -d ${SH_FILES}
@@ -57,8 +63,10 @@ test-yaml:
 	@which yamllint >/dev/null 2>&1 || echo "Command 'yamllint' not found, can not execute YAML syntax checks"
 	yamllint --strict $$(git ls-files "*.yml" "*.yaml" ":!external/")
 
+.PHONY: checkstyle-python
 checkstyle-python: check-ruff check-conventions
 check-ruff:
+
 	@which ruff >/dev/null 2>&1 || echo "Command 'ruff' not found, can not execute python style checks"
 	ruff check
 	ruff format --check
@@ -73,6 +81,10 @@ check-conventions:
 check-code-health:
 	@echo "Checking code health…"
 	@vulture $$(git ls-files "**.py") --min-confidence 80
+
+.PHONY: test-with-coverage
+test-with-coverage:
+	pytest --cov=src/os-autoinst-scripts tests/
 
 update-deps:
 	tools/update-deps --cpanfile cpanfile --specfile dist/rpm/os-autoinst-scripts-deps.spec
