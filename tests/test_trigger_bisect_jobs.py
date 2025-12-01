@@ -1,13 +1,12 @@
-"""
-tests for openqa-trigger-bisect-jobs
-"""
+"""tests for openqa-trigger-bisect-jobs"""
 
-from argparse import Namespace
 import importlib.machinery
 import importlib.util
 import json
 import os.path
+import pathlib
 import re
+from argparse import Namespace
 from unittest.mock import MagicMock, call, patch
 from urllib.parse import urlparse
 
@@ -40,7 +39,7 @@ def mocked_fetch_url(url, request_type="text"):
         path = url.geturl()
         path = path[len(url.scheme) + 3 :]
         path = "tests/data/python-requests/" + path
-        with open(path, "r") as request:
+        with pathlib.Path(path).open() as request:
             content = request.read()
     if request_type == "json":
         try:
@@ -72,9 +71,8 @@ def test_catch_CalledProcessError(caplog):
     openqa.fetch_url = MagicMock(side_effect=mocked_fetch_url)
     exp_err = "returned non-zero exit status 255."
     error = subprocess.CompletedProcess(args=[], returncode=255, stderr=exp_err, stdout="")
-    with patch("subprocess.run", return_value=error):
-        with pytest.raises(subprocess.CalledProcessError) as e:
-            openqa.main(args)
+    with patch("subprocess.run", return_value=error), pytest.raises(subprocess.CalledProcessError) as e:
+        openqa.main(args)
 
     assert e.value.returncode == 255
     assert f"{exp_err}" in str(e.value.stderr)
@@ -86,7 +84,7 @@ def test_catch_CalledProcessError(caplog):
         with pytest.raises(SystemExit) as e:
             openqa.main(args)
         assert re.search(
-            "jobs/.*/comments.*text=.*updates are unavailable",
+            r"jobs/.*/comments.*text=.*updates are unavailable",
             str(mocked.call_args_list[-1][0]),
         )
     assert e.value.code == 0

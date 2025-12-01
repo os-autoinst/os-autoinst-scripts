@@ -4,12 +4,13 @@
 #  * Add return values checks to avoid crashes/traces (no connection to openQA server, etc.)
 #  * The host name of machines may not be unique
 
-import configparser
 import argparse
+import configparser
 import json
 import os
-import requests
 import subprocess
+
+import requests
 
 machine_list_idle = []
 machine_list_offline = []
@@ -47,7 +48,7 @@ print("Using openQA server: " + openqa_server)
 print("Using config file: " + config_file)
 if args.dry_run:
     print("Dry run mode")
-print("")
+print()
 
 # Scheduled/blocked jobs
 scheduled_list_file = requests.get(openqa_server + "/tests/list_scheduled_ajax").content

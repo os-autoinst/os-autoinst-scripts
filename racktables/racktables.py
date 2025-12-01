@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-from requests.auth import HTTPBasicAuth
-from bs4 import BeautifulSoup
-from os.path import join as join
-import requests
 import re
+from os.path import join as join
+
+import requests
+from bs4 import BeautifulSoup
+from requests.auth import HTTPBasicAuth
 
 
 class Racktables:
@@ -19,7 +20,7 @@ class Racktables:
         status = req.status_code
         if status == 401:
             raise Exception("Racktables returned 401 Unauthorized. Are your credentials correct?")
-        elif status >= 300:
+        if status >= 300:
             raise Exception(
                 f"Racktables returned statuscode {status} while trying to access {req.request.url}. Manual investigation needed."
             )

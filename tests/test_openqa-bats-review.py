@@ -1,7 +1,5 @@
 # tests/test_openqa_bats_review.py
-"""
-Unit & integration tests for openqa-bats-review (JUnit XML based).
-"""
+"""Unit & integration tests for openqa-bats-review (JUnit XML based)."""
 
 import importlib.machinery
 import importlib.util
@@ -195,8 +193,7 @@ class TestMain:
         mock_get_job,
         mock_resolve,
     ):
-        """
-        Two jobs in chain; each produces different failures -> no common failures.
+        """Two jobs in chain; each produces different failures -> no common failures.
         main should call openqa_comment(...) (we patch it) and log Tagging as PASSED.
         """
         mock_resolve.return_value = [123, 122]
@@ -230,8 +227,7 @@ class TestMain:
     @patch("bats_review.get_job")
     @patch("bats_review.log")
     def test_main_insufficient_logs(self, mock_log, mock_get_job, mock_resolve):
-        """
-        If jobs do not have the expected number of logs (e.g. podman expects 4 but provides 2),
+        """If jobs do not have the expected number of logs (e.g. podman expects 4 but provides 2),
         main should log the 'only X logs' messages for each job and eventually exit(0).
         """
         mock_resolve.return_value = [123, 122]
@@ -273,8 +269,7 @@ class TestParseArgs:
 class TestIntegration:
     @patch("bats_review.openqa_comment")
     def test_full_workflow_no_common_failures(self, mock_openqa_comment):
-        """
-        Integration-style test: patch session.get to return proper JSON for job details
+        """Integration-style test: patch session.get to return proper JSON for job details
         and JUnit XML for files, simulate two jobs that each have a different failing
         testcase, and assert that the script decides to tag as PASSED (dry_run).
         """
