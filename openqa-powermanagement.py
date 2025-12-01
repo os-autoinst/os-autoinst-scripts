@@ -1,16 +1,22 @@
 #!/usr/bin/python3
-
-# TODO:
-#  * Add return values checks to avoid crashes/traces (no connection to openQA server, etc.)
-#  * The host name of machines may not be unique
-
+# Copyright SUSE LLC
 import argparse
 import configparser
 import json
+import logging
 import os
-import subprocess
+import subprocess  # noqa: S404
+from pathlib import Path
 
 import requests
+
+# Configure logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+formatter = logging.Formatter("%(levelname)s: %(message)s")
+handler = logging.StreamHandler()
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 
 machine_list_idle = []
 machine_list_offline = []
@@ -20,7 +26,7 @@ machines_to_power_on = []
 
 jobs_worker_classes = []
 
-config_file = os.path.join(os.environ.get("OPENQA_CONFIG", "/etc/openqa"), "openqa.ini")
+config_file = Path(os.environ.get("OPENQA_CONFIG", "/etc/openqa")).joinpath("openqa.ini")
 config = configparser.ConfigParser()
 config.read(config_file)
 
@@ -44,51 +50,51 @@ if __name__ == "__main__":
     elif args.o3:
         openqa_server = "https://openqa.opensuse.org"
 
-print("Using openQA server: " + openqa_server)
-print("Using config file: " + config_file)
+logger.info("Using openQA server: %s", openqa_server)
+logger.info("Using config file: %s", config_file)
 if args.dry_run:
-    print("Dry run mode")
-print()
+    logger.info("Dry run mode")
+logger.info("")
 
 # Scheduled/blocked jobs
-scheduled_list_file = requests.get(openqa_server + "/tests/list_scheduled_ajax").content
+scheduled_list_file = requests.get(openqa_server + "/tests/list_scheduled_ajax", timeout=60).content
 scheduled_list_data = json.loads(scheduled_list_file)
-print(
-    "Processing "
-    + str(len(scheduled_list_data["data"]))
-    + " job(s) in scheduled/blocked state... (will take about "
-    + str(int(len(scheduled_list_data["data"]) * 0.2))
-    + " seconds)"
+logger.info(
+    "Processing %s job(s) in scheduled/blocked state... (will take about %s seconds)",
+    len(scheduled_list_data["data"]),
+    int(len(scheduled_list_data["data"]) * 0.2),
 )
 
 # Create list of WORKER_CLASS needed
 for job in scheduled_list_data["data"]:
-    response = requests.get(openqa_server + "/api/v1/jobs/" + str(job["id"]))
+    response = requests.get(openqa_server + "/api/v1/jobs/" + str(job["id"]), timeout=60)
     job_data = json.loads(response.content)
     jobs_worker_classes.append(job_data["job"]["settings"]["WORKER_CLASS"])
 
 jobs_worker_classes = sorted(set(jobs_worker_classes))
-print(
-    "Found " + str(len(jobs_worker_classes)) + " different WORKER_CLASS in scheduled jobs: " + str(jobs_worker_classes)
+logger.info(
+    "Found %s different WORKER_CLASS in scheduled jobs: %s",
+    len(jobs_worker_classes),
+    jobs_worker_classes,
 )
 
 
 # Workers
-workers_list_file = requests.get(openqa_server + "/api/v1/workers").content
+workers_list_file = requests.get(openqa_server + "/api/v1/workers", timeout=60).content
 workers_list_data = json.loads(workers_list_file)
 
 # Create list of hosts which may need to powered up/down
 for worker in workers_list_data["workers"]:
-    if worker["status"] in ["idle"]:
+    if worker["status"] == "idle":
         machine_list_idle.append(worker["host"])
-    elif worker["status"] in ["dead"]:  # Looks like 'dead' means 'offline'
+    elif worker["status"] == "dead":  # Looks like 'dead' means 'offline'
         machine_list_offline.append(worker["host"])
-    elif worker["status"] in ["running"]:  # Looks like 'running' means 'working'
+    elif worker["status"] == "running":  # Looks like 'running' means 'working'
         machine_list_busy.append(worker["host"])
-    elif worker["status"] in ["broken"]:
+    elif worker["status"] == "broken":
         machine_list_broken.append(worker["host"])
     else:
-        print("Unhandle worker status: " + str(worker["status"]))
+        logger.info("Unhandle worker status: %s", worker["status"])
 
 # Clean-up the lists
 machine_list_idle = sorted(set(machine_list_idle))
@@ -108,41 +114,44 @@ for machine in machine_list_idle:
         machine_list_offline.remove(machine)
 
 # Print an overview
-print(str(len(machine_list_idle)) + " workers listed fully idle: " + str(machine_list_idle))
-print(str(len(machine_list_offline)) + " workers listed offline/dead: " + str(machine_list_offline))
-print(str(len(machine_list_broken)) + " workers listed broken: " + str(machine_list_broken))
-print(str(len(machine_list_busy)) + " workers listed busy: " + str(machine_list_busy))
+logger.info("%s workers listed fully idle: %s", len(machine_list_idle), machine_list_idle)
+logger.info("%s workers listed offline/dead: %s", len(machine_list_offline), machine_list_offline)
+logger.info("%s workers listed broken: %s", len(machine_list_broken), machine_list_broken)
+logger.info("%s workers listed busy: %s", len(machine_list_busy), machine_list_busy)
 
-# Get WORKER_CLASS for each workers of each machines (idle and offline) and compare to WORKER_CLASS required by scheduled/blocked jobs
+# Get WORKER_CLASS for each workers of each machines (idle and offline) and compare to WORKER_CLASS required by
+# scheduled/blocked jobs
 for worker in workers_list_data["workers"]:
     if worker["host"] in machine_list_offline:
-        for classes in jobs_worker_classes:
-            if set(classes.split(",")).issubset(worker["properties"]["WORKER_CLASS"].split(",")):
-                machines_to_power_on.append(worker["host"])
+        machines_to_power_on.extend([
+            worker["host"]
+            for classes in jobs_worker_classes
+            if set(classes.split(",")).issubset(worker["properties"]["WORKER_CLASS"].split(","))
+        ])
 
-    if worker["host"] in machine_list_idle:
-        if worker["properties"]["WORKER_CLASS"] in jobs_worker_classes:
-            # Warning: scheduled (blocked?) job could be run on idle machine!
-            print("Warning: scheduled (blocked?) job could be run on idle machine!")
+    if worker["host"] in machine_list_idle and worker["properties"]["WORKER_CLASS"] in jobs_worker_classes:
+        # Warning: scheduled (blocked?) job could be run on idle machine!
+        logger.info("Warning: scheduled (blocked?) job could be run on idle machine!")
 
 # Power on machines which can run scheduled jobs
 for machine in sorted(set(machines_to_power_on)):
     if machine in machine_list_broken:
-        print("Removing '" + machine + "' from the list to power ON since some workers are broken there")
+        logger.info("Removing '%s' from the list to power ON since some workers are broken there", machine)
     elif args.dry_run:
-        print("Would power ON '" + machine + "' - Dry run mode")
+        logger.info("Would power ON '%s' - Dry run mode", machine)
     elif "power_management" in config and config["power_management"].get(machine + "_POWER_ON"):
-        print("Powering ON: " + machine)
-        subprocess.call(config["power_management"][machine + "_POWER_ON"])
+        logger.info("Powering ON: %s", machine)
+        subprocess.run(config["power_management"][machine + "_POWER_ON"], shell=True, check=True)  # noqa: S602
     else:
-        print("Unable to power ON '" + machine + "' - No command for that")
+        logger.info("Unable to power ON '%s' - No command for that", machine)
 
-# Power off machines which are idle or broken (TODO: add a threshold, e.g. idle since more than 15 minutes. Does API provide this information?)
+# Power off machines which are idle or broken (TODO: add a threshold, e.g. idle since more than 15 minutes.
+# Does API provide this information?)
 for machine in machine_list_idle + machine_list_broken:
     if args.dry_run:
-        print("Would power OFF '" + machine + "' - Dry run mode")
+        logger.info("Would power OFF '%s' - Dry run mode", machine)
     elif "power_management" in config and config["power_management"].get(machine + "_POWER_OFF"):
-        print("Powering OFF: " + machine)
-        subprocess.call(config["power_management"][machine + "_POWER_OFF"])
+        logger.info("Powering OFF: %s", machine)
+        subprocess.run(config["power_management"][machine + "_POWER_OFF"], shell=True, check=True)  # noqa: S602
     else:
-        print("Unable to power OFF '" + machine + "' - No command for that")
+        logger.info("Unable to power OFF '%s' - No command for that", machine)
