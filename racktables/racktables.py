@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import re
 from os.path import join
 
