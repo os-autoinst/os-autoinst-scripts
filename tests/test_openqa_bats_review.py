@@ -4,8 +4,9 @@
 import importlib.machinery
 import importlib.util
 import sys
-from unittest.mock import Mock, patch
+from unittest.mock import MagicMock, Mock, patch
 import pathlib
+from typing import Any
 
 import pytest
 from requests.exceptions import RequestException
@@ -27,7 +28,7 @@ loader.exec_module(bats_review)
 
 class TestGetFile:
     @patch("bats_review.session")
-    def test_get_file_success(self, mock_session) -> None:
+    def test_get_file_success(self, mock_session: MagicMock) -> None:
         resp = Mock()
         resp.text = "hello"
         resp.raise_for_status = Mock()
@@ -44,7 +45,7 @@ class TestGetFile:
 
     @patch("bats_review.session")
     @patch("bats_review.log")
-    def test_get_file_request_exception(self, mock_log, mock_session) -> None:
+    def test_get_file_request_exception(self, mock_log: MagicMock, mock_session: MagicMock) -> None:
         mock_session.get.side_effect = RequestException("network")
         with pytest.raises(SystemExit) as exc:
             bats_review.get_file("http://example.com/foo.xml")
@@ -59,7 +60,7 @@ class TestGetJob:
             bats_review.get_job.cache_clear()
 
     @patch("bats_review.session")
-    def test_get_job_success(self, mock_session) -> None:
+    def test_get_job_success(self, mock_session: MagicMock) -> None:
         resp = Mock()
         resp.json.return_value = {"job": {"id": 123, "state": "done"}}
         resp.raise_for_status = Mock()
@@ -75,7 +76,7 @@ class TestGetJob:
 
     @patch("bats_review.session")
     @patch("bats_review.log")
-    def test_get_job_request_exception(self, mock_log, mock_session) -> None:
+    def test_get_job_request_exception(self, mock_log: MagicMock, mock_session: MagicMock) -> None:
         mock_session.get.side_effect = RequestException("boom")
         with pytest.raises(SystemExit) as exc:
             bats_review.get_job("http://host/api/v1/jobs/123")
@@ -85,7 +86,7 @@ class TestGetJob:
 
 class TestGrepFailures:
     @patch("bats_review.get_file")
-    def test_grep_failures_success(self, mock_get_file) -> None:
+    def test_grep_failures_success(self, mock_get_file: MagicMock) -> None:
         # one passing, one failing testcase (with classname)
         xml = """
         <testsuite>
@@ -101,7 +102,7 @@ class TestGrepFailures:
 
     @patch("bats_review.get_file")
     @patch("bats_review.log")
-    def test_grep_failures_malformed(self, mock_log, mock_get_file) -> None:
+    def test_grep_failures_malformed(self, mock_log: MagicMock, mock_get_file: MagicMock) -> None:
         mock_get_file.return_value = "<this is not xml"
         # script currently exits with code 1 on parse errors
         with pytest.raises(SystemExit) as exc:
@@ -112,14 +113,14 @@ class TestGrepFailures:
 
 class TestProcessLogs:
     @patch("bats_review.grep_failures")
-    def test_process_logs_single_file(self, mock_grep) -> None:
+    def test_process_logs_single_file(self, mock_grep: MagicMock) -> None:
         mock_grep.return_value = {"a", "b"}
         res = bats_review.process_logs(["http://example.com/a.xml"])
         assert res == {"a", "b"}
         mock_grep.assert_called_once_with("http://example.com/a.xml")
 
     @patch("bats_review.ThreadPoolExecutor")
-    def test_process_logs_multiple_files(self, mock_executor_class) -> None:
+    def test_process_logs_multiple_files(self, mock_executor_class: MagicMock) -> None:
         # build fake executor that returns map -> iterator of sets
         fake_executor = Mock()
         fake_executor.map.return_value = iter([{"f1"}, {"f2"}])
@@ -138,15 +139,15 @@ class TestResolveCloneChain:
             bats_review.get_job.cache_clear()
 
     @patch("bats_review.get_job")
-    def test_resolve_clone_chain_single(self, mock_get_job) -> None:
+    def test_resolve_clone_chain_single(self, mock_get_job: MagicMock) -> None:
         mock_get_job.return_value = {"id": 123}
         chain = bats_review.resolve_clone_chain("http://openqa", 123)
         assert chain == [123]
         mock_get_job.assert_called_once_with("http://openqa/api/v1/jobs/123/details")
 
     @patch("bats_review.get_job")
-    def test_resolve_clone_chain_multiple(self, mock_get_job) -> None:
-        def side(url):
+    def test_resolve_clone_chain_multiple(self, mock_get_job: MagicMock) -> None:
+        def side(url: str) -> dict[str, Any] | None:
             jid = int(url.split("/")[-2])
             if jid == 123:
                 return {"id": 123, "origin_id": 122}
@@ -168,7 +169,7 @@ class TestMain:
 
     @patch("bats_review.resolve_clone_chain")
     @patch("bats_review.log")
-    def test_main_no_clones(self, mock_log, mock_resolve) -> None:
+    def test_main_no_clones(self, mock_log: MagicMock, mock_resolve: MagicMock) -> None:
         mock_resolve.return_value = [123]  # single element -> "No clones"
         with pytest.raises(SystemExit) as exc:
             bats_review.main("http://openqa.example.com/tests/123", dry_run=True)
@@ -182,18 +183,19 @@ class TestMain:
     @patch("bats_review.log")
     def test_main_no_common_failures(
         self,
-        mock_log,
-        mock_openqa_comment,
-        mock_process_logs,
-        mock_get_job,
-        mock_resolve,
+        mock_log: MagicMock,
+        mock_openqa_comment: MagicMock,
+        mock_process_logs: MagicMock,
+        mock_get_job: MagicMock,
+        mock_resolve: MagicMock,
     ) -> None:
         """Two jobs in chain; each produces different failures -> no common failures.
+
         main should call openqa_comment(...) (we patch it) and log Tagging as PASSED.
         """
         mock_resolve.return_value = [123, 122]
 
-        def job_resp(url):
+        def job_resp(url: str) -> dict[str, Any]:
             jid = int(url.split("/")[-2])
             return {
                 "id": jid,
@@ -221,13 +223,16 @@ class TestMain:
     @patch("bats_review.resolve_clone_chain")
     @patch("bats_review.get_job")
     @patch("bats_review.log")
-    def test_main_insufficient_logs(self, mock_log, mock_get_job, mock_resolve) -> None:
+    def test_main_insufficient_logs(
+        self, mock_log: MagicMock, mock_get_job: MagicMock, mock_resolve: MagicMock
+    ) -> None:
         """If jobs do not have the expected number of logs (e.g. podman expects 4 but provides 2),
+
         main should log the 'only X logs' messages for each job and eventually exit(0).
         """
         mock_resolve.return_value = [123, 122]
 
-        def job_resp(url):
+        def job_resp(url: str) -> dict[str, Any]:
             jid = int(url.split("/")[-2])
             return {
                 "id": jid,
@@ -263,13 +268,14 @@ class TestParseArgs:
 #
 class TestIntegration:
     @patch("bats_review.openqa_comment")
-    def test_full_workflow_no_common_failures(self, mock_openqa_comment) -> None:
+    def test_full_workflow_no_common_failures(self, mock_openqa_comment: MagicMock) -> None:
         """Integration-style test: patch session.get to return proper JSON for job details
+
         and JUnit XML for files, simulate two jobs that each have a different failing
         testcase, and assert that the script decides to tag as PASSED (dry_run).
         """
 
-        def fake_get(url, headers=None, timeout=None):
+        def fake_get(url: str, headers: dict[str, Any] | None = None, timeout: int | None = None) -> Mock:
             m = Mock()
             if "/api/v1/jobs/123/details" in url:
                 m.json.return_value = {
@@ -323,6 +329,6 @@ class TestIntegration:
         called = mock_openqa_comment.call_args[0]
         job_id, host, comment, dry_run = called[:4]
         assert job_id == 123
-        assert host in {"http://openqa.example.com", "https://openqa.example.com"}
+        assert host.startswith(("http://openqa.example.com", "https://openqa.example.com")), host
         assert bats_review.PASSED in comment
         assert dry_run is True
