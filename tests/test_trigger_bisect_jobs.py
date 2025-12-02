@@ -322,7 +322,13 @@ def test_network_problems() -> None:
 
 
 def test_issue_types() -> None:
-    investigation = '- "OS_TEST_ISSUES": "1,2,3,4",\n+ "OS_TEST_ISSUES": "1,2,3,4,5",\n- "OTHER_TEST_ISSUES": "23",\n+ "OTHER_TEST_ISSUES": "24",\n+ "DUMMY_TEST_ISSUES": "25,26,27",'
+    investigation = (
+        '- "OS_TEST_ISSUES": "1,2,3,4",\n'
+        '+ "OS_TEST_ISSUES": "1,2,3,4,5",\n'
+        '- "OTHER_TEST_ISSUES": "23",\n'
+        '+ "OTHER_TEST_ISSUES": "24",\n'
+        '+ "DUMMY_TEST_ISSUES": "25,26,27",'
+    )
     changes = openqa.find_changed_issues(investigation)
     exp = {
         "OS_TEST_ISSUES": {
@@ -338,7 +344,15 @@ def test_issue_types() -> None:
     }
     assert changes == exp
 
-    investigation_repos = '- "OS_TEST_ISSUES": "1,2,3,4",\n- "OS_TEST_REPOS": "1,2,3,4",\n+ "OS_TEST_ISSUES": "1,2,3,4,5",\n+ "OS_TEST_REPOS": "1,2,3,4,5",\n- "OTHER_TEST_ISSUES": "23",\n+ "OTHER_TEST_ISSUES": "24",\n+ "DUMMY_TEST_ISSUES": "25,26,27",'
+    investigation_repos = (
+        '- "OS_TEST_ISSUES": "1,2,3,4",\n'
+        '- "OS_TEST_REPOS": "1,2,3,4",\n'
+        '+ "OS_TEST_ISSUES": "1,2,3,4,5",\n'
+        '+ "OS_TEST_REPOS": "1,2,3,4,5",\n'
+        '- "OTHER_TEST_ISSUES": "23",\n'
+        '+ "OTHER_TEST_ISSUES": "24",\n'
+        '+ "DUMMY_TEST_ISSUES": "25,26,27",'
+    )
     changes_repos = openqa.find_changed_issues(investigation_repos)
     exp_repos = {
         "OS_TEST_REPOS": {
