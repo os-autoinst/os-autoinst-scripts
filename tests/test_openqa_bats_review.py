@@ -187,6 +187,7 @@ class TestMain:
     @patch("bats_review.log")
     def test_main_no_common_failures(
         self,
+        mock_log: MagicMock,
         mock_openqa_comment: MagicMock,
         mock_process_logs: MagicMock,
         mock_get_job: MagicMock,
@@ -278,7 +279,7 @@ class TestIntegration:
         testcase, and assert that the script decides to tag as PASSED (dry_run).
         """
 
-        def fake_get(url: str) -> Mock:
+        def fake_get(url: str, **kwargs) -> Mock:
             m = Mock()
             if "/api/v1/jobs/123/details" in url:
                 m.json.return_value = {
