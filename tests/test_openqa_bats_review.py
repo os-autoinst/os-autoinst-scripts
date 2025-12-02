@@ -1,6 +1,7 @@
 # Copyright SUSE LLC
 """Unit & integration tests for openqa-bats-review (JUnit XML based)."""
 
+from __future__ import annotations
 import importlib.machinery
 import importlib.util
 import sys
@@ -183,7 +184,6 @@ class TestMain:
     @patch("bats_review.log")
     def test_main_no_common_failures(
         self,
-        mock_log: MagicMock,
         mock_openqa_comment: MagicMock,
         mock_process_logs: MagicMock,
         mock_get_job: MagicMock,
