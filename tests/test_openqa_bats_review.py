@@ -187,7 +187,6 @@ class TestMain:
     @patch("bats_review.log")
     def test_main_no_common_failures(
         self,
-        mock_log: MagicMock,
         mock_openqa_comment: MagicMock,
         mock_process_logs: MagicMock,
         mock_get_job: MagicMock,
