@@ -15,11 +15,8 @@ classifiers = [
 
 dependencies = [
     "httpx",
-    "requests",
-    "sh",
-    "pynetbox",
-    "tenacity",
     "typer",
+    "requests",
 ]
 
 [tool.setuptools]
