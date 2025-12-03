@@ -45,7 +45,7 @@ test-online:
 	# Invalid JSON causes the job to abort with an error
 	-tw_openqa_host=example.com dry_run=1 ./trigger-openqa_in_openqa
 
-checkstyle: test-shellcheck test-yaml checkstyle-python check-code-health
+checkstyle: test-shellcheck test-yaml checkstyle-python check-code-health typecheck check-maintainability
 
 shfmt:
 	shfmt -w ${SH_FILES}
