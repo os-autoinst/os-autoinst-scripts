@@ -27,6 +27,7 @@ packages = []
 
 [project.optional-dependencies]
 dev = [
+    "ty",
     "pytest",
     "pytest-cov",
     "pytest-mock",
