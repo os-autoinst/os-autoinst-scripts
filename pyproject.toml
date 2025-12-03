@@ -51,6 +51,13 @@ fail_under = 100
 show_missing = true
 skip_covered = true
 
+[tool.setuptools]
+include-package-data = true
+zip-safe = false
+
+[tool.setuptools.packages]
+find = {}
+
 [tool.ruff]
 line-length = 120
 preview = true
@@ -160,3 +167,9 @@ unresolved-import = "ignore"
 
 [tool.ty.terminal]
 error-on-warning = true
+
+[tool.pyright]
+include = ["src", "tests", "*.py"]
+
+[tool.pytest.ini_options]
+pythonpath = "src"
