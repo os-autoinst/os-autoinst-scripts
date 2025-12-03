@@ -1,3 +1,4 @@
+# Copyright SUSE LLC
 """tests for openqa-trigger-bisect-jobs."""
 
 import importlib.machinery
