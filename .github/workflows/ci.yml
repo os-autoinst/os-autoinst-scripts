@@ -6,17 +6,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: |
-          pip install --upgrade pip
-          pip install pytest mocker pytest-mock
-          python --version
-          pytest --version
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv sync
       - run: |
           sudo apt-get install cpanminus html-xml-utils xmlstarlet
           sudo cpanm -n -M https://cpan.metacpan.org --installdeps .
       - name: unit- and integration tests
         run: |
-         make test-unit
+         uv run make test-unit
 
   style:
     runs-on: ubuntu-latest
@@ -24,6 +23,10 @@ jobs:
       image: registry.opensuse.org/home/okurz/container/containers/os-autoinst-scripts-devel
     steps:
       - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+      - run: uv sync
       - name: Static checks
         run: |
           git config --global --add safe.directory .
