@@ -68,10 +68,7 @@ for job in scheduled_list_data["data"]:
 
 jobs_worker_classes = sorted(set(jobs_worker_classes))
 print(
-    "Found "
-    + str(len(jobs_worker_classes))
-    + " different WORKER_CLASS in scheduled jobs: "
-    + str(jobs_worker_classes)
+    "Found " + str(len(jobs_worker_classes)) + " different WORKER_CLASS in scheduled jobs: " + str(jobs_worker_classes)
 )
 
 
@@ -110,30 +107,16 @@ for machine in machine_list_idle:
         machine_list_offline.remove(machine)
 
 # Print an overview
-print(
-    str(len(machine_list_idle))
-    + " workers listed fully idle: "
-    + str(machine_list_idle)
-)
-print(
-    str(len(machine_list_offline))
-    + " workers listed offline/dead: "
-    + str(machine_list_offline)
-)
-print(
-    str(len(machine_list_broken))
-    + " workers listed broken: "
-    + str(machine_list_broken)
-)
+print(str(len(machine_list_idle)) + " workers listed fully idle: " + str(machine_list_idle))
+print(str(len(machine_list_offline)) + " workers listed offline/dead: " + str(machine_list_offline))
+print(str(len(machine_list_broken)) + " workers listed broken: " + str(machine_list_broken))
 print(str(len(machine_list_busy)) + " workers listed busy: " + str(machine_list_busy))
 
 # Get WORKER_CLASS for each workers of each machines (idle and offline) and compare to WORKER_CLASS required by scheduled/blocked jobs
 for worker in workers_list_data["workers"]:
     if worker["host"] in machine_list_offline:
         for classes in jobs_worker_classes:
-            if set(classes.split(",")).issubset(
-                worker["properties"]["WORKER_CLASS"].split(",")
-            ):
+            if set(classes.split(",")).issubset(worker["properties"]["WORKER_CLASS"].split(",")):
                 machines_to_power_on.append(worker["host"])
 
     if worker["host"] in machine_list_idle:
@@ -144,16 +127,10 @@ for worker in workers_list_data["workers"]:
 # Power on machines which can run scheduled jobs
 for machine in sorted(set(machines_to_power_on)):
     if machine in machine_list_broken:
-        print(
-            "Removing '"
-            + machine
-            + "' from the list to power ON since some workers are broken there"
-        )
+        print("Removing '" + machine + "' from the list to power ON since some workers are broken there")
     elif args.dry_run:
         print("Would power ON '" + machine + "' - Dry run mode")
-    elif "power_management" in config and config["power_management"].get(
-        machine + "_POWER_ON"
-    ):
+    elif "power_management" in config and config["power_management"].get(machine + "_POWER_ON"):
         print("Powering ON: " + machine)
         subprocess.call(config["power_management"][machine + "_POWER_ON"])
     else:
@@ -163,9 +140,7 @@ for machine in sorted(set(machines_to_power_on)):
 for machine in machine_list_idle + machine_list_broken:
     if args.dry_run:
         print("Would power OFF '" + machine + "' - Dry run mode")
-    elif "power_management" in config and config["power_management"].get(
-        machine + "_POWER_OFF"
-    ):
+    elif "power_management" in config and config["power_management"].get(machine + "_POWER_OFF"):
         print("Powering OFF: " + machine)
         subprocess.call(config["power_management"][machine + "_POWER_OFF"])
     else:

@@ -14,9 +14,7 @@ from requests.exceptions import RequestException
 
 # Load the script as module "bats_review" (the file is named `openqa-bats-review`)
 rootpath = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-loader = importlib.machinery.SourceFileLoader(
-    "bats_review", rootpath + "/openqa-bats-review"
-)
+loader = importlib.machinery.SourceFileLoader("bats_review", rootpath + "/openqa-bats-review")
 spec = importlib.util.spec_from_loader(loader.name, loader)
 bats_review = importlib.util.module_from_spec(spec)
 sys.modules[loader.name] = bats_review
@@ -224,9 +222,7 @@ class TestMain:
         called = mock_openqa_comment.call_args[0]
         job_id, host, comment, dry_run = called[:4]
         assert job_id == 123
-        assert host.startswith(
-            ("http://openqa.example.com", "https://openqa.example.com")
-        ), host
+        assert host.startswith(("http://openqa.example.com", "https://openqa.example.com")), host
         assert bats_review.PASSED in comment
         assert dry_run is True
 

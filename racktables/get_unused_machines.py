@@ -4,16 +4,8 @@ from getpass import getpass
 import os
 
 rt_url = os.environ.get("RT_URL", "https://racktables.suse.de")
-user = (
-    os.environ["RT_USERNAME"]
-    if "RT_USERNAME" in os.environ.keys()
-    else input("Username: ")
-)
-pwd = (
-    os.environ["RT_PASSWORD"]
-    if "RT_PASSWORD" in os.environ.keys()
-    else getpass("Password (masked): ")
-)
+user = os.environ["RT_USERNAME"] if "RT_USERNAME" in os.environ.keys() else input("Username: ")
+pwd = os.environ["RT_PASSWORD"] if "RT_PASSWORD" in os.environ.keys() else getpass("Password (masked): ")
 
 rt = Racktables(rt_url, user, pwd)
 search_payload = {

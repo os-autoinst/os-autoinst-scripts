@@ -18,9 +18,7 @@ class Racktables:
         req = self.s.get(join(self.url, "index.php"), params=params)
         status = req.status_code
         if status == 401:
-            raise Exception(
-                "Racktables returned 401 Unauthorized. Are your credentials correct?"
-            )
+            raise Exception("Racktables returned 401 Unauthorized. Are your credentials correct?")
         elif status >= 300:
             raise Exception(
                 f"Racktables returned statuscode {status} while trying to access {req.request.url}. Manual investigation needed."

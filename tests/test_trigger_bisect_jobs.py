@@ -16,9 +16,7 @@ import requests
 
 rootpath = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 
-loader = importlib.machinery.SourceFileLoader(
-    "openqa", rootpath + "/openqa-trigger-bisect-jobs"
-)
+loader = importlib.machinery.SourceFileLoader("openqa", rootpath + "/openqa-trigger-bisect-jobs")
 spec = importlib.util.spec_from_loader(loader.name, loader)
 openqa = importlib.util.module_from_spec(spec)
 loader.exec_module(openqa)
@@ -73,9 +71,7 @@ def test_catch_CalledProcessError(caplog):
     args.url = "https://openqa.opensuse.org/tests/7848818"
     openqa.fetch_url = MagicMock(side_effect=mocked_fetch_url)
     exp_err = "returned non-zero exit status 255."
-    error = subprocess.CompletedProcess(
-        args=[], returncode=255, stderr=exp_err, stdout=""
-    )
+    error = subprocess.CompletedProcess(args=[], returncode=255, stderr=exp_err, stdout="")
     with patch("subprocess.run", return_value=error):
         with pytest.raises(subprocess.CalledProcessError) as e:
             openqa.main(args)
@@ -85,9 +81,7 @@ def test_catch_CalledProcessError(caplog):
 
     exp_err = "Current job 7848818 will fail, because the repositories for the below updates are unavailable"
     error.stderr = exp_err
-    comment_process = subprocess.CompletedProcess(
-        args=[], returncode=0, stderr="", stdout=b"doo"
-    )
+    comment_process = subprocess.CompletedProcess(args=[], returncode=0, stderr="", stdout=b"doo")
     with patch("subprocess.run", side_effect=[error, comment_process]) as mocked:
         with pytest.raises(SystemExit) as e:
             openqa.main(args)
@@ -118,9 +112,7 @@ def test_clone():
 
 def test_comment():
     openqa.call = MagicMock(side_effect=mocked_call)
-    openqa.openqa_comment(
-        1234567, "https://openqa.opensuse.org", "foo\nbar", dry_run=False
-    )
+    openqa.openqa_comment(1234567, "https://openqa.opensuse.org", "foo\nbar", dry_run=False)
     args = [
         "openqa-cli",
         "api",
@@ -138,9 +130,7 @@ def test_comment():
 
 def test_set_job_prio():
     openqa.call = MagicMock(side_effect=mocked_call)
-    openqa.openqa_set_job_prio(
-        1234567, "https://openqa.opensuse.org", 42, dry_run=False
-    )
+    openqa.openqa_set_job_prio(1234567, "https://openqa.opensuse.org", 42, dry_run=False)
     args = [
         "openqa-cli",
         "api",
@@ -230,9 +220,7 @@ def test_triggers():
         "Automatic bisect jobs:\n\n* **foo:investigate:bisect_without_3**: https://openqa.opensuse.org/t234567\n* **foo:investigate:bisect_without_4**: https://openqa.opensuse.org/t234567\n* **foo:investigate:bisect_without_21637**: https://openqa.opensuse.org/t234567\n* **foo:investigate:bisect_without_22085**: https://openqa.opensuse.org/t234567\n* **foo:investigate:bisect_without_22192**: https://openqa.opensuse.org/t234567\n",
         False,
     )
-    prio_calls = 5 * [
-        call(234567, "https://openqa.opensuse.org/tests/7848818", 150, False)
-    ]
+    prio_calls = 5 * [call(234567, "https://openqa.opensuse.org/tests/7848818", 150, False)]
     assert prio_calls == openqa.openqa_set_job_prio.call_args_list
 
 
