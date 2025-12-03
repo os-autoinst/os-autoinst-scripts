@@ -61,7 +61,7 @@ cmds = [
 
 
 def test_catch_CalledProcessError(caplog: pytest.LogCaptureFixture) -> None:
-    import subprocess
+    import subprocess  # noqa: S404
 
     args = args_factory()
     args.url = "https://openqa.opensuse.org/tests/7848818"
