@@ -24,6 +24,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "pyright",
     "pytest",
     "pytest-cov",
     "pytest-mock",
