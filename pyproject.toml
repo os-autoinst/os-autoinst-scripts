@@ -1,0 +1,14 @@
+[project]
+name = "os-autoinst-scripts"
+dynamic = ["version"]
+description = ""
+readme = "Readme.md"
+requires-python = ">=3.9"
+license = "MIT"
+authors = [
+    { name = "SUSE LLC" },
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+]
