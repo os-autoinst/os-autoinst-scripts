@@ -51,9 +51,9 @@ shfmt:
 	shfmt -w ${SH_FILES}
 
 .PHONY: tidy
-tidy:
-	$(RUNNER) ruff format
-	$(RUNNER) ruff check --fix
+tidy: ## Format code and fix linting issues
+	$(RUNNER) ruff format $(PY_FILES)
+	$(RUNNER) ruff check --fix $(PY_FILES)
 
 test-shellcheck:
 	@which shfmt >/dev/null 2>&1 || echo "Command 'shfmt' not found, can not execute shell script formating checks"
@@ -86,6 +86,15 @@ check-code-health:
 	@echo "Checking code health…"
 	@$(RUNNER) vulture $$(git ls-files "**.py") --min-confidence 80
 
+.PHONY: typecheck
+typecheck:
+	PYRIGHT_PYTHON_FORCE_VERSION=latest $(RUNNER) pyright --skipunannotated --warnings
+
+.PHONY: check-maintainability
+check-maintainability:
+	@echo "Checking maintainability (grade B or worse) …"
+	@$(RUNNER) radon mi ${PY_FILES} -n B | (! grep ".")
+
 .PHONY: test-with-coverage
 test-with-coverage:
 	$(RUNNER) pytest --cov=src/os-autoinst-scripts tests/
@@ -100,11 +109,6 @@ test-gitlint: ## Run commit message checks using gitlint
 	@BASES=$$(for i in upstream/master upstream/main origin/master origin/main master main; do git rev-parse --verify $$i 2>/dev/null; done ||:); \
 	BASE=$$(git merge-base --independent $$BASES | head -n 1); \
 	gitlint --commits "$$BASE..HEAD"
-
-.PHONY: tidy
-tidy: ## Format code and fix linting issues
-	ruff format $(PY_FILES)
-	ruff check --fix $(PY_FILES)
 
 update-deps:
 	tools/update-deps --cpanfile cpanfile --specfile dist/rpm/os-autoinst-scripts-deps.spec
