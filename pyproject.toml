@@ -41,6 +41,13 @@ fail_under = 100
 show_missing = true
 skip_covered = true
 
+[tool.setuptools]
+include-package-data = true
+zip-safe = false
+
+[tool.setuptools.packages]
+find = {}
+
 [tool.ruff]
 line-length = 120
 preview = true
@@ -159,3 +166,9 @@ docstring-code-format = true
 [tool.ruff.lint.flake8-copyright]
 author = "SUSE LLC"
 notice-rgx = "Copyright"
+
+[tool.pyright]
+include = ["src", "tests", "*.py"]
+
+[tool.pytest.ini_options]
+pythonpath = "src"
