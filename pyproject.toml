@@ -24,6 +24,7 @@ packages = []
 
 [project.optional-dependencies]
 dev = [
+    "pyright",
     "pytest",
     "pytest-cov",
     "pytest-mock",
