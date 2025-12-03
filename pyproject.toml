@@ -26,6 +26,7 @@ dev = [
     "pytest-cov",
     "pytest-mock",
     "coverage",
+    "radon",
     "ruff",
 ]
 

@@ -29,7 +29,7 @@ Source0:        %{base_name}-%{version}.tar.xz
 # The following line is generated from dependencies.yaml
 %define main_requires bash coreutils curl grep html-xml-utils jq openQA-client openssh-clients osc perl >= 5.010 perl(Data::Dumper) perl(FindBin) perl(Getopt::Long) perl(Mojo::File) perl(Text::Markdown) perl(YAML::PP) python3-pynetbox python3-requests python3-sh python3-tenacity retry sed sudo xmlstarlet yq
 # The following line is generated from dependencies.yaml
-%define test_requires perl(Test::MockModule) perl(Test::Most) perl(Test::Output) perl(Test::Warnings) python3-pytest python3-pytest-mock
+%define test_requires perl(Test::MockModule) perl(Test::Most) perl(Test::Output) perl(Test::Warnings) python3-pytest python3-pytest-mock python3-radon
 # The following line is generated from dependencies.yaml
 %define devel_requires python3-yamllint shfmt
 Requires:       %main_requires

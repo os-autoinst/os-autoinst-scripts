@@ -47,6 +47,7 @@ test_requires:
   perl(Test::Most):
   python3-pytest:
   python3-pytest-mock:
+  python3-radon:
 devel_requires:
   python3-yamllint:
   shfmt:
