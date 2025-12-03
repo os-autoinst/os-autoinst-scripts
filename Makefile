@@ -1,4 +1,5 @@
 SH_FILES ?= $(shell file --mime-type $$(git ls-files) test/*.t | sed -n 's/^\(.*\):.*text\/x-shellscript.*$$/\1/p')
+PYTHON_FILES ?= $(shell git ls-files "**.py")
 RUNNER ?= uv run
 
 ifndef CI
@@ -61,6 +62,15 @@ test-yaml:
 checkstyle-python:
 	$(RUNNER) ruff check
 	$(RUNNER) ruff format --check
+
+.PHONY: typecheck
+typecheck:
+	PYRIGHT_PYTHON_FORCE_VERSION=latest pyright --skipunannotated --warnings
+
+.PHONY: check-maintainability
+check-maintainability:
+	@echo "Checking maintainability (grade B or worse) …"
+	@radon mi ${PYTHON_FILES} -n B | (! grep ".")
 
 .PHONY: test-with-coverage
 test-with-coverage:
