@@ -169,6 +169,12 @@ notice-rgx = "Copyright"
 
 [tool.pyright]
 include = ["src", "tests", "*.py"]
+exclude = [
+    "check-netbox-machine-state.py",
+    "openqa-powermanagement.py",
+    "tests/test_openqa_bats_review.py",
+    "tests/test_trigger_bisect_jobs.py",
+]
 
 [tool.pytest.ini_options]
 pythonpath = "src"
