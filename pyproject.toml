@@ -167,6 +167,9 @@ docstring-code-format = true
 author = "SUSE LLC"
 notice-rgx = "Copyright"
 
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["typer.Argument"]
+
 [tool.pyright]
 include = ["src", "tests", "*.py"]
 exclude = [
