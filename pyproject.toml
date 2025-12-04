@@ -165,6 +165,8 @@ unresolved-import = "ignore"
 [tool.ty.terminal]
 error-on-warning = true
 
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["typer.Argument"]
 [tool.pyright]
 include = ["src", "tests", "*.py"]
 exclude = [
