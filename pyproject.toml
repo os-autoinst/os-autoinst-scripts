@@ -150,6 +150,9 @@ notice-rgx = "Copyright"
 "os.system".msg = "Use `subprocess.run` or `sh` library instead."
 "subprocess.call".msg = "Use `subprocess.run` with `check=True`."
 
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["typer.Argument"]
+
 [tool.pyright]
 include = ["src", "tests", "*.py"]
 exclude = [
