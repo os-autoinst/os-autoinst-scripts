@@ -16,7 +16,7 @@ classifiers = [
 dependencies = [
     "requests",
     "sh",
-    "beautifulsoup4",
+    "pynetbox",
 ]
 
 [dependency-groups]

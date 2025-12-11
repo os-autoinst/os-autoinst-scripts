@@ -1,1 +1,0 @@
-# Copyright SUSE LLC

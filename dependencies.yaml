@@ -37,7 +37,8 @@ main_requires:
   html-xml-utils:
   xmlstarlet:
   python3-requests:
-  python3-beautifulsoup4:
+  python3-sh:
+  python3-pynetbox:
 test_requires:
   perl(Test::Output):
   perl(Test::Warnings):
