@@ -20,9 +20,7 @@ main_requires:
   curl:
   grep:
   jq:
-  yq:
-  sed:
-  sudo:
+  html-xml-utils:
   openQA-client:  # openqa-cli
   osc:
   openssh-clients:  # ssh
@@ -33,12 +31,14 @@ main_requires:
   perl(Mojo::File):
   perl(Text::Markdown):
   perl(YAML::PP):
-  retry:
-  html-xml-utils:
-  xmlstarlet:
+  python3-pynetbox:
   python3-requests:
   python3-sh:
-  python3-pynetbox:
+  retry:
+  sed:
+  sudo:
+  xmlstarlet:
+  yq:
 test_requires:
   perl(Test::Output):
   perl(Test::Warnings):
