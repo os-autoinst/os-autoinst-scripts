@@ -17,6 +17,7 @@ dependencies = [
     "requests",
     "sh",
     "pynetbox",
+    "tenacity",
 ]
 
 [dependency-groups]

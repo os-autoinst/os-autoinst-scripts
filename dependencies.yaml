@@ -34,6 +34,7 @@ main_requires:
   python3-pynetbox:
   python3-requests:
   python3-sh:
+  python3-tenacity:
   retry:
   sed:
   sudo:
