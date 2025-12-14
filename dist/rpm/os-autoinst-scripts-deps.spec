@@ -15,7 +15,11 @@
 # Please submit bugfixes or comments via http://bugs.opensuse.org/
 #
 
-
+%if 0%{?suse_version} <= 1560
+%bcond_without tests
+%else
+%bcond_with tests
+%endif
 %define         base_name os-autoinst-scripts
 Name:           %{base_name}-deps
 Version:        1
@@ -59,8 +63,10 @@ in %{base_name}-deps
 %install
 
 %check
+%if %{with tests}
 # Can't run bash tests because it needs to clone bpan via git
 make test-python
+%endif
 
 %files
 
