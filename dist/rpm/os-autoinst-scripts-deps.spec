@@ -16,9 +16,9 @@
 #
 
 %if 0%{?suse_version} <= 1560
-%bcond_without tests
-%else
 %bcond_with tests
+%else
+%bcond_without tests
 %endif
 %define         base_name os-autoinst-scripts
 Name:           %{base_name}-deps
