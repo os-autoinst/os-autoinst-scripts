@@ -14,16 +14,22 @@ classifiers = [
 ]
 
 dependencies = [
+    "typer",
+    "httpx",
     "requests",
     "sh",
     "pynetbox",
+    "tenacity",
 ]
 
 [dependency-groups]
 dev = [
+    "pyright",
     "pytest",
     "pytest-cov",
+    "pytest-mock",
     "coverage",
+    "radon",
     "ruff",
 ]
 
@@ -34,6 +40,13 @@ branch = true
 fail_under = 100
 show_missing = true
 skip_covered = true
+
+[tool.setuptools]
+include-package-data = true
+zip-safe = false
+
+[tool.setuptools.packages]
+find = {}
 
 [tool.ruff]
 line-length = 120
@@ -153,3 +166,19 @@ docstring-code-format = true
 [tool.ruff.lint.flake8-copyright]
 author = "SUSE LLC"
 notice-rgx = "Copyright"
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["typer.Argument"]
+
+[tool.pyright]
+include = ["src", "tests", "*.py"]
+exclude = [
+    "check-netbox-machine-state.py",
+    "openqa-powermanagement.py",
+    "tests/test_chat_notify.py",
+    "tests/test_openqa_bats_review.py",
+    "tests/test_trigger_bisect_jobs.py",
+]
+
+[tool.pytest.ini_options]
+pythonpath = "src"
