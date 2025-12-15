@@ -17,13 +17,16 @@ dependencies = [
     "requests",
     "sh",
     "pynetbox",
+    "tenacity",
 ]
 
 [dependency-groups]
 dev = [
     "pytest",
     "pytest-cov",
+    "pytest-mock",
     "coverage",
+    "radon",
     "ruff",
 ]
 
