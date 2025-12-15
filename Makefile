@@ -20,7 +20,13 @@ BPAN := .bpan
 #------------------------------------------------------------------------------
 default:
 
-test: checkstyle test-unit
+.PHONY: test
+ifeq ($(CHECKSTYLE),0)
+checkstyle_tests =
+else
+checkstyle_tests = checkstyle
+endif
+test: $(checkstyle_tests) test-unit
 
 test-unit: test-bash test-python
 
