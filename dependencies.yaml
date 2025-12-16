@@ -40,6 +40,7 @@ main_requires:
   sudo:
   xmlstarlet:
   yq:
+  iputils:
 test_requires:
   perl(Test::Output):
   perl(Test::Warnings):
