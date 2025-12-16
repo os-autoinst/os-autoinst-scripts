@@ -1,4 +1,5 @@
 SH_FILES ?= $(shell file --mime-type $$(git ls-files) test/*.t | sed -n 's/^\(.*\):.*text\/x-shellscript.*$$/\1/p')
+SH_SHELLCHECK_FILES ?= $(shell file --mime-type * | sed -n 's/^\(.*\):.*text\/x-shellscript.*$$/\1/p')
 
 ifndef CI
 include .setup.mk
@@ -19,7 +20,13 @@ BPAN := .bpan
 #------------------------------------------------------------------------------
 default:
 
-test: checkstyle test-unit
+.PHONY: test
+ifeq ($(CHECKSTYLE),0)
+checkstyle_tests =
+else
+checkstyle_tests = checkstyle
+endif
+test: $(checkstyle_tests) test-unit
 
 test-unit: test-bash test-python
 
@@ -44,7 +51,7 @@ test-shellcheck:
 	@which shfmt >/dev/null 2>&1 || echo "Command 'shfmt' not found, can not execute shell script formating checks"
 	shfmt -d ${SH_FILES}
 	@which shellcheck >/dev/null 2>&1 || echo "Command 'shellcheck' not found, can not execute shell script checks"
-	files=$$(file --mime-type * | sed -n 's/^\(.*\):.*text\/x-shellscript.*$$/\1/p'); if [ -n "$$files" ]; then shellcheck -x $$(file --mime-type * | sed -n 's/^\(.*\):.*text\/x-shellscript.*$$/\1/p'); fi
+	if [ -n "${SH_SHELLCHECK_FILES}" ]; then shellcheck -x ${SH_SHELLCHECK_FILES}; fi
 
 test-yaml:
 	@which yamllint >/dev/null 2>&1 || echo "Command 'yamllint' not found, can not execute YAML syntax checks"

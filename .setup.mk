@@ -3,6 +3,4 @@ SHELL := bash
 .DELETE_ON_ERROR:
 .SECONDEXPANSION:
 
-ifeq (,$(shell git diff --stat))
-GIT_STATUS_IS_CLEAN := 1
-endif
+GIT_STATUS_IS_CLEAN := $(shell if [ ! -d .git ] || [ -z "$$(git diff --stat 2>/dev/null)" ]; then echo 1; fi)
