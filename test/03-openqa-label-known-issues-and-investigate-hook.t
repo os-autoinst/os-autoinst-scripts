@@ -56,13 +56,13 @@ has "$got" "- openqa-trigger-bisect-jobs"
 
 try hook 125
 is "$rc" 0 'successful hook (125)'
-has "$got" "- openqa-label-known-issues"
+hasnt "$got" "- openqa-label-known-issues"
 has "$got" "- openqa-investigate"
 has "$got" "- openqa-trigger-bisect-jobs"
 
 try hook 126
 is "$rc" 0 'successful hook (126)'
-has "$got" "- openqa-label-known-issues"
+hasnt "$got" "- openqa-label-known-issues"
 has "$got" "- openqa-investigate"
 has "$got" "- openqa-trigger-bisect-jobs"
 
