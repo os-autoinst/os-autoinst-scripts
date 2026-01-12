@@ -40,10 +40,11 @@ hook() {
     # shellcheck disable=SC2154
     [[ $job_data =~ $not_found_regex ]] && warn "Ignoring non-existent job $id" && return
     [[ $rc != 0 ]] && return $rc
+    name="$(echo "$job_data" | runjq -r '.job.test')" || return $?
     state="$(echo "$job_data" | runjq -r '.job.state')" || return $?
     result="$(echo "$job_data" | runjq -r '.job.result')" || return $?
     [[ "$state" != "done" ]] && return
-    if [[ "$result" != passed ]]; then
+    if [[ $result != passed && ! $name =~ ":investigate:" ]]; then
         testsuite="$(echo "$job_data" | runjq -r '.job.settings.TEST')"
         # Remove optional "container_host_" prefix
         testsuite="${testsuite#container_host_}"
