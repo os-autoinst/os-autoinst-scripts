@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 source test/init
-plan tests 13
+plan tests 16
 
 mock_osc() {
     local cmd=$1
@@ -74,4 +74,19 @@ _request_list() { echo "${_requests[@]}"; }
 submit_target=openSUSE:Backports:SLE-15-SP6:Update
 try has_pending_submission "$package" "$submit_target"
 is "$rc" 1 "returns 1 with existing maintenance incident that is more recent than throttle config of $throttle_days days"
-like "$got" "info.*Skipping submission.*pending SR"
+like "$got" "info.*Skipping submission.*pending SR" "expected output (skipping)"
+
+diag "########### make_obs_submit_request"
+mock_osc() {
+    echo ''
+}
+try make_obs_submit_request openQA Factory 3.14 cmd="echo test"
+is "$rc" 3 "failure when osc does not return XML"
+
+mock_osc() {
+    echo '<collection><request id="23"/></collection>'
+}
+
+try make_obs_submit_request openQA Factory 3.14 cmd="echo test"
+is "$rc" 0 "success"
+like "$got" "osc sr -s 23 -m Update to 3.14 Factory" "Superseding as expected"

@@ -58,7 +58,7 @@ get_obs_sr_id() {
     local states actions
     states=$(encode_variable "state/@name='declined' or state/@name='new' or state/@name='review'")
     actions=$(encode_variable "action/target/@project='$target' and action/source/@project='$dst_project' and action/source/@package='$package'")
-    debug_osc api "/search/request/id?match=($states)%20and%20($actions)" | xmlstarlet sel -t -v "/collection/request/@id"
+    debug_osc api "/search/request/id?match=($states)%20and%20($actions)" | xmlstarlet sel -t -v "/collection/request/@id" || return $?
 }
 
 reenable_buildtime_services() {
@@ -95,7 +95,7 @@ wait_for_package_build() {
 make_obs_submit_request() {
     # shellcheck disable=SC2206
     local package=$1 target=$2 version=$3 cmd=(debug_osc sr) req='' # $osc is supposed to be split, hence disabling SC2206
-    req=$(get_obs_sr_id "$target" "$dst_project" "$package" || :)
+    req=$(get_obs_sr_id "$target" "$dst_project" "$package") || return $?
     # TODO: check if it's a different revision than HEAD
     [[ -n $req ]] && cmd+=(-s "$req")
     "${cmd[@]}" -m "Update to ${version}" "$target" || return $?
