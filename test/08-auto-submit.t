@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 source test/init
-plan tests 16
+plan tests 18
 
 mock_osc() {
     local cmd=$1
@@ -89,4 +89,12 @@ mock_osc() {
 
 try make_obs_submit_request openQA Factory 3.14 cmd="echo test"
 is "$rc" 0 "success"
-like "$got" "osc sr -s 23 -m Update to 3.14 Factory" "Superseding as expected"
+like "$got" "osc sr -s 23 -m Update to 3.14 Factory" "superseding as expected"
+
+mock_osc() {
+    echo '<collection></collection>'
+}
+
+try make_obs_submit_request openQA Factory 3.14 cmd="echo test"
+is "$rc" 0 "success when xmlstarlet did not find anything"
+like "$got" "osc sr -m Update" "creating new request as expected"
