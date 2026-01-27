@@ -19,7 +19,7 @@ logging.basicConfig()
 log = logging.getLogger(sys.argv[0] if __name__ == "__main__" else __name__)
 GOOD = "-"
 BAD = "+"
-INCIDENT_FROM_REPO_URL_RE = re.compile(r".*PullRequest:/(\d+):/.*")
+INCIDENT_FROM_REPO_URL_RE = re.compile(r".*(PullRequest|Maintenance):/(smelt:)?(?P<number>\d+):?/.*")
 
 
 class CustomFormatter(
@@ -43,7 +43,7 @@ class Incident:
 
         try:
             match = INCIDENT_FROM_REPO_URL_RE.search(self.incident)
-            self._incident_id = match.group(1) if match else self.incident.split("/")[6]
+            self._incident_id = match.group("number") if match else self.incident.split("/")[6]
         except IndexError:
             self._incident_id = self.incident
 

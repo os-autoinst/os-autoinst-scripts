@@ -372,3 +372,6 @@ def test_issue_types() -> None:
 def test_parsing_incident_id_from_repo() -> None:
     i = Incident("http://%REPO_MIRROR_HOST%/ibs/SUSE:/SLFO:/1.2:/PullRequest:/1266:/SL-Micro/…/")
     assert i.incident_id == "1266"
+
+    i = Incident("http://%REPO_MIRROR_HOST%/ibs/SUSE:/Maintenance:/smelt:42202/SUSE_…_x86_64/")
+    assert i.incident_id == "42202"
