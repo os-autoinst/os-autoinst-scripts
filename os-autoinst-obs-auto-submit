@@ -292,7 +292,10 @@ handle_auto_submit() {
 }
 
 get_project_packages() {
-    echo "${packages:-$(debug_osc ls "$dst_project" | grep -v '\-test$')}"
+    out=${packages:-$(debug_osc ls "$dst_project" | grep -v '\-test$')}
+    out_filtered=$(echo "$out" | grep -v --perl-regexp '[\s:\/,]+')
+    [[ $out != "$out_filtered" ]] && log-warn "The command 'osc ls $dst_project' returned invalid output. The full output was:\n$out"
+    echo "$out_filtered"
 }
 
 has_pending_submission() {
