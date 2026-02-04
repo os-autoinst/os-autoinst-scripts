@@ -20,6 +20,7 @@ from urllib.parse import urlparse
 from typing import List, Set
 
 import requests
+from requests.adapters import HTTPAdapter
 from requests.exceptions import RequestException
 
 
@@ -29,7 +30,11 @@ USER_AGENT = "openqa-bats-review (https://github.com/os-autoinst/os-autoinst-scr
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 log = logging.getLogger(sys.argv[0] if __name__ == "__main__" else __name__)
+
 session = requests.Session()
+adapter = HTTPAdapter(pool_connections=100, pool_maxsize=100, max_retries=3)
+session.mount("http://", adapter)
+session.mount("https://", adapter)
 
 
 client_args = [
