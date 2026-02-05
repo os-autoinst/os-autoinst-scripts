@@ -1,5 +1,7 @@
 SH_FILES ?= $(shell file --mime-type $$(git ls-files) test/*.t | sed -n 's/^\(.*\):.*text\/x-shellscript.*$$/\1/p')
 SH_SHELLCHECK_FILES ?= $(shell file --mime-type * | sed -n 's/^\(.*\):.*text\/x-shellscript.*$$/\1/p')
+PYTHON_FILES ?= $(shell git ls-files "**.py")
+RUNNER ?= uv run
 
 ifndef CI
 include .setup.mk
@@ -33,8 +35,9 @@ test-unit: test-bash test-python
 test-bash: $(BPAN)
 	prove -r $(if $v,-v )$(test)
 
+.PHONY: test-python
 test-python:
-	py.test tests
+	PYTHONPATH=src:$(PYTHONPATH) $(RUNNER) pytest
 
 test-online:
 	dry_run=1 bash -x ./openqa-label-known-issues-multi < ./tests/incompletes
@@ -42,10 +45,15 @@ test-online:
 	# Invalid JSON causes the job to abort with an error
 	-tw_openqa_host=example.com dry_run=1 ./trigger-openqa_in_openqa
 
-checkstyle: test-shellcheck test-yaml checkstyle-python
+checkstyle: test-shellcheck test-yaml checkstyle-python typecheck check-maintainability
 
 shfmt:
 	shfmt -w ${SH_FILES}
+
+.PHONY: tidy
+tidy:
+	$(RUNNER) ruff format
+	$(RUNNER) ruff check --fix
 
 test-shellcheck:
 	@which shfmt >/dev/null 2>&1 || echo "Command 'shfmt' not found, can not execute shell script formating checks"
@@ -57,9 +65,27 @@ test-yaml:
 	@which yamllint >/dev/null 2>&1 || echo "Command 'yamllint' not found, can not execute YAML syntax checks"
 	yamllint --strict $$(git ls-files "*.yml" "*.yaml" ":!external/")
 
+.PHONY: checkstyle-python
 checkstyle-python:
-	@which ruff >/dev/null 2>&1 || echo "Command 'ruff' not found, can not execute python style checks"
-	ruff format --check && ruff check
+	$(RUNNER) ruff check
+	$(RUNNER) ruff format --check
+
+.PHONY: typecheck
+typecheck:
+	PYRIGHT_PYTHON_FORCE_VERSION=latest pyright --skipunannotated --warnings
+
+.PHONY: check-maintainability
+check-maintainability:
+	@echo "Checking maintainability (grade B or worse) …"
+	@radon mi ${PYTHON_FILES} -n B | (! grep ".")
+
+.PHONY: test-with-coverage
+test-with-coverage:
+	PYTHONPATH=src:$(PYTHONPATH) $(RUNNER) pytest --cov=src/os-autoinst-scripts tests/
+
+.PHONY: install-python-deps
+install-python-deps:
+	$(RUNNER) sync
 
 update-deps:
 	tools/update-deps --cpanfile cpanfile --specfile dist/rpm/os-autoinst-scripts-deps.spec

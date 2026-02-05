@@ -17,6 +17,9 @@ jobs:
       - name: Check SUSE QE Tools WIP-Limit
         id: wip-limit
         run: sh -ex backlog-check-wip-limit
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
       - name: Check step status
         id: step_check
         if: always()
@@ -29,7 +32,7 @@ jobs:
         if: (success() || failure()) && steps.step_check.outcome == 'failure'
         continue-on-error: true
         run: |
-          . chat_notify.sh "matrix.org" "${{steps.step_check.outputs.result}}" \
+          uv run python3 chat_notify.py "matrix.org" "${{steps.step_check.outputs.result}}" \
             "${{secrets.MATRIX_ACCESS_TOKEN}}" "${{secrets.MATRIX_ROOM_ID}}"
   set_suse_qe_tools_due_dates:
     name: Set SUSE QE Tools due dates
