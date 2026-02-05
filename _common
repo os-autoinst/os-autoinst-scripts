@@ -423,10 +423,10 @@ debug_osc() (
         attempts=$((attempts - 1))
         log-warn "'$osc $*' output seems to contain HTTP header."
         if [[ $attempts -eq 0 ]]; then
-            log-info "Full output: $out"
+            log-warn "Full output: $out"
             return 1
         fi
-        log-info "Trying $attempts more times after $sleep_interval seconds …"
+        log-warn "Trying $attempts more times after $sleep_interval seconds …"
         sleep "$sleep_interval"
         sleep_interval=$((sleep_interval * 2))
         out=$($osc "$@")
