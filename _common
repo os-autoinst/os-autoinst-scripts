@@ -431,5 +431,5 @@ debug_osc() (
         sleep_interval=$((sleep_interval * 2))
         out=$($osc "$@")
     done
-    echo -n "$out"
+    echo "$out"
 )
