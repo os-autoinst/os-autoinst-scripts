@@ -222,6 +222,8 @@ def main(url: str, dry_run: bool = False) -> None:
             expected["buildah_testsuite"] += 1
             # For conmon we also test crun as root & rootless
             expected["conmon_testsuite"] += 2
+            # For containerd we also run the critest
+            expected["containerd_testsuite"] += 1
             expected["docker_testsuite"] += 6
             # For skopeo we also run Golang integration tests
             expected["skopeo_testsuite"] += 1
