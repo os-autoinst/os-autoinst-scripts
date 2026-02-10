@@ -417,19 +417,5 @@ log-error() (
 debug_osc() (
     set +x
     log-debug "### osc $*"
-    local out attempts=${osc_output_retries:-3} sleep_interval=${osc_sleep_interval:-3}
-    out=$($osc "$@")
-    while [[ $attempts -gt 0 ]] && echo "$out" | grep --quiet --perl-regexp '^Request: '; do
-        attempts=$((attempts - 1))
-        log-warn "'$osc $*' output seems to contain HTTP header."
-        if [[ $attempts -eq 0 ]]; then
-            log-warn "Full output: $out"
-            return 1
-        fi
-        log-warn "Trying $attempts more times after $sleep_interval seconds …"
-        sleep "$sleep_interval"
-        sleep_interval=$((sleep_interval * 2))
-        out=$($osc "$@")
-    done
-    echo "$out"
+    $osc "$@"
 )
