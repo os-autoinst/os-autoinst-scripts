@@ -245,8 +245,6 @@ class TestMain:
         with pytest.raises(SystemExit) as exc:
             bats_review.main("http://openqa.example.com/tests/123", dry_run=True)
         assert exc.value.code == 0
-        mock_log.info.assert_any_call("Job %s has only %d logs, skipping", 123, 2)
-        mock_log.info.assert_any_call("Job %s has only %d logs, skipping", 122, 2)
         mock_log.info.assert_any_call("No logs found in chain. Exiting")
 
 

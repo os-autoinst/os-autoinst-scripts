@@ -186,13 +186,32 @@ def main(url: str, dry_run: bool = False) -> None:
         "docker_rootless_testsuite": 12,
         "docker_testsuite": 13,
         "netavark_testsuite": 1,
-        "podman_e2e": 4,
+        "podman_e2e": 3,
         "podman_rootless_e2e": 3,
         "podman_testsuite": 4,
         "runc_testsuite": 2,
         "skopeo_testsuite": 2,
         "umoci_testsuite": 2,
     }
+
+    job_id = chain[0]
+    job = get_job(f"{openqa_host}/api/v1/jobs/{job_id}/details")
+    # We have more tests on Tumbleweed
+    if job["settings"]["DISTRI"] == "opensuse":
+        # For buildah we also run conformance tests
+        expected["buildah_testsuite"] += 1
+        # For conmon we also test crun as root & rootless
+        expected["conmon_testsuite"] += 2
+        # For containerd we also run the critest
+        expected["containerd_testsuite"] += 1
+        expected["docker_testsuite"] += 6
+        # We also run the remoteintegration test for crun, skip it for runc
+        if job["settings"].get("OCI_RUNTIME") == "crun":
+            expected["podman_e2e"] += 1
+        # For skopeo we also run Golang integration tests
+        expected["skopeo_testsuite"] += 1
+    elif job["settings"]["DISTRI"] == "sle" and job["settings"]["VERSION"].startswith("16."):
+        expected["docker_testsuite"] += 6
 
     all_failures = []
 
@@ -216,22 +235,9 @@ def main(url: str, dry_run: bool = False) -> None:
         if testsuite.endswith("_crun"):
             testsuite = testsuite[: -len("_crun")]
 
-        # We have more tests on Tumbleweed
-        if job["settings"]["DISTRI"] == "opensuse":
-            # For buildah we also run conformance tests
-            expected["buildah_testsuite"] += 1
-            # For conmon we also test crun as root & rootless
-            expected["conmon_testsuite"] += 2
-            # For containerd we also run the critest
-            expected["containerd_testsuite"] += 1
-            expected["docker_testsuite"] += 6
-            # For skopeo we also run Golang integration tests
-            expected["skopeo_testsuite"] += 1
-        elif job["settings"]["DISTRI"] == "sle" and job["settings"]["VERSION"].startswith("16."):
-            expected["docker_testsuite"] += 6
-
         if len(logs) != expected[testsuite]:
-            log.info("Job %s has only %d logs, skipping", job_id, len(logs))
+            log.info("Job %s has only %d logs (expected: %d for %s), skipping",
+                job_id, len(logs), expected[testsuite], testsuite)
             continue
 
         failed = process_logs(logs)
