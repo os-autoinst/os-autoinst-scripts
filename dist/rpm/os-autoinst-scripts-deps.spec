@@ -31,7 +31,7 @@ BuildArch:      noarch
 Url:            https://github.com/os-autoinst/%{base_name}
 Source0:        %{base_name}-%{version}.tar.xz
 # The following line is generated from dependencies.yaml
-%define main_requires bash coreutils curl grep html-xml-utils iputils jq openQA-client openssh-clients osc perl >= 5.010 perl(Data::Dumper) perl(FindBin) perl(Getopt::Long) perl(Mojo::File) perl(Text::Markdown) perl(YAML::PP) python3-pynetbox python3-requests python3-sh python3-tenacity retry sed sudo xmlstarlet yq
+%define main_requires bash coreutils curl grep html-xml-utils iputils jq openQA-client openssh-clients osc perl >= 5.010 perl(Data::Dumper) perl(FindBin) perl(Getopt::Long) perl(Mojo::File) perl(Text::Markdown) perl(YAML::PP) python3-net-snmp python3-pynetbox python3-requests python3-sh python3-tenacity retry sed sudo xmlstarlet yq
 # The following line is generated from dependencies.yaml
 %define test_requires perl(Test::MockModule) perl(Test::Most) perl(Test::Output) perl(Test::Warnings) python3-pytest python3-pytest-mock python3-radon
 # The following line is generated from dependencies.yaml
