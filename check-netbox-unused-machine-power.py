@@ -42,7 +42,7 @@ outletWatts = ".1.3.6.1.4.1.534.6.6.7.6.5.1.3"
 nb = pynetbox.api("https://netbox.suse.de", token=netbox_token)
 
 # Fetch devices matching the tag and status filter
-devices = nb.dcim.devices.filter(tag="qe-lsg", status__n="active", location_id__n={11, 103}, site_id="5")
+devices = nb.dcim.devices.filter(tag="qe-lsg", status__n="active", location_id__n={11, 103}, site_id=5, role_id=24)
 
 power_hungry_devices = []
 good_devices = []
