@@ -186,7 +186,7 @@ def main(url: str, dry_run: bool = False) -> None:
         "docker_rootless_testsuite": 12,
         "docker_testsuite": 13,
         "netavark_testsuite": 1,
-        "podman_e2e": 3,
+        "podman_e2e": 4,
         "podman_rootless_e2e": 3,
         "podman_testsuite": 4,
         "runc_testsuite": 2,
@@ -205,9 +205,6 @@ def main(url: str, dry_run: bool = False) -> None:
         # For containerd we also run the critest
         expected["containerd_testsuite"] += 1
         expected["docker_testsuite"] += 6
-        # We also run the remoteintegration test for crun, skip it for runc
-        if job["settings"].get("OCI_RUNTIME") == "crun":
-            expected["podman_e2e"] += 1
         # For skopeo we also run Golang integration tests
         expected["skopeo_testsuite"] += 1
     elif job["settings"]["DISTRI"] == "sle" and job["settings"]["VERSION"].startswith("16."):
