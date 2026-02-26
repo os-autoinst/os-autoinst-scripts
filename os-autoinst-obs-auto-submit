@@ -187,6 +187,11 @@ update_package() {
     # in this package/container. So add some text.
     sed -i -e 's/^  \* $/  * Update to latest openQA version/' ./*.changes
     debug_osc status
+    number_of_relevant_changed_files=$(debug_osc status | grep -v --count --perl-regexp '\.changes$')
+    if [[ $number_of_relevant_changed_files -lt 1 ]]; then
+        log-info "## Not updating package '$dst_project/$package' as only changelogs were modified"
+        return 0
+    fi
     debug_osc ci -m "Offline generation of ${version}" $ci_args
     rc=0
     wait_for_package_build "$submit_target"
