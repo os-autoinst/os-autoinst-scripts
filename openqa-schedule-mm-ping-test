@@ -5,6 +5,7 @@ set -eu -o pipefail
 
 openqa_url=${openqa_url:-https://openqa.opensuse.org}
 distri=${distri:-opensuse}
+casedir=${casedir:-openqa}
 flavor=${flavor:-DVD}
 flavor_override=${flavor_override:-mm-monitoring} # override flavor to avoid obsoletion by other scheduled products
 arch=${arch:-x86_64}
@@ -58,11 +59,11 @@ job_templates:
 EOF
 
 # shellcheck disable=SC2016
-hdd=$(runcli openqa-cli api --host "$openqa_url" jobs version="$version" scope=relevant arch="$arch" machine="$machine" flavor="$flavor" test="$test_name" latest=1 | runjq -r --arg regex "$build_regex" '.jobs | map(select(.result == "passed")) | map(select (.settings.BUILD | match($regex))) | max_by(.settings.BUILD) .settings.HDD_1')
+hdd=$(runcli openqa-cli api --host "$openqa_url" jobs version="$version" scope=relevant arch="$arch" machine="$machine" flavor="$flavor" casedir="$casedir" test="$test_name" latest=1 | runjq -r --arg regex "$build_regex" '.jobs | map(select(.result == "passed")) | map(select (.settings.BUILD | match($regex))) | max_by(.settings.BUILD) .settings.HDD_1')
 time openqa-cli schedule \
     --monitor --follow \
     --host "$openqa_url" \
     --param-file SCENARIO_DEFINITIONS_YAML="$tmpfile" \
     DISTRI="$distri" VERSION="$version" FLAVOR="$flavor_override" ARCH="$arch" \
-    BUILD="$(date -Im)" _GROUP_ID=0 \
+    CASEDIT="$casedir" BUILD="$(date -Im)" _GROUP_ID=0 \
     HDD_1="$hdd"

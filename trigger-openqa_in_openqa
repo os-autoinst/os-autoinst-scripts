@@ -8,6 +8,7 @@ set -euo pipefail
 
 # configuration variables with defaults.
 color=${color:-auto}
+casedir=${casedir:-openqa}
 target_host="${target_host:-"openqa.opensuse.org"}"
 target_host_proto="${target_host_proto:-"https"}"
 dry_run="${dry_run:-"0"}"
@@ -116,6 +117,7 @@ trigger() {
         schedule --host "${target_host_proto}://${target_host}" \
         --param-file SCENARIO_DEFINITIONS_YAML=/var/tmp/sd.yaml \
         VERSION=Tumbleweed \
+        CASEDIR=${casedr} \
         DISTRI=openqa FLAVOR="${flavor}" ARCH="${arch}" \
         HDD_1="$qcow" BUILD="${build}" _GROUP="${group_id}" \
         OPENQA_OBS_PROJECT="$staging_project" \
