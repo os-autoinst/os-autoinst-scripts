@@ -5,6 +5,8 @@ sudo zypper -n install cross-aarch64-gcc11 xz-devel
 test -d ipxe || git clone https://github.com/ipxe/ipxe.git
 pushd ipxe/src
 
+touch config/local/{timer,usb,settings,fdt}.h
+
 # this would compile the ipxe version using its internal driver implementations
 #make -j3 EMBED=../../boot.ipxe bin/ipxe.pxe bin-x86_64-efi/ipxe.efi
 #make -j3 EMBED=../../boot.ipxe CROSS=aarch64-suse-linux- bin-arm64-efi/ipxe.efi
