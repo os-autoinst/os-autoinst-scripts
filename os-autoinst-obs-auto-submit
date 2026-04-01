@@ -7,6 +7,7 @@ color=${color:-auto}
 src_project=${src_project:-devel:openQA}
 dst_project=${dst_project:-${src_project}:tested}
 staging_project=${staging_project:-${src_project}:testing}
+orig_src_project=
 submit_target="${submit_target:-"openSUSE:Factory"}"
 submit_target_extra_project="${submit_target_extra_project:-"openSUSE:Backports"}"
 dry_run="${dry_run:-"0"}"
@@ -266,7 +267,7 @@ generate_os-autoinst-distri-opensuse-deps_changelog() {
 
 handle_auto_submit() {
     log-info "handle_auto_submit $*"
-    local package=$1
+    local package=$1 sync_project=
     debug_osc service wait "$src_project" "$package"
     debug_osc co --server-side-source-service-files "$src_project"/"$package"
     if [[ "$package" == "os-autoinst-distri-opensuse-deps" ]]; then
@@ -280,7 +281,17 @@ handle_auto_submit() {
         fi
     else
         target_rev=$(last_revision "$submit_target" "$package")
-        sync_changesrevision "$src_project" "$package" "$target_rev"
+
+        # synchronize changes back to $src_project (or $orig_src_project in case $staging_project is used)
+        if [[ $orig_src_project ]]; then
+            sync_project=$orig_src_project
+            debug_osc co --server-side-source-service-files "$sync_project"/"$package"
+        else
+            sync_project=$src_project
+        fi
+        sync_changesrevision "$sync_project" "$package" "$target_rev"
+
+        # skip submission if there is nothing new to submit
         if [[ "$target_rev" == "$(last_revision "$src_project" "$package")" ]]; then
             log-info "Latest revision already in $submit_target"
             return
@@ -340,6 +351,7 @@ submit() {
     # submit from staging project if specified
     local must_cleanup_staging=
     if [[ -n $staging_project && $staging_project != none && $staging_project != "$src_project" ]]; then
+        orig_src_project=$src_project
         src_project=$staging_project
         must_cleanup_staging=1
     fi
