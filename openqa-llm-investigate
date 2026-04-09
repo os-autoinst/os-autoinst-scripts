@@ -1,0 +1,190 @@
+#!/usr/bin/env python3
+# Copyright SUSE LLC
+# ruff: noqa: BLE001, E501, S404, S603, T201, TRY300, TRY400
+"""Investigates an openQA job failure using an LLM."""
+
+import json
+import logging
+import os
+import subprocess
+import sys
+from typing import Annotated, Any
+from urllib.parse import urlparse, urlunparse
+
+import httpx
+import typer
+
+USER_AGENT = "openqa-llm-investigate (https://github.com/os-autoinst/os-autoinst-scripts)"
+
+log = logging.getLogger(__name__)
+
+app = typer.Typer(add_completion=False)
+
+
+def fetch_json(client: httpx.Client, url: str) -> dict[str, Any]:
+    try:
+        response = client.get(url)
+        response.raise_for_status()
+        return response.json()
+    except Exception as e:
+        log.warning("Failed to fetch JSON from %s: %s", url, e)
+        return {}
+
+
+def fetch_text(client: httpx.Client, url: str, max_lines: int = 200) -> str:
+    try:
+        response = client.get(url)
+        response.raise_for_status()
+        text = response.text
+        lines = text.splitlines()
+        if len(lines) > max_lines:
+            return "\n".join(lines[-max_lines:])
+        return text
+    except Exception as e:
+        log.warning("Failed to fetch text from %s: %s", url, e)
+        return ""
+
+
+def post_comment(base_url: str, job_id: str, comment: str) -> None:
+    cmd = [
+        "openqa-cli",
+        "api",
+        "--header",
+        f"User-Agent: {USER_AGENT}",
+        "--host",
+        base_url,
+        "-X",
+        "POST",
+        f"jobs/{job_id}/comments",
+        f"text={comment}",
+    ]
+    try:
+        res = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        log.debug("Posted comment to %s/t%s: %s", base_url, job_id, res.stdout)
+    except subprocess.CalledProcessError as e:
+        log.error("Failed to post comment: %s", e.stderr)
+
+
+def setup_logging(verbose: int, quiet: bool) -> None:  # noqa: FBT001
+    if quiet:
+        level = logging.ERROR
+    elif verbose >= 2:
+        level = logging.DEBUG
+    elif verbose >= 1:
+        level = logging.INFO
+    else:
+        level = logging.WARNING
+    logging.basicConfig(level=level, format="%(levelname)s: %(message)s", stream=sys.stderr, force=True)
+
+
+def parse_job_url(job_url: str) -> tuple[str, str]:
+    parsed_url = urlparse(job_url)
+    if parsed_url.scheme:
+        base_url = urlunparse((parsed_url.scheme, parsed_url.netloc, "", "", "", ""))
+        job_id = parsed_url.path.replace("/tests/", "", 1)
+    else:
+        base_url = os.environ.get("OPENQA_URL", "https://openqa.opensuse.org")
+        job_id = job_url
+    return base_url, job_id
+
+
+@app.command()
+def investigate(
+    job_url: str = typer.Argument(..., help="The openQA test URL or job ID for which to trigger LLM investigation"),
+    verbose: Annotated[int, typer.Option("--verbose", "-v", count=True, help="Increase verbosity")] = 0,
+    quiet: Annotated[bool, typer.Option("--quiet", "-q", help="Quiet mode")] = False,  # noqa: FBT002
+    dry: Annotated[  # noqa: FBT002
+        bool, typer.Option("--dry", help="Dry run mode: output summary instead of posting a comment")
+    ] = False,
+) -> None:
+    """Investigates an openQA job failure using an LLM."""
+    setup_logging(verbose, quiet)
+    base_url, job_id = parse_job_url(job_url)
+
+    if not job_id.isdigit():
+        log.error("Invalid job ID: %s", job_id)
+        sys.exit(1)
+
+    llm_url = os.environ.get("LLM_API_URL", "http://localhost:8080/v1/chat/completions")
+    llm_model = os.environ.get("LLM_MODEL", "gemma-4-26B-A4B-it")
+
+    with httpx.Client(headers={"User-Agent": USER_AGENT}) as client:
+        # Fetch job details
+        job_data = fetch_json(client, f"{base_url}/api/v1/jobs/{job_id}")
+        if not job_data or "job" not in job_data:
+            log.error("Could not retrieve job data for job %s from %s", job_id, base_url)
+            sys.exit(1)
+        job = job_data["job"]
+
+        if job.get("result") == "passed":
+            log.info("Job %s passed, skipping investigation.", job_id)
+            sys.exit(0)
+
+        log_text = fetch_text(client, f"{base_url}/tests/{job_id}/file/autoinst-log.txt", max_lines=200)
+        investigation = fetch_json(client, f"{base_url}/tests/{job_id}/investigation_ajax")
+
+        test_name = job.get("test", "unknown")
+        build = job.get("settings", {}).get("BUILD", "unknown")
+
+        # Search for similar failures in same build
+        search_query = f"{base_url}/api/v1/jobs?build={build}&test={test_name}&result=failed"
+        history_data = fetch_json(client, search_query)
+        other_failures = len(history_data.get("jobs", []))
+
+        prompt = f"""You are analyzing an openQA test run failure.
+Job details:
+- Test: {test_name}
+- Group: {job.get("group", "unknown")}
+- Build: {build}
+- Result: {job.get("result", "unknown")}
+- Number of times this failed in the same build: {other_failures}
+
+Investigation info (diff to last good):
+{json.dumps(investigation.get("diff_to_last_good", "None available"))}
+
+Log tail (last 200 lines):
+{log_text}
+
+Provide exactly 3 sentences answering:
+1. Is it a new or existing issue? Is it likely a product regression, test regression, or infrastructure problem?
+2. Does the same issue appear in other tests in the same build, and did it appear in the history of the same build?
+3. Should 'openqa-investigate' be triggered to schedule further bisect tests? Start your 3rd sentence EXACTLY with "INVESTIGATE: YES" or "INVESTIGATE: NO" followed by the reason.
+"""
+
+        req = {
+            "model": llm_model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.3,
+        }
+
+        try:
+            res = client.post(llm_url, json=req, timeout=300)
+            res.raise_for_status()
+            res_json = res.json()
+            llm_response = res_json["choices"][0]["message"]["content"]
+        except httpx.ConnectError:
+            log.error(
+                "Could not connect to LLM server at %s. Please check if the server is running or the LLM_API_URL environment variable is correct.",
+                llm_url,
+            )
+            sys.exit(1)
+        except httpx.HTTPStatusError as e:
+            log.error("LLM API returned an error status: %s. Detail: %s", e.response.status_code, e.response.text)
+            sys.exit(1)
+        except Exception as e:
+            log.error("LLM API request failed: %s", e)
+            sys.exit(1)
+
+        # Print the job URL to stdout ONLY if INVESTIGATE: YES is recommended
+        # This makes the script act as a gatekeeper, similar to `openqa-label-known-issues`
+        if "INVESTIGATE: YES" in llm_response.upper():
+            print(f"{base_url}/tests/{job_id}")
+
+        if dry:
+            print(f"**LLM Investigation summary:**\n\n{llm_response}")
+        else:
+            post_comment(base_url, job_id, f"**LLM Investigation summary:**\n\n{llm_response}")
+
+
+if __name__ == "__main__":
+    app()

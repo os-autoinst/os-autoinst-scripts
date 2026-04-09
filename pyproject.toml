@@ -14,10 +14,12 @@ classifiers = [
 ]
 
 dependencies = [
+    "httpx",
     "requests",
     "sh",
     "pynetbox",
     "tenacity",
+    "typer",
 ]
 
 [project.optional-dependencies]
