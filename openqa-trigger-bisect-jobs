@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
+# Copyright SUSE LLC
+# ruff: noqa: ANN001, ANN201, B005, C901, G001, G002, G003, G004, PLR0911, PLR0916, PLW1510, PYI063, S113, S324, S404, S603, TRY401, FBT002, SIM112, UP031
 
 import argparse
-from functools import total_ordering
 import hashlib
 import json
 import logging
@@ -9,11 +10,12 @@ import os
 import re
 import subprocess
 import sys
+from functools import total_ordering
 from urllib.parse import urlparse, urlunparse
 
 import requests
 
-USER_AGENT = 'openqa-trigger-bisect-jobs (https://github.com/os-autoinst/os-autoinst-scripts)'
+USER_AGENT = "openqa-trigger-bisect-jobs (https://github.com/os-autoinst/os-autoinst-scripts)"
 
 logging.basicConfig()
 log = logging.getLogger(sys.argv[0] if __name__ == "__main__" else __name__)
@@ -22,12 +24,8 @@ BAD = "+"
 INCIDENT_FROM_REPO_URL_RE = re.compile(r".*PullRequest:/(\d+):/.*")
 
 
-class CustomFormatter(
-    argparse.ArgumentDefaultsHelpFormatter, argparse.RawDescriptionHelpFormatter
-):
+class CustomFormatter(argparse.ArgumentDefaultsHelpFormatter, argparse.RawDescriptionHelpFormatter):
     """Preserve multi-line __doc__ and provide default arguments in help strings."""
-
-    pass
 
 
 @total_ordering
@@ -49,7 +47,7 @@ class Incident:
 
         return self._incident_id
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.incident
 
     def __eq__(self, __o) -> bool:
@@ -66,9 +64,7 @@ class Incident:
 
 
 def parse_args():
-    parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=CustomFormatter
-    )
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=CustomFormatter)
     parser.add_argument(
         "-v",
         "--verbose",
@@ -86,14 +82,12 @@ def parse_args():
         default=100,
         help="Adds the specified value to the cloned job's priority value",
     )
-    parser.add_argument(
-        "--dry-run", action="store_true", help="Do not do any action on openQA"
-    )
+    parser.add_argument("--dry-run", action="store_true", help="Do not do any action on openQA")
     args = parser.parse_args()
     verbose_to_log = {
         0: logging.CRITICAL,
         1: logging.ERROR,
-        2: logging.WARN,
+        2: logging.WARNING,
         3: logging.INFO,
         4: logging.DEBUG,
     }
@@ -111,76 +105,58 @@ client_args = [
 
 
 def call(cmds, dry_run=False):
-    log.debug("call: %s" % cmds)
-    res = subprocess.run(
-        (["echo", "Simulating: "] if dry_run else []) + cmds,
-        stdout=subprocess.PIPE, stderr=subprocess.PIPE
-    )
+    log.debug("call: {}".format(cmds))
+    res = subprocess.run((["echo", "Simulating: "] if dry_run else []) + cmds, capture_output=True)
     if len(res.stderr):
         log.warning(f"call() {cmds[0]} stderr: {res.stderr}")
     res.check_returncode()
-    return res.stdout.decode("utf-8");
+    return res.stdout.decode("utf-8")
 
 
 def openqa_comment(job, host, comment, dry_run):
-    args = client_args + [
-        "--host",
-        host,
-        "-X",
-        "POST",
-        "jobs/" + str(job) + "/comments",
-        "text=" + comment,
-    ]
+    args = [*client_args, "--host", host, "-X", "POST", "jobs/" + str(job) + "/comments", "text=" + comment]
     return call(args, dry_run)
+
 
 def openqa_set_job_prio(job_id, host, prio, dry_run):
     prio_json = json.dumps({"priority": prio})
-    args = client_args + [
-        "--host",
-        host,
-        "--json",
-        "--data",
-        prio_json,
-        "-X",
-        "PUT",
-        "jobs/" + str(job_id),
-    ]
+    args = [*client_args, "--host", host, "--json", "--data", prio_json, "-X", "PUT", "jobs/" + str(job_id)]
     return call(args, dry_run)
+
 
 def openqa_clone(
     cmds,
     dry_run,
-    default_opts=["--skip-chained-deps", "--json-output", "--within-instance"],
-    default_cmds=["_GROUP=0"],
+    default_opts=None,
+    default_cmds=None,
 ):
-    return call(["openqa-clone-job"] + default_opts + cmds + default_cmds, dry_run)
+    if default_cmds is None:
+        default_cmds = ["_GROUP=0"]
+    if default_opts is None:
+        default_opts = ["--skip-chained-deps", "--json-output", "--within-instance"]
+    return call(["openqa-clone-job", *default_opts, *cmds, *default_cmds], dry_run)
 
 
 def fetch_url(url, request_type="text"):
     try:
-        content = requests.get(url, headers={'User-Agent': USER_AGENT})
+        content = requests.get(url, headers={"User-Agent": USER_AGENT})
         content.raise_for_status()
     except requests.exceptions.RequestException as e:
-        log.error("Error while fetching %s: %s" % (url, str(e)))
-        raise (e)
+        log.exception("Error while fetching {}: {}".format(url, str(e)))
+        raise
     raw = content.content
     if request_type == "json":
         try:
             content = content.json()
         except json.decoder.JSONDecodeError as e:
-            log.error(
-                "Error while decoding JSON from %s -> >>%s<<: %s"
-                % (url, raw, str(e))
-            )
-            raise (e)
+            log.exception("Error while decoding JSON from {} -> >>{}<<: {}".format(url, raw, str(e)))
+            raise
     return content
 
 
 def find_changed_issues(investigation):
     changes = {}
-    pattern = re.compile(
-        r"(?P<diff>[+-])\s+\"(?P<key>[A-Z]+_TEST_(?:ISSUES|REPOS))\"\s*:\s*\"(?P<var>[^\"]*)\","
-    )
+    pattern = re.compile(r"(?P<diff>[+-])\s+\"(?P<key>[A-Z]+_TEST_(?:ISSUES|REPOS))\"\s*:\s*\"(?P<var>[^\"]*)\",")
 
     for line in investigation.splitlines():
         search = pattern.match(line)
@@ -188,9 +164,7 @@ def find_changed_issues(investigation):
             issue_var = search.group("key")
             if not changes.get(issue_var):
                 changes[issue_var] = {}
-            changes[issue_var][search.group("diff")] = {
-                Incident(i) for i in search.group("var").split(",")
-            }
+            changes[issue_var][search.group("diff")] = {Incident(i) for i in search.group("var").split(",")}
 
     for key in list(changes):
         if not changes[key].get(BAD) or not changes[key].get(GOOD):
@@ -201,56 +175,44 @@ def find_changed_issues(investigation):
             del changes[key]
             continue
 
-    changes_repos = {
-        key: value for key, value in changes.items() if key.endswith("REPOS")
-    }
+    changes_repos = {key: value for key, value in changes.items() if key.endswith("REPOS")}
 
-    return changes_repos if changes_repos else changes
+    return changes_repos or changes
 
 
-def main(args):
+def main(args) -> None:
     parsed_url = urlparse(args.url)
     base_url = urlunparse((parsed_url.scheme, parsed_url.netloc, "", "", "", ""))
     job_id = parsed_url.path.lstrip("/tests/")
     test_url = f"{base_url}/api/v1/jobs/{job_id}"
-    log.debug("Retrieving job data from %s" % test_url)
+    log.debug("Retrieving job data from {}".format(test_url))
     test_data = fetch_url(test_url, request_type="json")
     job = test_data["job"]
-    if job['result'] == 'passed':
-        log.info(
-            "Job %d (%s) is passed, skipping bisection"
-            % (job["id"], job["test"])
-        )
+    if job["result"] == "passed":
+        log.info("Job %d (%s) is passed, skipping bisection" % (job["id"], job["test"]))
         return
-    search = re.search(":investigate:", job["test"])
+    search = re.search(r":investigate:", job["test"])
     if search:
-        log.info(
-            "Job %d (%s) is already an investigation, skipping bisection"
-            % (job["id"], job["test"])
-        )
+        log.info("Job %d (%s) is already an investigation, skipping bisection" % (job["id"], job["test"]))
         return
     if job.get("clone_id") is not None:
         log.info("Job %d already has a clone, skipping bisection" % job["id"])
         return
 
-    children = job["children"] if "children" in job else []
-    parents = job["parents"] if "parents" in job else []
+    children = job.get("children", [])
+    parents = job.get("parents", [])
     if (
-        "Parallel" in children
-        and len(children["Parallel"])
-        or "Directly chained" in children
-        and len(children["Directly chained"])
-        or "Parallel" in parents
-        and len(parents["Parallel"])
-        or "Directly chained" in parents
-        and len(parents["Directly chained"])
+        ("Parallel" in children and len(children["Parallel"]))
+        or ("Directly chained" in children and len(children["Directly chained"]))
+        or ("Parallel" in parents and len(parents["Parallel"]))
+        or ("Directly chained" in parents and len(parents["Directly chained"]))
     ):
         return
 
     investigation_url = f"{base_url}/tests/{job_id}/investigation_ajax"
-    log.debug("Retrieving investigation info from %s" % investigation_url)
+    log.debug("Retrieving investigation info from {}".format(investigation_url))
     investigation = fetch_url(investigation_url, request_type="json")
-    log.debug("Received investigation info: %s" % investigation)
+    log.debug("Received investigation info: {}".format(investigation))
     if "diff_to_last_good" not in investigation:
         return
     all_changes = find_changed_issues(investigation["diff_to_last_good"])
@@ -262,46 +224,40 @@ def main(args):
     if len(exclude_group_regex) > 0:
         full_group = job.get("group", "")
         if "parent_group" in job:
-            full_group = "%s / %s" % (job["parent_group"], full_group)
+            full_group = "{} / {}".format(job["parent_group"], full_group)
         if re.search(exclude_group_regex, full_group):
-            log.debug("job group '%s' matches 'exclude_group_regex', skipping" % full_group)
+            log.debug("job group '{}' matches 'exclude_group_regex', skipping".format(full_group))
             return
 
     exclude_name_regex = os.environ.get("exclude_name_regex", "")
     if len(exclude_name_regex) > 0 and re.search(exclude_name_regex, job["test"]):
-        log.debug("job name '%s' matches 'exclude_name_regex', skipping" % job["test"])
+        log.debug("job name '{}' matches 'exclude_name_regex', skipping".format(job["test"]))
         return
 
-    log.debug("Received job data: %s" % test_data)
+    log.debug("Received job data: {}".format(test_data))
     test = job["settings"]["TEST"]
     prio = int(job["priority"]) + args.priority_add
-    log.debug("Found test name '%s'" % test)
+    log.debug("Found test name '{}'".format(test))
 
     created = ""
     added = []
     for key in all_changes:
         changes = all_changes[key]
-        removed_key, added_key = list(changes[GOOD] - changes[BAD]), list(
-            changes[BAD] - changes[GOOD]
-        )
-        log.debug("[%s] removed: %s, added: %s" % (key, removed_key, added_key))
+        removed_key, added_key = list(changes[GOOD] - changes[BAD]), list(changes[BAD] - changes[GOOD])
+        log.debug("[{}] removed: {}, added: {}".format(key, removed_key, added_key))
         added += added_key
 
     # whole sort is to simplify testability of code
-    for issue in sorted(list({i.incident_id for i in added}), key=int):
+    for issue in sorted({i.incident_id for i in added}, key=int):
         line = {}
-        log.info("Triggering one bisection job without issue '%s'" % issue)
+        log.info("Triggering one bisection job without issue '{}'".format(issue))
         for key in all_changes:
             # use only VARS where is incident present in BAD
             if [i for i in all_changes[key][BAD] if i.incident_id == issue]:
-                line[key] = ",".join(
-                    str(i)
-                    for i in sorted(list(all_changes[key][BAD]))
-                    if i.incident_id != issue
-                )
-                log.debug("New set of %s='%s'" % (key, line[key]))
+                line[key] = ",".join(str(i) for i in sorted(all_changes[key][BAD]) if i.incident_id != issue)
+                log.debug("New set of {}='{}'".format(key, line[key]))
 
-        test_name = test + ":investigate:bisect_without_%s" % issue
+        test_name = test + ":investigate:bisect_without_{}".format(issue)
         params = (
             [args.url]
             + [k + "=" + v for k, v in line.items()]
@@ -318,7 +274,7 @@ def main(args):
                 args.dry_run,
             )
         except subprocess.SubprocessError as err:
-            if 'the repositories for the below updates are unavailable' in str(err.stderr):
+            if "the repositories for the below updates are unavailable" in str(err.stderr):
                 extra_comment = "Not triggering any bisect jobs because: "
                 openqa_comment(job_id, base_url, f"{extra_comment}{err.stderr}", args.dry_run)
                 sys.exit(0)
@@ -328,10 +284,10 @@ def main(args):
         created_job_ids = []
         try:
             created_job_ids = json.loads(out).values()
-        except Exception as e:
-            log.error("openqa-clone-job returned non-JSON output: " + out)
+        except Exception:
+            log.exception("openqa-clone-job returned non-JSON output: " + out)
         for job_id in sorted(created_job_ids):
-            log.info(f"Created {job_id}")
+            log.info("Created %s", job_id)
             created += f"* **{test_name}**: {base_url}/t{job_id}\n"
             openqa_set_job_prio(job_id, args.url, prio, args.dry_run)
 

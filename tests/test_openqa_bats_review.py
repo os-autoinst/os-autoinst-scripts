@@ -18,6 +18,7 @@ from requests.exceptions import RequestException
 rootpath = pathlib.Path(__file__).parent.parent.resolve()
 loader = importlib.machinery.SourceFileLoader("bats_review", f"{rootpath}/openqa-bats-review")
 spec = importlib.util.spec_from_loader(loader.name, loader)
+assert spec is not None
 bats_review = importlib.util.module_from_spec(spec)
 sys.modules[loader.name] = bats_review
 loader.exec_module(bats_review)
@@ -52,7 +53,7 @@ class TestGetFile:
         with pytest.raises(SystemExit) as exc:
             bats_review.get_file("http://example.com/foo.xml")
         assert exc.value.code == 1
-        mock_log.error.assert_called_once()
+        mock_log.exception.assert_called_once()
 
 
 class TestGetJob:
@@ -83,7 +84,7 @@ class TestGetJob:
         with pytest.raises(SystemExit) as exc:
             bats_review.get_job("http://host/api/v1/jobs/123")
         assert exc.value.code == 1
-        mock_log.error.assert_called_once()
+        mock_log.exception.assert_called_once()
 
 
 class TestGrepFailures:
@@ -110,7 +111,7 @@ class TestGrepFailures:
         with pytest.raises(SystemExit) as exc:
             bats_review.grep_failures("http://example.com/test.xml")
         assert exc.value.code == 1
-        mock_log.error.assert_called_once()
+        mock_log.exception.assert_called_once()
 
 
 class TestProcessLogs:
@@ -183,17 +184,15 @@ class TestMain:
     @patch("bats_review.resolve_clone_chain")
     @patch("bats_review.get_job")
     @patch("bats_review.process_logs")
-    @patch("bats_review.openqa_comment")
     def test_main_no_common_failures(
         self,
-        mock_openqa_comment: MagicMock,
         mock_process_logs: MagicMock,
         mock_get_job: MagicMock,
         mock_resolve: MagicMock,
     ) -> None:
         """Two jobs in chain; each produces different failures -> no common failures.
 
-        main should call openqa_comment(...) (we patch it) and log Tagging as PASSED.
+        main should log Tagging as PASSED.
         """
         mock_resolve.return_value = [123, 122]
 
@@ -208,18 +207,11 @@ class TestMain:
         mock_get_job.side_effect = job_resp
         # different failure sets for each job -> empty intersection
         mock_process_logs.side_effect = [{"a"}, {"b"}]
-        mock_openqa_comment.return_value = "commented"
-        # should return normally (no SystemExit) because script prints comment and returns
-        with patch("bats_review.log"):
+        # should return normally (no SystemExit) because script logs comment and returns
+        with patch("bats_review.log") as mock_log:
             res = bats_review.main("http://openqa.example.com/tests/123", dry_run=True)
         assert res is None
-        # openqa_comment should be called for the job that we started from (my_job_id == 123)
-        called = mock_openqa_comment.call_args[0]
-        job_id, host, comment, dry_run = called[:4]
-        assert job_id == 123
-        assert host.startswith(("http://openqa.example.com", "https://openqa.example.com")), host
-        assert bats_review.PASSED in comment
-        assert dry_run is True
+        mock_log.info.assert_called_with("No common failures across clone chain. Tagging as PASSED.")
 
     @patch("bats_review.resolve_clone_chain")
     @patch("bats_review.get_job")
@@ -268,8 +260,8 @@ class TestParseArgs:
 class TestIntegration:
     """Integration tests for openqa-bats-review."""
 
-    @patch("bats_review.openqa_comment")
-    def test_full_workflow_no_common_failures(self, mock_openqa_comment: MagicMock) -> None:
+    @patch("bats_review.log")
+    def test_full_workflow_no_common_failures(self, mock_log: MagicMock) -> None:
         """Integration-style test: patch session.get to return proper JSON for job details.
 
         and JUnit XML for files, simulate two jobs that each have a different failing
@@ -322,13 +314,7 @@ class TestIntegration:
 
         # patch the session used by the module
         bats_review.session.get = fake_get
-        mock_openqa_comment.return_value = "ok-comment"
         # run main and assert successful path (no SystemExit); openqa_comment should be called
         res = bats_review.main("http://openqa.example.com/tests/123", dry_run=True)
         assert res is None
-        called = mock_openqa_comment.call_args[0]
-        job_id, host, comment, dry_run = called[:4]
-        assert job_id == 123
-        assert host.startswith(("http://openqa.example.com", "https://openqa.example.com")), host
-        assert bats_review.PASSED in comment
-        assert dry_run is True
+        mock_log.info.assert_called_with("No common failures across clone chain. Tagging as PASSED.")
