@@ -1,5 +1,6 @@
 SH_FILES ?= $(shell file --mime-type $$(git ls-files) test/*.t | sed -n 's/^\(.*\):.*text\/x-shellscript.*$$/\1/p')
 SH_SHELLCHECK_FILES ?= $(shell file --mime-type * | sed -n 's/^\(.*\):.*text\/x-shellscript.*$$/\1/p')
+PY_FILES ?= $(shell git ls-files | xargs file --mime-type 2>/dev/null | grep -E 'text/x-script\.python|text/x-python' | cut -d: -f1)
 
 ifndef CI
 include .setup.mk
@@ -60,8 +61,7 @@ test-yaml:
 checkstyle-python: check-ruff check-conventions
 check-ruff:
 	@which ruff >/dev/null 2>&1 || echo "Command 'ruff' not found, can not execute python style checks"
-	ruff check
-	ruff format --check
+	@if [ -n "$(PY_FILES)" ]; then ruff format --check $(PY_FILES) && ruff check $(PY_FILES); fi
 
 check-conventions:
 	@if git grep -nE '^\s*@(unittest\.mock\.|mock\.)?patch' tests/; then \
@@ -73,6 +73,7 @@ check-conventions:
 check-code-health:
 	@echo "Checking code health…"
 	@vulture $$(git ls-files "**.py") --min-confidence 80
+
 
 update-deps:
 	tools/update-deps --cpanfile cpanfile --specfile dist/rpm/os-autoinst-scripts-deps.spec
