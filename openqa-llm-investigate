@@ -121,8 +121,8 @@ def investigate(
             sys.exit(1)
         job = job_data["job"]
 
-        if job.get("result") == "passed":
-            log.info("Job %s passed, skipping investigation.", job_id)
+        if job.get("result") in ("passed", "softfailed"):
+            log.info("Job %s %s, skipping investigation.", job_id, job.get("result"))
             sys.exit(0)
 
         log_text = fetch_text(client, f"{base_url}/tests/{job_id}/file/autoinst-log.txt")

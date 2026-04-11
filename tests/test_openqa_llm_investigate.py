@@ -161,6 +161,30 @@ def test_investigate_cmd_passed_job(mock_print: MagicMock, mock_client_class: Ma
 
 
 @patch("llm_investigate.httpx.Client")
+@patch("builtins.print")
+def test_investigate_cmd_softfailed_job(mock_print: MagicMock, mock_client_class: MagicMock) -> None:
+    mock_client = MagicMock()
+    mock_client_class.return_value.__enter__.return_value = mock_client
+
+    def mock_get(url: str, *args: Any, **kwargs: Any) -> Mock:
+        _ = args, kwargs
+        resp = Mock()
+        if "comments" in url:
+            resp.json.return_value = []
+        elif "api/v1/jobs" in url:
+            resp.json.return_value = {"job": {"id": 123, "result": "softfailed"}}
+        return resp
+
+    mock_client.get.side_effect = mock_get
+
+    with pytest.raises(SystemExit) as exc:
+        llm_investigate.investigate("123")
+
+    assert exc.value.code == 0
+    mock_print.assert_not_called()
+
+
+@patch("llm_investigate.httpx.Client")
 @patch("llm_investigate.log")
 def test_investigate_cmd_already_commented(mock_log: MagicMock, mock_client_class: MagicMock) -> None:
     mock_client = MagicMock()
