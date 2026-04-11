@@ -20,7 +20,7 @@ dependencies = [
     "tenacity",
 ]
 
-[dependency-groups]
+[project.optional-dependencies]
 dev = [
     "pytest",
     "pytest-cov",
@@ -29,6 +29,10 @@ dev = [
     "radon",
     "ruff",
 ]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
 
 [tool.coverage.run]
 branch = true
