@@ -94,14 +94,25 @@ def test_investigate_cmd(mock_print: MagicMock, mock_post: MagicMock, mock_clien
         resp = Mock()
         if "comments" in url:
             resp.json.return_value = []
-        elif "api/v1/jobs" in url and "build=" not in url:
+        elif "api/v1/jobs" in url and ("build=" in url or "test=" in url):
+            resp.json.return_value = {"jobs": [{"id": 123}, {"id": 124}]}
+        elif "api/v1/jobs" in url:
             resp.json.return_value = {
-                "job": {"id": 123, "result": "failed", "test": "my_test", "settings": {"BUILD": "1.0"}}
+                "job": {
+                    "id": 123,
+                    "result": "failed",
+                    "test": "my_test",
+                    "settings": {
+                        "BUILD": "1.0",
+                        "DISTRI": "opensuse",
+                        "VERSION": "Tumbleweed",
+                        "ARCH": "x86_64",
+                        "FLAVOR": "DVD",
+                    },
+                }
             }
         elif "investigation_ajax" in url:
             resp.json.return_value = {"diff_to_last_good": {}}
-        elif "api/v1/jobs?build" in url:
-            resp.json.return_value = {"jobs": [{"id": 123}, {"id": 124}]}
         elif "autoinst-log.txt" in url:
             resp.text = "failed log"
         else:
