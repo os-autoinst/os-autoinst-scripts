@@ -168,7 +168,7 @@ Log tail (last 200 lines):
 Provide exactly 3 sentences answering:
 1. Is it a new or existing issue? Is it likely a product regression, test regression, or infrastructure problem?
 2. Does the same issue appear in other tests in the same build, and did it appear in the history of the same build?
-3. Should 'openqa-investigate' be triggered to schedule further bisect tests? Start your 3rd sentence EXACTLY with "INVESTIGATE: YES" or "INVESTIGATE: NO" followed by the reason.
+3. Should 'openqa-investigate' be triggered to schedule further bisect tests? Start your 3rd sentence EXACTLY with "BISECT: YES" or "BISECT: NO" followed by the reason.
 """
 
         req = {
@@ -195,9 +195,9 @@ Provide exactly 3 sentences answering:
             log.error("LLM API request failed: %s", e)
             sys.exit(1)
 
-        # Print the job URL to stdout ONLY if INVESTIGATE: YES is recommended
+        # Print the job URL to stdout ONLY if BISECT: YES is recommended
         # This makes the script act as a gatekeeper, similar to `openqa-label-known-issues`
-        if "INVESTIGATE: YES" in llm_response.upper():
+        if "BISECT: YES" in llm_response.upper():
             print(f"{base_url}/tests/{job_id}")
 
         if dry:

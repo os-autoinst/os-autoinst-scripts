@@ -124,7 +124,7 @@ def test_investigate_cmd(mocker: pytest.MockerFixture) -> None:
     def mock_post_call(url: str, json: dict[str, Any] | None = None, *args: Any, **kwargs: Any) -> Mock:
         _ = url, json, args, kwargs
         resp = Mock()
-        resp.json.return_value = {"choices": [{"message": {"content": "INVESTIGATE: YES. It is broken."}}]}
+        resp.json.return_value = {"choices": [{"message": {"content": "BISECT: YES. It is broken."}}]}
         return resp
 
     mock_client.post.side_effect = mock_post_call
@@ -133,7 +133,7 @@ def test_investigate_cmd(mocker: pytest.MockerFixture) -> None:
 
     mock_print.assert_called_once_with("https://openqa.opensuse.org/tests/123")
     mock_post.assert_called_once()
-    assert "INVESTIGATE: YES" in mock_post.call_args[0][2]
+    assert "BISECT: YES" in mock_post.call_args[0][2]
 
 
 def test_investigate_cmd_passed_job(mocker: pytest.MockerFixture) -> None:
@@ -234,7 +234,7 @@ def test_investigate_cmd_dry_run(mocker: pytest.MockerFixture) -> None:
     def mock_post_call(url: str, json: dict[str, Any] | None = None, *args: Any, **kwargs: Any) -> Mock:
         _ = url, json, args, kwargs
         resp = Mock()
-        resp.json.return_value = {"choices": [{"message": {"content": "INVESTIGATE: NO. Already known."}}]}
+        resp.json.return_value = {"choices": [{"message": {"content": "BISECT: NO. Already known."}}]}
         return resp
 
     mock_client.post.side_effect = mock_post_call
@@ -243,7 +243,7 @@ def test_investigate_cmd_dry_run(mocker: pytest.MockerFixture) -> None:
 
     # In dry run, it should print the summary instead of posting
     mock_post.assert_not_called()
-    mock_print.assert_any_call("**LLM Investigation summary:**\n\nINVESTIGATE: NO. Already known.")
+    mock_print.assert_any_call("**LLM Investigation summary:**\n\nBISECT: NO. Already known.")
 
 
 def test_investigate_cmd_connection_error(mocker: pytest.MockerFixture) -> None:
