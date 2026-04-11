@@ -168,7 +168,7 @@ Log tail (last 200 lines):
 Provide exactly 3 sentences answering:
 1. Is it a new or existing issue? Is it likely a product regression, test regression, or infrastructure problem?
 2. Does the same issue appear in other tests in the same build, and did it appear in the history of the same build?
-3. Should 'openqa-investigate' be triggered to schedule further bisect tests? Start your 3rd sentence EXACTLY with "BISECT: YES" or "BISECT: NO" followed by the reason.
+3. Should 'openqa-investigate' be triggered to schedule further bisect tests? Bisection is costly and should ONLY be used to find the origin of NEWly introduced product or test regressions. If this failure is an infrastructure issue, or if the high number of historical or same-build failures indicates this is already a widespread or long-standing issue, you MUST answer NO. Start your 3rd sentence EXACTLY with "BISECT: YES" or "BISECT: NO" followed by the reason.
 """
 
         req = {
