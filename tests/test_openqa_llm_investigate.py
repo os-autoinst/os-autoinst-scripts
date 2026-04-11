@@ -124,7 +124,7 @@ def test_investigate_cmd(mock_print: MagicMock, mock_post: MagicMock, mock_clien
     def mock_post_call(url: str, json: dict[str, Any] | None = None, *args: Any, **kwargs: Any) -> Mock:
         _ = url, json, args, kwargs
         resp = Mock()
-        resp.json.return_value = {"choices": [{"message": {"content": "INVESTIGATE: YES. It is broken."}}]}
+        resp.json.return_value = {"choices": [{"message": {"content": "BISECT: YES. It is broken."}}]}
         return resp
 
     mock_client.post.side_effect = mock_post_call
@@ -133,7 +133,7 @@ def test_investigate_cmd(mock_print: MagicMock, mock_post: MagicMock, mock_clien
 
     mock_print.assert_called_once_with("https://openqa.opensuse.org/tests/123")
     mock_post.assert_called_once()
-    assert "INVESTIGATE: YES" in mock_post.call_args[0][2]
+    assert "BISECT: YES" in mock_post.call_args[0][2]
 
 
 @patch("llm_investigate.httpx.Client")
@@ -240,7 +240,7 @@ def test_investigate_cmd_dry_run(mock_print: MagicMock, mock_post: MagicMock, mo
     def mock_post_call(url: str, json: dict[str, Any] | None = None, *args: Any, **kwargs: Any) -> Mock:
         _ = url, json, args, kwargs
         resp = Mock()
-        resp.json.return_value = {"choices": [{"message": {"content": "INVESTIGATE: NO. Already known."}}]}
+        resp.json.return_value = {"choices": [{"message": {"content": "BISECT: NO. Already known."}}]}
         return resp
 
     mock_client.post.side_effect = mock_post_call
@@ -249,7 +249,7 @@ def test_investigate_cmd_dry_run(mock_print: MagicMock, mock_post: MagicMock, mo
 
     # In dry run, it should print the summary instead of posting
     mock_post.assert_not_called()
-    mock_print.assert_any_call("**LLM Investigation summary:**\n\nINVESTIGATE: NO. Already known.")
+    mock_print.assert_any_call("**LLM Investigation summary:**\n\nBISECT: NO. Already known.")
 
 
 @patch("llm_investigate.httpx.Client")
