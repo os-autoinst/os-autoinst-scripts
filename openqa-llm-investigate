@@ -129,20 +129,35 @@ def investigate(
         investigation = fetch_json(client, f"{base_url}/tests/{job_id}/investigation_ajax")
 
         test_name = job.get("test", "unknown")
-        build = job.get("settings", {}).get("BUILD", "unknown")
+        settings = job.get("settings", {})
+        build = settings.get("BUILD", "unknown")
+        distri = settings.get("DISTRI", "unknown")
+        version = settings.get("VERSION", "unknown")
+        arch = settings.get("ARCH", "unknown")
+        flavor = settings.get("FLAVOR", "unknown")
 
-        # Search for similar failures in same build
-        search_query = f"{base_url}/api/v1/jobs?build={build}&test={test_name}&result=failed"
-        history_data = fetch_json(client, search_query)
-        other_failures = len(history_data.get("jobs", []))
+        # Search for similar failures in same build (across all tests)
+        build_search_query = f"{base_url}/api/v1/jobs?build={build}&distri={distri}&version={version}&result=failed"
+        build_history_data = fetch_json(client, build_search_query)
+        build_failures = len(build_history_data.get("jobs", []))
+
+        # Search for historical failures of the same test (across all builds)
+        test_search_query = f"{base_url}/api/v1/jobs?test={test_name}&distri={distri}&version={version}&arch={arch}&flavor={flavor}&result=failed"
+        test_history_data = fetch_json(client, test_search_query)
+        test_failures = len(test_history_data.get("jobs", []))
 
         prompt = f"""You are analyzing an openQA test run failure.
 Job details:
 - Test: {test_name}
 - Group: {job.get("group", "unknown")}
 - Build: {build}
+- Distri: {distri}
+- Version: {version}
+- Arch: {arch}
+- Flavor: {flavor}
 - Result: {job.get("result", "unknown")}
-- Number of times this failed in the same build: {other_failures}
+- Total failed jobs in this build (across all tests): {build_failures}
+- Total times this specific test (same name, arch, flavor) failed historically: {test_failures}
 
 Investigation info (diff to last good):
 {json.dumps(investigation.get("diff_to_last_good", "None available"))}
