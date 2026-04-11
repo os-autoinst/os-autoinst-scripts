@@ -2,7 +2,7 @@
 
 source test/init
 
-plan tests 22
+plan tests 31
 dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 source "$dir/../openqa-label-known-issues-and-investigate-hook"
@@ -12,6 +12,17 @@ export INVESTIGATE_FAIL=false
 export INVESTIGATE_RETRIGGER_HOOK=false
 
 # Mocking
+export LLM_INVESTIGATE_FAIL=false
+export LLM_INVESTIGATE_SKIP=false
+
+openqa-llm-investigate() {
+    local testurl=$1
+    "$LLM_INVESTIGATE_FAIL" && return 1
+    "$LLM_INVESTIGATE_SKIP" && return 0
+    warn "- openqa-llm-investigate $testurl"
+    echo "$testurl"
+}
+
 openqa-trigger-bisect-jobs() {
     echo "openqa-trigger-bisect-jobs ($@)"
 }
@@ -45,24 +56,28 @@ openqa-api-get() {
 try hook 123
 is "$rc" 0 'successful hook (123)'
 has "$got" "- openqa-label-known-issues"
+has "$got" "- openqa-llm-investigate"
 has "$got" "- openqa-investigate"
 has "$got" "- openqa-trigger-bisect-jobs"
 
 try hook 124
 is "$rc" 0 'successful hook (124)'
 hasnt "$got" "- openqa-label-known-issues"
+has "$got" "- openqa-llm-investigate"
 has "$got" "- openqa-investigate"
 has "$got" "- openqa-trigger-bisect-jobs"
 
 try hook 125
 is "$rc" 0 'successful hook (125)'
 hasnt "$got" "- openqa-label-known-issues"
+has "$got" "- openqa-llm-investigate"
 has "$got" "- openqa-investigate"
 has "$got" "- openqa-trigger-bisect-jobs"
 
 try hook 126
 is "$rc" 0 'successful hook (126)'
 hasnt "$got" "- openqa-label-known-issues"
+has "$got" "- openqa-llm-investigate"
 has "$got" "- openqa-investigate"
 has "$got" "- openqa-trigger-bisect-jobs"
 
@@ -83,6 +98,14 @@ openqa-label-known-issues() {
 export INVESTIGATE_RETRIGGER_HOOK=false
 try hook 123
 is "$rc" 0 'successful hook (no unknown issue) (123)'
+has "$got" "- openqa-label-known-issues"
+hasnt "$got" "- openqa-llm-investigate"
+hasnt "$got" "- openqa-investigate"
+hasnt "$got" "- openqa-trigger-bisect-jobs"
+
+export LLM_INVESTIGATE_SKIP=true
+try hook 123
+is "$rc" 0 'successful hook (LLM says NO) (123)'
 has "$got" "- openqa-label-known-issues"
 hasnt "$got" "- openqa-investigate"
 hasnt "$got" "- openqa-trigger-bisect-jobs"

@@ -21,9 +21,17 @@ investigate-and-bisect() {
     read -r test || rc=$?
     [[ -n "$test" ]] || return 0
     rc=0
-    openqa-investigate "$test" || rc=$?
+
+    # Call the new LLM investigation script first, which acts as a gatekeeper
+    # If it decides no further investigation is needed, it won't output the test URL.
+    local investigate_target
+    investigate_target=$(openqa-llm-investigate "$test" || true)
+
+    [[ -z "$investigate_target" ]] && return 0
+
+    openqa-investigate "$investigate_target" || rc=$?
     [[ "$rc" -eq 142 ]] && return "$rc"
-    openqa-trigger-bisect-jobs -v --url "$test" || rc=$?
+    openqa-trigger-bisect-jobs -v --url "$investigate_target" || rc=$?
     return "$rc"
 }
 
