@@ -42,8 +42,13 @@ class TestFetchJson:
         mock_response.raise_for_status.side_effect = httpx.HTTPStatusError("error", request=Mock(), response=Mock())
         mock_client.get.return_value = mock_response
 
-        res = llm_investigate.fetch_json(mock_client, "http://example.com")
+        # Default failure returns {}
+        res = llm_investigate.fetch_json(mock_client, "http://example.com/api/v1/jobs/123")
         assert res == {}
+
+        # Comments failure returns []
+        res = llm_investigate.fetch_json(mock_client, "http://example.com/api/v1/jobs/123/comments")
+        assert res == []
 
 
 class TestFetchText:
@@ -87,7 +92,9 @@ def test_investigate_cmd(mock_print: MagicMock, mock_post: MagicMock, mock_clien
     def mock_get(url: str, *args: Any, **kwargs: Any) -> Mock:
         _ = args, kwargs
         resp = Mock()
-        if "api/v1/jobs" in url and "build=" not in url:
+        if "comments" in url:
+            resp.json.return_value = []
+        elif "api/v1/jobs" in url and "build=" not in url:
             resp.json.return_value = {
                 "job": {"id": 123, "result": "failed", "test": "my_test", "settings": {"BUILD": "1.0"}}
             }
@@ -127,7 +134,9 @@ def test_investigate_cmd_passed_job(mock_print: MagicMock, mock_client_class: Ma
     def mock_get(url: str, *args: Any, **kwargs: Any) -> Mock:
         _ = args, kwargs
         resp = Mock()
-        if "api/v1/jobs" in url:
+        if "comments" in url:
+            resp.json.return_value = []
+        elif "api/v1/jobs" in url:
             resp.json.return_value = {"job": {"id": 123, "result": "passed"}}
         return resp
 
@@ -141,6 +150,31 @@ def test_investigate_cmd_passed_job(mock_print: MagicMock, mock_client_class: Ma
 
 
 @patch("llm_investigate.httpx.Client")
+@patch("llm_investigate.log")
+def test_investigate_cmd_already_commented(mock_log: MagicMock, mock_client_class: MagicMock) -> None:
+    mock_client = MagicMock()
+    mock_client_class.return_value.__enter__.return_value = mock_client
+
+    def mock_get(url: str, *args: Any, **kwargs: Any) -> Mock:
+        _ = args, kwargs
+        resp = Mock()
+        if "comments" in url:
+            resp.json.return_value = [{"text": "**LLM Investigation summary:** already done"}]
+        else:
+            resp.json.return_value = {}
+        return resp
+
+    mock_client.get.side_effect = mock_get
+
+    with pytest.raises(SystemExit) as exc:
+        llm_investigate.investigate("123")
+
+    assert exc.value.code == 0
+    mock_log.info.assert_called_once()
+    assert "already has an LLM investigation summary" in mock_log.info.call_args[0][0]
+
+
+@patch("llm_investigate.httpx.Client")
 @patch("llm_investigate.post_comment")
 @patch("builtins.print")
 def test_investigate_cmd_dry_run(mock_print: MagicMock, mock_post: MagicMock, mock_client_class: MagicMock) -> None:
@@ -150,7 +184,9 @@ def test_investigate_cmd_dry_run(mock_print: MagicMock, mock_post: MagicMock, mo
     def mock_get(url: str, *args: Any, **kwargs: Any) -> Mock:
         _ = args, kwargs
         resp = Mock()
-        if "api/v1/jobs" in url and "build=" not in url:
+        if "comments" in url:
+            resp.json.return_value = []
+        elif "api/v1/jobs" in url and "build=" not in url:
             resp.json.return_value = {
                 "job": {"id": 123, "result": "failed", "test": "my_test", "settings": {"BUILD": "1.0"}}
             }
@@ -190,7 +226,9 @@ def test_investigate_cmd_connection_error(mock_log: MagicMock, mock_client_class
     def mock_get(url: str, *args: Any, **kwargs: Any) -> Mock:
         _ = args, kwargs
         resp = Mock()
-        if "api/v1/jobs" in url and "build=" not in url:
+        if "comments" in url:
+            resp.json.return_value = []
+        elif "api/v1/jobs" in url and "build=" not in url:
             resp.json.return_value = {"job": {"id": 123, "result": "failed", "test": "my_test"}}
         else:
             resp.json.return_value = {}
@@ -211,7 +249,13 @@ def test_investigate_cmd_connection_error(mock_log: MagicMock, mock_client_class
 def test_investigate_logging_levels(mock_basic_config: MagicMock) -> None:
     # We need to mock httpx.Client to avoid real network calls during investigate() call
     with patch("llm_investigate.httpx.Client"), patch("llm_investigate.fetch_json") as mock_fetch:
-        mock_fetch.return_value = {"job": {"id": 123, "result": "passed"}}
+
+        def mock_fetch_side_effect(_client: Any, url: str) -> Any:
+            if "comments" in url:
+                return []
+            return {"job": {"id": 123, "result": "passed"}}
+
+        mock_fetch.side_effect = mock_fetch_side_effect
 
         # Test default: warning
         with pytest.raises(SystemExit):
