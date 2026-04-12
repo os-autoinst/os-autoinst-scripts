@@ -11,7 +11,7 @@ jobs:
     container:
       image: registry.opensuse.org/opensuse/tumbleweed:latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Enable source repositories and install script dependencies
         run: |
           zypper -n mr --enable repo-source
