@@ -37,6 +37,18 @@ is_tty = sys.stdout.isatty()
 session = requests.Session()
 
 
+def has_host(url: str, host_name: str) -> bool:
+    """
+    Return whether URL hostname matches the specified host_name exactly.
+    """
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return False
+    host = parsed.hostname
+    return bool(host and host.lower() == host_name.lower())
+
+
 def get_bugzilla_issues(issues: list[str]) -> list[dict]:
     """
     Get Bugzilla issues
@@ -138,13 +150,13 @@ def get_all_issues() -> list[dict]:
         u["url"]
         for i in incidents
         for u in i["incident"]["references"]
-        if "bugzilla.suse.com" in u["url"]
+        if has_host(u["url"], "bugzilla.suse.com")
     ]
     jiras = [
         u["url"]
         for i in incidents
         for u in i["incident"]["references"]
-        if "jira.suse.com" in u["url"]
+        if has_host(u["url"], "jira.suse.com")
     ]
 
     issues = []
@@ -168,9 +180,9 @@ def get_title(url: str) -> str:
         return ""
     issue_id: int | str | None = None
     issues = get_all_issues()
-    if "bugzilla.suse.com" in url:
+    if has_host(url, "bugzilla.suse.com"):
         issue_id = int(url.split("=")[-1])
-    elif "jira.suse.com" in url:
+    elif has_host(url, "jira.suse.com"):
         issue_id = os.path.basename(url)
     else:
         return ""
