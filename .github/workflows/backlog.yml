@@ -11,7 +11,7 @@ jobs:
     name: Check SUSE QE Tools WIP-Limit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v6
       - name: Install dependencies
         run: sudo apt-get install curl jq
       - name: Check SUSE QE Tools WIP-Limit
@@ -35,7 +35,7 @@ jobs:
     name: Set SUSE QE Tools due dates
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v6
       - name: Install dependencies
         run: sudo apt-get install curl jq
       - name: Set SUSE QE Tools due dates
