@@ -1,7 +1,7 @@
 # Copyright SUSE LLC
 # SPDX-License-Identifier: GPL-2.0-or-later
 
-package Perl::Critic::Policy::HashKeyQuotes;
+package Perl::Critic::Policy::OpenQA::HashKeyQuotes;
 
 use strict;
 use warnings;
@@ -9,6 +9,7 @@ use experimental 'signatures';
 use base 'Perl::Critic::Policy';
 
 use Perl::Critic::Utils qw( :severities :classification :ppi );
+use Scalar::Util qw(looks_like_number);
 
 our $VERSION = '0.0.1';
 
@@ -22,9 +23,15 @@ sub applies_to { return qw(PPI::Token::Quote::Single PPI::Token::Quote::Double) 
 sub violates ($self, $elem, $document) {
     # skip anything that's not a hash key
     return () unless is_hash_key($elem);
+    # skip if it has a sibling, e.g. $h{'foo' . 'bar'}
+    return () if $elem->snext_sibling or $elem->sprevious_sibling;
 
-    my $k = $elem->literal;
+    # only some PPI::Token::Quote::* classes implement literal
+    my $k = $elem->can('literal') ? $elem->literal : $elem->string;
+
     # skip anything that has a special symbol in the content
+    return () if looks_like_number $k;
+    return () if $k =~ m/^[0-9_]/;
     return () unless $k =~ m/^\w+$/;
 
     # report violation

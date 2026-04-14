@@ -12,8 +12,8 @@ test += xt/
 endif
 endif
 
+PROVE ?= tools/prove_wrapper
 BPAN := .bpan
-
 
 #------------------------------------------------------------------------------
 # User targets
@@ -31,7 +31,7 @@ test: $(checkstyle_tests) test-unit
 test-unit: test-bash test-python
 
 test-bash: $(BPAN)
-	prove -r $(if $v,-v )$(test)
+	"${PROVE}" -r $(if $v,-v )$(test)
 
 test-python:
 	py.test tests

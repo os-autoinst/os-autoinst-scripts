@@ -17,10 +17,14 @@ main_requires:
   perl(Module::CPANfile):
 
 develop_requires:
-  perl(Perl::Tidy): '== 20230912'
+  perl(Perl::Tidy): '== 20260204'
   perl(Code::TidyAll):
   perl(Perl::Critic):
   perl(Perl::Critic::Community):
+  perl(Test::Perl::Critic):
+  python3-gitlint:
+  expect:  # for unbuffer
+  shfmt:
 
 cover_requires:
   perl(Devel::Cover):
