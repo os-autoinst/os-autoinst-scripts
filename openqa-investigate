@@ -308,6 +308,10 @@ post-investigate() {
     if is-ok "$retry_result"; then
         comment+=" $retry_result."$'\n\n'
         comment+="📋 **Likely a sporadic failure**."
+        force_status="$(echo "job_data" | runjq -r .job.settings._FORCE_STATUS_ON_RETRY)"
+        if [ "$force_status" != "null" ] && [ "$force_status" -gt 0 ]; then
+            comment+=$'\n'"label:force_result:$retry_result:retry_job_$retry_result"
+        fi
     else
         local product_issue=false
         local test_issue=false
