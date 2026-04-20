@@ -7,7 +7,7 @@ set -eo pipefail
 # on stdin and all left unknowns to "openqa-investigate"
 dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
-PATH=$dir:$PATH
+PATH=$PATH:$dir
 
 # shellcheck source=/dev/null
 source "$dir"/_common
