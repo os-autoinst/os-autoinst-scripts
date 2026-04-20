@@ -1,8 +1,8 @@
 [project]
 name = "os-autoinst-scripts"
 dynamic = ["version"]
-description = ""
-readme = "Readme.md"
+description = "Collection of scripts for os-autoinst and openQA"
+readme = "README.md"
 requires-python = ">=3.9"
 license = "MIT"
 authors = [
@@ -14,13 +14,18 @@ classifiers = [
 ]
 
 dependencies = [
+    "httpx",
     "requests",
     "sh",
     "pynetbox",
     "tenacity",
+    "typer",
 ]
 
-[dependency-groups]
+[tool.setuptools]
+packages = []
+
+[project.optional-dependencies]
 dev = [
     "pytest",
     "pytest-cov",
@@ -29,6 +34,10 @@ dev = [
     "radon",
     "ruff",
 ]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
 
 [tool.coverage.run]
 branch = true
