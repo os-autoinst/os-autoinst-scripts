@@ -9,7 +9,6 @@ dst_project=${dst_project:-${src_project}:tested}
 staging_project=${staging_project:-${src_project}:testing}
 orig_src_project=
 submit_target="${submit_target:-"openSUSE:Factory"}"
-submit_target_extra_project="${submit_target_extra_project:-"openSUSE:Backports"}"
 dry_run="${dry_run:-"0"}"
 osc_poll_interval="${osc_poll_interval:-2}"
 osc_build_start_poll_tries="${osc_build_start_poll_tries:-90}"
