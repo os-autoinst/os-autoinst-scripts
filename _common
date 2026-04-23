@@ -6,6 +6,7 @@
 errorlog=""
 prefix="${prefix:-""}"
 osc="${osc:-"$prefix retry -e -- osc"}"
+submit_target=${submit_target:-openSUSE:Factory}
 
 warn() { printf '%s\n' "$@" >&2; }
 
@@ -363,6 +364,26 @@ delete_packages_from_obs_project() {
         log-info "Deleting $package from $obs_project"
         $osc rdelete -m "Cleaning up $package to allow triggering new jobs" "$obs_project" "$package"
     done
+}
+
+last_revision() {
+    log-debug "last_revision $*"
+    local project=$1
+    local package=$2
+    local file=$package.changes
+    local service=obs_scm
+    if [[ $project != "$submit_target" ]]; then
+        file=_service:$service:$file
+    fi
+    local line
+    # prevent SIGPIPE triggering osc cat to fail with the command group piping
+    # exceeding output to /dev/null
+    line=$(debug_osc cat "$project/$package/$file" | {
+        grep -m1 'Update to version'
+        cat > /dev/null
+    })
+    # shellcheck disable=SC2001
+    echo "$line" | sed -e 's,.*\.\([^.]*\):$,\1,'
 }
 
 declare _COLOR_BOLD='\x1b[1m'
