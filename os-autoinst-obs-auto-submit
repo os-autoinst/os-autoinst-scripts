@@ -7,7 +7,6 @@ color=${color:-auto}
 src_project=${src_project:-devel:openQA}
 dst_project=${dst_project:-${src_project}:tested}
 staging_project=${staging_project:-${src_project}:testing}
-orig_src_project=
 submit_target="${submit_target:-"openSUSE:Factory"}"
 dry_run="${dry_run:-"0"}"
 osc_poll_interval="${osc_poll_interval:-2}"
@@ -208,26 +207,6 @@ update_package() {
     return $rc
 }
 
-last_revision() {
-    log-debug "last_revision $*"
-    local project=$1
-    local package=$2
-    local file=$package.changes
-    local service=obs_scm
-    if [[ $project != "$submit_target" ]]; then
-        file=_service:$service:$file
-    fi
-    local line
-    # prevent SIGPIPE triggering osc cat to fail with the command group piping
-    # exceeding output to /dev/null
-    line=$(debug_osc cat "$project/$package/$file" | {
-        grep -m1 'Update to version'
-        cat > /dev/null
-    })
-    # shellcheck disable=SC2001
-    echo "$line" | sed -e 's,.*\.\([^.]*\):$,\1,'
-}
-
 sync_changesrevision() {
     log-info "sync_changesrevision $*"
     local dir=$1
@@ -266,7 +245,7 @@ generate_os-autoinst-distri-opensuse-deps_changelog() {
 
 handle_auto_submit() {
     log-info "handle_auto_submit $*"
-    local package=$1 sync_project=
+    local package=$1
     debug_osc service wait "$src_project" "$package"
     debug_osc co --server-side-source-service-files "$src_project"/"$package"
     if [[ "$package" == "os-autoinst-distri-opensuse-deps" ]]; then
@@ -279,18 +258,8 @@ handle_auto_submit() {
             return
         fi
     else
-        target_rev=$(last_revision "$submit_target" "$package")
-
-        # synchronize changes back to $src_project (or $orig_src_project in case $staging_project is used)
-        if [[ $orig_src_project ]]; then
-            sync_project=$orig_src_project
-            debug_osc co --server-side-source-service-files "$sync_project"/"$package"
-        else
-            sync_project=$src_project
-        fi
-        sync_changesrevision "$sync_project" "$package" "$target_rev"
-
         # skip submission if there is nothing new to submit
+        target_rev=$(last_revision "$submit_target" "$package")
         if [[ "$target_rev" == "$(last_revision "$src_project" "$package")" ]]; then
             log-info "Latest revision already in $submit_target"
             return
@@ -350,7 +319,6 @@ submit() {
     # submit from staging project if specified
     local must_cleanup_staging=
     if [[ -n $staging_project && $staging_project != none && $staging_project != "$src_project" ]]; then
-        orig_src_project=$src_project
         src_project=$staging_project
         must_cleanup_staging=1
     fi

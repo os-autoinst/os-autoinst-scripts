@@ -25,6 +25,7 @@ osc=${osc:-retry -e -- osc}
 src_project=${src_project:-devel:openQA}
 staging_project=${staging_project:-${src_project}:testing}
 dst_project=${dst_project:-${src_project}:tested}
+submit_target=${submit_target:-openSUSE:Factory}
 scenario_definitions="${scenario_definitions:-"scenario-definitions.yaml"}"
 
 # shellcheck source=/dev/null
@@ -76,8 +77,23 @@ create_snapshots() {
     $osc release --no-delay --target-project "$staging_project" --target-repository=openSUSE_Tumbleweed -r openSUSE_Tumbleweed -a x86_64 "$src_project" "$package"
 }
 
+sync_changesrevision() {
+    log-info "sync_changesrevision $*"
+    local dir=$1
+    local package=$2
+    local target_rev=$3
+    path="$dir/$package"
+    $client_prefix xmlstarlet ed -L -u "//param[@name='changesrevision']" -v "$target_rev" "$path"/_servicedata
+    if ! diff -u "$path"/.osc/_servicedata "$path"/_servicedata; then
+        debug_osc up "$path"
+        debug_osc cat "$submit_target" "$package" "$package".changes > "$path/$package".changes
+        debug_osc ci -m "sync changesrevision with $submit_target" "$path"
+        debug_osc up --server-side-source-service-files "$path"
+    fi
+}
+
 create_devel_openqa_snapshot() {
-    local auto_submit_packages staged_packages
+    local auto_submit_packages staged_packages target_rev
     auto_submit_packages=$(list_packages "$dst_project")
     staged_packages=$(list_packages "$staging_project") || true # osc ls returns non-zero return code for empty projects
     if [[ $staged_packages ]]; then
@@ -97,6 +113,9 @@ create_devel_openqa_snapshot() {
             delete_packages_from_obs_project "$staging_project"
             return
         fi
+        target_rev=$(last_revision "$submit_target" "$package")
+        debug_osc co --server-side-source-service-files "$src_project"/"$package"
+        sync_changesrevision "$src_project" "$package" "$target_rev"
         create_snapshots "$package"
     done
     log-info "Wait until all packages are published under $staging_project"
