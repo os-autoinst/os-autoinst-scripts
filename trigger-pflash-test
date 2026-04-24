@@ -1,9 +1,5 @@
 #!/bin/bash
 
-# Trigger test to generate pflash vars image
-#
-# Can be configured by variables.
-
 # shellcheck source=/dev/null
 . "$(dirname "$0")"/_common
 
@@ -30,6 +26,19 @@ fi
 set -xeuo pipefail
 
 main() {
+    opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
+    eval set -- "$opts"
+    while true; do
+        case "$1" in
+            -h | --help) usage 0 ;;
+            --)
+                shift
+                break
+                ;;
+            *) break ;;
+        esac
+    done
+
     local image
     [[ "$dry_run" = 1 ]] && client_prefix="echo"
     image=$(find_latest_published_tumbleweed_image "$tw_group_id" "$arch" "$machine" iso)
@@ -47,4 +56,18 @@ main() {
         "${CLI_ARGS[@]}"
 }
 
-main
+usage() {
+    cat << EOF
+Usage: $0 [OPTIONS]
+
+Schedule an openQA job including a single test to generate UEFI pflash vars image.
+
+Can be configured by variables.
+
+Options:
+ -h, --help         display this help
+EOF
+    exit "$1"
+}
+
+caller 0 > /dev/null || main "$@"
