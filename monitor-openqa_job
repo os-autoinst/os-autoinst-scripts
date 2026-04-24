@@ -1,12 +1,5 @@
 #!/bin/bash -ex
 
-# Monitor an openQA job by polling the status of a job over the API.
-#
-# Continuously polls the openQA API for the status of the specified jobs until
-# all jobs finish. After the jobs have finished this program exits with an exit
-# code corresponding to the jobs' result. For example all jobs pass it would exit
-# this program with exit code 0 for success; otherwise with 1.
-
 set -euo pipefail
 
 # configuration variables with defaults.
@@ -22,6 +15,36 @@ comment_on_obs=${comment_on_obs:-}
 OPENQA_CLI_RETRIES="${openqa_cli_retries:-7}"
 
 export OPENQA_CLI_RETRIES
+
+usage() {
+    cat << EOF
+Usage: $0 [OPTIONS]
+
+Monitor an openQA job by polling the status of a job over the API.
+
+Continuously polls the openQA API for the status of the specified jobs until
+all jobs finish. After the jobs have finished this program exits with an exit
+code corresponding to the jobs' result. For example all jobs pass it would
+exit this program with exit code 0 for success; otherwise with 1.
+
+Options:
+ -h, --help         display this help
+EOF
+    exit "$1"
+}
+
+opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
+eval set -- "$opts"
+while true; do
+    case "$1" in
+        -h | --help) usage 0 ;;
+        --)
+            shift
+            break
+            ;;
+        *) break ;;
+    esac
+done
 
 # shellcheck source=/dev/null
 . "$(dirname "$0")"/_common
