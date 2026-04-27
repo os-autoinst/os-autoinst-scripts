@@ -46,8 +46,8 @@ class TestFetchJson:
         res = llm_investigate.fetch_json(mock_client, "http://example.com/api/v1/jobs/123")
         assert res == {}
 
-        # Comments failure returns []
-        res = llm_investigate.fetch_json(mock_client, "http://example.com/api/v1/jobs/123/comments")
+        # Passing explicit default
+        res = llm_investigate.fetch_json(mock_client, "http://example.com/api/v1/jobs/123/comments", default=[])
         assert res == []
 
 
@@ -243,7 +243,7 @@ def test_investigate_logging_levels(mock_basic_config: MagicMock) -> None:
     # We need to mock httpx.Client to avoid real network calls during investigate() call
     with patch("llm_investigate.httpx.Client"), patch("llm_investigate.fetch_json") as mock_fetch:
 
-        def mock_fetch_side_effect(_client: Any, url: str) -> Any:
+        def mock_fetch_side_effect(_client: Any, url: str, **kwargs: Any) -> Any:
             if "comments" in url:
                 return []
             return {"job": {"id": 123, "result": "passed"}}
