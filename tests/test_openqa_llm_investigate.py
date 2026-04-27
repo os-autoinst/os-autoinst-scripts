@@ -82,47 +82,48 @@ def test_post_comment(mocker: pytest.MockerFixture) -> None:
     assert "text=test comment" in args
 
 
-def setup_mock_client(mocker: pytest.MockerFixture) -> MagicMock:
+def setup_mock_client(mocker: pytest.MockerFixture, overrides: dict[str, Any] | None = None) -> MagicMock:
     mock_client_class = mocker.patch("llm_investigate.httpx.Client")
     mock_client = MagicMock()
     mock_client_class.return_value.__enter__.return_value = mock_client
 
-    def mock_get(url: str, *args: Any, **kwargs: Any) -> Mock:
-        _ = args, kwargs
-        resp = Mock()
-        if "comments" in url:
-            resp.json.return_value = []
-        elif "api/v1/jobs" in url and "test=" in url:
-            resp.json.return_value = {
-                "jobs": [
-                    {"id": 120, "state": "done", "result": "passed"},
-                    {"id": 121, "state": "done", "result": "failed"},
-                    {"id": 122, "state": "done", "result": "failed"},
-                    {"id": 123, "state": "done", "result": "failed"},
-                ]
+    responses = {
+        "comments": [],
+        "api/v1/jobs?build": {"jobs": [{"id": 123}, {"id": 124}]},
+        "test=": {
+            "jobs": [
+                {"id": 120, "state": "done", "result": "passed"},
+                {"id": 121, "state": "done", "result": "failed"},
+                {"id": 122, "state": "done", "result": "failed"},
+                {"id": 123, "state": "done", "result": "failed"},
+            ]
+        },
+        "api/v1/jobs": {
+            "job": {
+                "id": 123,
+                "result": "failed",
+                "test": "my_test",
+                "settings": {
+                    "BUILD": "1.0",
+                    "DISTRI": "opensuse",
+                    "VERSION": "Tumbleweed",
+                    "ARCH": "x86_64",
+                    "FLAVOR": "DVD",
+                },
             }
-        elif "api/v1/jobs" in url:
-            resp.json.return_value = {
-                "job": {
-                    "id": 123,
-                    "result": "failed",
-                    "test": "my_test",
-                    "settings": {
-                        "BUILD": "1.0",
-                        "DISTRI": "opensuse",
-                        "VERSION": "Tumbleweed",
-                        "ARCH": "x86_64",
-                        "FLAVOR": "DVD",
-                    },
-                }
-            }
-        elif "investigation_ajax" in url:
-            resp.json.return_value = {"diff_to_last_good": {}}
-        elif "autoinst-log.txt" in url:
-            resp.text = "failed log"
-        else:
-            resp.json.value = {}
-        return resp
+        },
+        "investigation_ajax": {"diff_to_last_good": {}},
+        "autoinst-log.txt": "failed log",
+    }
+    if overrides:
+        responses.update(overrides)
+
+    def mock_get(url: str, params: Any = None, **kwargs: Any) -> Mock:
+        _ = params, kwargs
+        for pattern, val in responses.items():
+            if pattern in url:
+                return Mock(json=Mock(return_value=val), text=val if isinstance(val, str) else "")
+        return Mock(json=Mock(return_value={}))
 
     mock_client.get.side_effect = mock_get
 
@@ -148,10 +149,7 @@ def test_investigate_cmd(mocker: pytest.MockerFixture) -> None:
 
 def test_investigate_cmd_passed_job(mocker: pytest.MockerFixture) -> None:
     mock_print = mocker.patch("builtins.print")
-    client = setup_mock_client(mocker)
-    client.get.side_effect = lambda url, *_, **__: Mock(
-        json=Mock(return_value=[] if "comments" in url else {"job": {"id": 123, "result": "passed"}})
-    )
+    setup_mock_client(mocker, overrides={"api/v1/jobs": {"job": {"id": 123, "result": "passed"}}})
 
     with pytest.raises(SystemExit) as exc:
         llm_investigate.investigate("123")
@@ -162,10 +160,7 @@ def test_investigate_cmd_passed_job(mocker: pytest.MockerFixture) -> None:
 
 def test_investigate_cmd_softfailed_job(mocker: pytest.MockerFixture) -> None:
     mock_print = mocker.patch("builtins.print")
-    client = setup_mock_client(mocker)
-    client.get.side_effect = lambda url, *_, **__: Mock(
-        json=Mock(return_value=[] if "comments" in url else {"job": {"id": 123, "result": "softfailed"}})
-    )
+    setup_mock_client(mocker, overrides={"api/v1/jobs": {"job": {"id": 123, "result": "softfailed"}}})
 
     with pytest.raises(SystemExit) as exc:
         llm_investigate.investigate("123")
@@ -176,10 +171,7 @@ def test_investigate_cmd_softfailed_job(mocker: pytest.MockerFixture) -> None:
 
 def test_investigate_cmd_already_commented(mocker: pytest.MockerFixture) -> None:
     mock_log = mocker.patch("llm_investigate.log")
-    client = setup_mock_client(mocker)
-    client.get.side_effect = lambda url, *_, **__: Mock(
-        json=Mock(return_value=[{"text": "**LLM Investigation summary:** already done"}] if "comments" in url else {})
-    )
+    setup_mock_client(mocker, overrides={"comments": [{"text": "**LLM Investigation summary:** already done"}]})
 
     with pytest.raises(SystemExit) as exc:
         llm_investigate.investigate("123")
@@ -192,15 +184,7 @@ def test_investigate_cmd_already_commented(mocker: pytest.MockerFixture) -> None
 def test_investigate_cmd_already_commented_with_force(mocker: pytest.MockerFixture) -> None:
     mock_post = mocker.patch("llm_investigate.post_comment")
     mock_print = mocker.patch("builtins.print")
-    client = setup_mock_client(mocker)
-    original_get = client.get.side_effect
-
-    def mock_get(url: str, *args: Any, **kwargs: Any) -> Mock:
-        if "comments" in url:
-            return Mock(json=Mock(return_value=[{"text": "**LLM Investigation summary:** already done"}]))
-        return original_get(url, *args, **kwargs)
-
-    client.get.side_effect = mock_get
+    setup_mock_client(mocker, overrides={"comments": [{"text": "**LLM Investigation summary:** already done"}]})
 
     llm_investigate.investigate("123", force=True)
 
