@@ -82,46 +82,47 @@ def test_post_comment(mock_run: MagicMock) -> None:
     assert "text=test comment" in args
 
 
-def setup_mock_client(mock_client_class: MagicMock) -> MagicMock:
+def setup_mock_client(mock_client_class: MagicMock, overrides: dict[str, Any] | None = None) -> MagicMock:
     mock_client = MagicMock()
     mock_client_class.return_value.__enter__.return_value = mock_client
 
-    def mock_get(url: str, *args: Any, **kwargs: Any) -> Mock:
-        _ = args, kwargs
-        resp = Mock()
-        if "comments" in url:
-            resp.json.return_value = []
-        elif "api/v1/jobs" in url and "test=" in url:
-            resp.json.return_value = {
-                "jobs": [
-                    {"id": 120, "state": "done", "result": "passed"},
-                    {"id": 121, "state": "done", "result": "failed"},
-                    {"id": 122, "state": "done", "result": "failed"},
-                    {"id": 123, "state": "done", "result": "failed"},
-                ]
+    responses = {
+        "comments": [],
+        "api/v1/jobs?build": {"jobs": [{"id": 123}, {"id": 124}]},
+        "test=": {
+            "jobs": [
+                {"id": 120, "state": "done", "result": "passed"},
+                {"id": 121, "state": "done", "result": "failed"},
+                {"id": 122, "state": "done", "result": "failed"},
+                {"id": 123, "state": "done", "result": "failed"},
+            ]
+        },
+        "api/v1/jobs": {
+            "job": {
+                "id": 123,
+                "result": "failed",
+                "test": "my_test",
+                "settings": {
+                    "BUILD": "1.0",
+                    "DISTRI": "opensuse",
+                    "VERSION": "Tumbleweed",
+                    "ARCH": "x86_64",
+                    "FLAVOR": "DVD",
+                },
             }
-        elif "api/v1/jobs" in url:
-            resp.json.return_value = {
-                "job": {
-                    "id": 123,
-                    "result": "failed",
-                    "test": "my_test",
-                    "settings": {
-                        "BUILD": "1.0",
-                        "DISTRI": "opensuse",
-                        "VERSION": "Tumbleweed",
-                        "ARCH": "x86_64",
-                        "FLAVOR": "DVD",
-                    },
-                }
-            }
-        elif "investigation_ajax" in url:
-            resp.json.return_value = {"diff_to_last_good": {}}
-        elif "autoinst-log.txt" in url:
-            resp.text = "failed log"
-        else:
-            resp.json.return_value = {}
-        return resp
+        },
+        "investigation_ajax": {"diff_to_last_good": {}},
+        "autoinst-log.txt": "failed log",
+    }
+    if overrides:
+        responses.update(overrides)
+
+    def mock_get(url: str, params: Any = None, **kwargs: Any) -> Mock:
+        _ = params, kwargs
+        for pattern, val in responses.items():
+            if pattern in url:
+                return Mock(json=Mock(return_value=val), text=val if isinstance(val, str) else "")
+        return Mock(json=Mock(return_value={}))
 
     mock_client.get.side_effect = mock_get
 
@@ -149,10 +150,7 @@ def test_investigate_cmd(mock_print: MagicMock, mock_post: MagicMock, mock_clien
 @patch("llm_investigate.httpx.Client")
 @patch("builtins.print")
 def test_investigate_cmd_passed_job(mock_print: MagicMock, mock_client_class: MagicMock) -> None:
-    client = setup_mock_client(mock_client_class)
-    client.get.side_effect = lambda url, *_, **__: Mock(
-        json=Mock(return_value=[] if "comments" in url else {"job": {"id": 123, "result": "passed"}})
-    )
+    setup_mock_client(mock_client_class, overrides={"api/v1/jobs": {"job": {"id": 123, "result": "passed"}}})
 
     with pytest.raises(SystemExit) as exc:
         llm_investigate.investigate("123")
@@ -164,10 +162,7 @@ def test_investigate_cmd_passed_job(mock_print: MagicMock, mock_client_class: Ma
 @patch("llm_investigate.httpx.Client")
 @patch("builtins.print")
 def test_investigate_cmd_softfailed_job(mock_print: MagicMock, mock_post_class: MagicMock) -> None:
-    client = setup_mock_client(mock_post_class)
-    client.get.side_effect = lambda url, *_, **__: Mock(
-        json=Mock(return_value=[] if "comments" in url else {"job": {"id": 123, "result": "softfailed"}})
-    )
+    setup_mock_client(mock_post_class, overrides={"api/v1/jobs": {"job": {"id": 123, "result": "softfailed"}}})
 
     with pytest.raises(SystemExit) as exc:
         llm_investigate.investigate("123")
@@ -179,10 +174,7 @@ def test_investigate_cmd_softfailed_job(mock_print: MagicMock, mock_post_class: 
 @patch("llm_investigate.httpx.Client")
 @patch("llm_investigate.log")
 def test_investigate_cmd_already_commented(mock_log: MagicMock, mock_client_class: MagicMock) -> None:
-    client = setup_mock_client(mock_client_class)
-    client.get.side_effect = lambda url, *_, **__: Mock(
-        json=Mock(return_value=[{"text": "**LLM Investigation summary:** already done"}] if "comments" in url else {})
-    )
+    setup_mock_client(mock_client_class, overrides={"comments": [{"text": "**LLM Investigation summary:** already done"}]})
 
     with pytest.raises(SystemExit) as exc:
         llm_investigate.investigate("123")
@@ -198,18 +190,10 @@ def test_investigate_cmd_already_commented(mock_log: MagicMock, mock_client_clas
 def test_investigate_cmd_already_commented_with_force(
     mock_print: MagicMock, mock_post: MagicMock, mock_client_class: MagicMock
 ) -> None:
-    client = setup_mock_client(mock_client_class)
-    original_get = client.get.side_effect
-
-    def mock_get(url: str, *args: Any, **kwargs: Any) -> Mock:
-        if "comments" in url:
-            return Mock(json=Mock(return_value=[{"text": "**LLM Investigation summary:** already done"}]))
-        return original_get(url, *args, **kwargs)
-
-    client.get.side_effect = mock_get
-
+    setup_mock_client(
+        mock_client_class, overrides={"comments": [{"text": "**LLM Investigation summary:** already done"}]}
+    )
     llm_investigate.investigate("123", force=True)
-
     mock_print.assert_called_with("https://openqa.opensuse.org/tests/123")
     mock_post.assert_called_once()
     assert "BISECT: YES" in mock_post.call_args[0][2]
@@ -223,9 +207,7 @@ def test_investigate_cmd_dry_run(mock_print: MagicMock, mock_post: MagicMock, mo
     client.post.side_effect = lambda *_, **__: Mock(
         json=Mock(return_value={"choices": [{"message": {"content": "BISECT: NO. Already known."}}]})
     )
-
     llm_investigate.investigate("123", dry=True)
-
     # In dry run, it should print the summary instead of posting
     mock_post.assert_not_called()
     mock_print.assert_any_call("**LLM Investigation summary:**\n\nBISECT: NO. Already known.")
