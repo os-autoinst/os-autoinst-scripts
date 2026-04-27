@@ -129,11 +129,9 @@ def investigate(
 
         test_name = job.get("test", "unknown")
         settings = job.get("settings", {})
-        build = settings.get("BUILD", "unknown")
-        distri = settings.get("DISTRI", "unknown")
-        version = settings.get("VERSION", "unknown")
-        arch = settings.get("ARCH", "unknown")
-        flavor = settings.get("FLAVOR", "unknown")
+        build, distri, version, arch, flavor = (
+            settings.get(k, "unknown") for k in ("BUILD", "DISTRI", "VERSION", "ARCH", "FLAVOR")
+        )
 
         # Search for similar failures in same build (across all tests)
         build_search_query = f"{base_url}/api/v1/jobs?build={build}&distri={distri}&version={version}&result=failed"
