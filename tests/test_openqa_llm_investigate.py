@@ -32,7 +32,7 @@ def test_fetch_json_success() -> None:
 
     res = llm_investigate.fetch_json(mock_client, "http://example.com")
     assert res == {"foo": "bar"}
-    mock_client.get.assert_called_once_with("http://example.com")
+    mock_client.get.assert_called_once_with("http://example.com", params=None)
     mock_response.raise_for_status.assert_called_once()
 
 
@@ -235,7 +235,8 @@ def test_investigate_logging_levels(mocker: pytest.MockerFixture) -> None:
     mocker.patch("llm_investigate.httpx.Client")
     mock_fetch = mocker.patch("llm_investigate.fetch_json")
 
-    def mock_fetch_side_effect(_client: Any, url: str, **kwargs: Any) -> Any:
+    def mock_fetch_side_effect(_client: Any, url: str, params: Any = None, **_kwargs: Any) -> Any:
+        _ = params
         if "comments" in url:
             return []
         return {"job": {"id": 123, "result": "passed"}}
