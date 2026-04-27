@@ -148,21 +148,31 @@ def investigate(
             "limit": 100,
         }
         test_history_data = fetch_json(client, f"{base_url}/api/v1/jobs", params=test_params)
-        test_jobs = sorted(test_history_data.get("jobs", []), key=lambda x: x["id"])
-        # Only consider jobs that are finished and including/before current job
-        relevant_jobs = [
-            j
-            for j in test_jobs
-            if j.get("state") == "done"
-            and j.get("result") in {"passed", "softfailed", "failed"}
-            and j["id"] <= int(job_id)
-        ]
+        test_jobs = sorted(test_history_data.get("jobs", []), key=lambda x: x["id"], reverse=True)
+
         consecutive_failures = 0
-        for prev_job in reversed(relevant_jobs):
-            if prev_job.get("result") == "failed":
+        found_target = False
+        target_id_int = int(job_id)
+        valid_results = {"passed", "softfailed", "failed"}
+
+        for j in test_jobs:
+            # Skip jobs newer than target
+            if j["id"] > target_id_int:
+                continue
+            # Mark when we reach the target
+            if j["id"] == target_id_int:
+                found_target = True
+            # Skip incomplete jobs or jobs not yet reached target
+            if not found_target or j.get("state") != "done" or j.get("result") not in valid_results:
+                continue
+
+            if j.get("result") == "failed":
                 consecutive_failures += 1
             else:
                 break
+
+        if not found_target:
+            log.warning("Job %s not found in recent history (limit %s). Streak count may be inaccurate.", job_id, test_params["limit"])
 
         prompt = f"""You are analyzing an openQA test run failure.
 Job details:
