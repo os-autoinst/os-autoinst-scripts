@@ -46,8 +46,8 @@ def test_fetch_json_failure() -> None:
     res = llm_investigate.fetch_json(mock_client, "http://example.com/api/v1/jobs/123")
     assert res == {}
 
-    # Comments failure returns []
-    res = llm_investigate.fetch_json(mock_client, "http://example.com/api/v1/jobs/123/comments")
+    # Passing explicit default
+    res = llm_investigate.fetch_json(mock_client, "http://example.com/api/v1/jobs/123/comments", default=[])
     assert res == []
 
 
@@ -114,7 +114,7 @@ def setup_mock_client(mocker: pytest.MockerFixture) -> MagicMock:
         elif "autoinst-log.txt" in url:
             resp.text = "failed log"
         else:
-            resp.json.return_value = {}
+            resp.json.value = {}
         return resp
 
     mock_client.get.side_effect = mock_get
@@ -235,7 +235,7 @@ def test_investigate_logging_levels(mocker: pytest.MockerFixture) -> None:
     mocker.patch("llm_investigate.httpx.Client")
     mock_fetch = mocker.patch("llm_investigate.fetch_json")
 
-    def mock_fetch_side_effect(_client: Any, url: str) -> Any:
+    def mock_fetch_side_effect(_client: Any, url: str, **kwargs: Any) -> Any:
         if "comments" in url:
             return []
         return {"job": {"id": 123, "result": "passed"}}
