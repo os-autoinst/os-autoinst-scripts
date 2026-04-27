@@ -96,6 +96,9 @@ def investigate(
     dry: Annotated[  # noqa: FBT002
         bool, typer.Option("--dry", help="Dry run mode: output summary instead of posting a comment")
     ] = False,
+    force: Annotated[  # noqa: FBT002
+        bool, typer.Option("--force", "-f", help="Force another analysis even if an LLM comment already exists")
+    ] = False,
 ) -> None:
     setup_logging(verbose, quiet)
     base_url, job_id = parse_job_url(job_url)
@@ -110,7 +113,7 @@ def investigate(
     with httpx.Client(headers={"User-Agent": USER_AGENT}) as client:
         # Check for existing LLM investigation comments
         comments = fetch_json(client, f"{base_url}/api/v1/jobs/{job_id}/comments")
-        if any(c.get("text", "").startswith("**LLM Investigation summary:**") for c in comments):
+        if not force and any(c.get("text", "").startswith("**LLM Investigation summary:**") for c in comments):
             log.info("Job %s already has an LLM investigation summary, skipping.", job_id)
             sys.exit(0)
 
@@ -121,7 +124,7 @@ def investigate(
             sys.exit(1)
         job = job_data["job"]
 
-        if job.get("result") in ("passed", "softfailed"):
+        if job.get("result") in {"passed", "softfailed"}:
             log.info("Job %s %s, skipping investigation.", job_id, job.get("result"))
             sys.exit(0)
 
