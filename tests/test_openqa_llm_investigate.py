@@ -91,8 +91,15 @@ def setup_mock_client(mock_client_class: MagicMock) -> MagicMock:
         resp = Mock()
         if "comments" in url:
             resp.json.return_value = []
-        elif "api/v1/jobs" in url and ("build=" in url or "test=" in url):
-            resp.json.return_value = {"jobs": [{"id": 123}, {"id": 124}]}
+        elif "api/v1/jobs" in url and "test=" in url:
+            resp.json.return_value = {
+                "jobs": [
+                    {"id": 120, "state": "done", "result": "passed"},
+                    {"id": 121, "state": "done", "result": "failed"},
+                    {"id": 122, "state": "done", "result": "failed"},
+                    {"id": 123, "state": "done", "result": "failed"},
+                ]
+            }
         elif "api/v1/jobs" in url:
             resp.json.return_value = {
                 "job": {

@@ -138,17 +138,31 @@ def investigate(
         build_history_data = fetch_json(client, f"{base_url}/api/v1/jobs", params=build_params)
         build_failures = len(build_history_data.get("jobs", []))
 
-        # Search for historical failures of the same test (across all builds)
+        # Search for consecutive failures of the same test (across all builds)
         test_params = {
             "test": test_name,
             "distri": distri,
             "version": version,
             "arch": arch,
             "flavor": flavor,
-            "result": "failed",
+            "limit": 1000,
         }
         test_history_data = fetch_json(client, f"{base_url}/api/v1/jobs", params=test_params)
-        test_failures = len(test_history_data.get("jobs", []))
+        test_jobs = sorted(test_history_data.get("jobs", []), key=lambda x: x["id"])
+        # Only consider jobs that are finished and including/before current job
+        relevant_jobs = [
+            j
+            for j in test_jobs
+            if j.get("state") == "done"
+            and j.get("result") in {"passed", "softfailed", "failed"}
+            and j["id"] <= int(job_id)
+        ]
+        consecutive_failures = 0
+        for prev_job in reversed(relevant_jobs):
+            if prev_job.get("result") == "failed":
+                consecutive_failures += 1
+            else:
+                break
 
         prompt = f"""You are analyzing an openQA test run failure.
 Job details:
@@ -161,7 +175,7 @@ Job details:
 - Flavor: {flavor}
 - Result: {job.get("result", "unknown")}
 - Total failed jobs in this build (across all tests): {build_failures}
-- Total times this specific test (same name, arch, flavor) failed historically: {test_failures}
+- Consecutive recent failures for this specific test (same name, arch, flavor): {consecutive_failures}
 
 Investigation info (diff to last good):
 {json.dumps(investigation.get("diff_to_last_good", "None available"))}
@@ -174,6 +188,7 @@ Provide exactly 3 sentences answering:
 2. Does the same issue appear in other tests in the same build, and did it appear in the history of the same build?
 3. Should 'openqa-investigate' be triggered to schedule further bisect tests? Bisection is costly and should ONLY be used to find the origin of NEWly introduced product or test regressions. If this failure is an infrastructure issue, or if the high number of historical or same-build failures indicates this is already a widespread or long-standing issue, you MUST answer NO. Start your 3rd sentence EXACTLY with "BISECT: YES" or "BISECT: NO" followed by the reason.
 """
+
 
         req = {
             "model": llm_model,
