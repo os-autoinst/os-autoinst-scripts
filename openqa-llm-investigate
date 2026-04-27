@@ -88,6 +88,12 @@ def parse_job_url(job_url: str) -> tuple[str, str]:
     return base_url, job_id
 
 
+def _shares_failed_modules(other_job: dict[str, Any], target_modules: set[str]) -> bool:
+    """Check if the given job has failures in any of the target modules."""
+    other_failed = (m.get("name") for m in other_job.get("modules", []) if m.get("result") == "failed")
+    return bool(target_modules.intersection(other_failed))
+
+
 @app.command()
 def investigate(
     job_url: str = typer.Argument(..., help="The openQA test URL or job ID for which to trigger LLM investigation"),
@@ -152,15 +158,16 @@ def investigate(
         build_failed_jobs = build_history_data.get("jobs", [])
         build_failures = len(build_failed_jobs)
 
-        same_module_failures = 0
-        if failed_modules:
-            failed_modules_set = set(failed_modules)
-            for b_job in build_failed_jobs:
-                if str(b_job.get("id")) == str(job_id):
-                    continue
-                b_failed_modules = {m.get("name") for m in b_job.get("modules", []) if m.get("result") == "failed"}
-                if failed_modules_set.intersection(b_failed_modules):
-                    same_module_failures += 1
+        failed_modules_set = set(failed_modules)
+        same_module_failures = (
+            sum(
+                1
+                for b_job in build_failed_jobs
+                if str(b_job.get("id")) != str(job_id) and _shares_failed_modules(b_job, failed_modules_set)
+            )
+            if failed_modules
+            else 0
+        )
 
         # Search for consecutive failures of the same test (across all builds)
         test_params = {
@@ -174,29 +181,24 @@ def investigate(
         test_history_data = fetch_json(client, f"{base_url}/api/v1/jobs", params=test_params)
         test_jobs = sorted(test_history_data.get("jobs", []), key=lambda x: x["id"], reverse=True)
 
-        consecutive_failures = 0
-        found_target = False
         target_id_int = int(job_id)
         valid_results = {"passed", "softfailed", "failed"}
-
-        for j in test_jobs:
-            # Skip jobs newer than target
-            if j["id"] > target_id_int:
-                continue
-            # Mark when we reach the target
-            if j["id"] == target_id_int:
-                found_target = True
-            # Skip incomplete jobs or jobs not yet reached target
-            if not found_target or j.get("state") != "done" or j.get("result") not in valid_results:
-                continue
-
-            if j.get("result") == "failed":
-                consecutive_failures += 1
-            else:
-                break
+        found_target = any(j["id"] == target_id_int for j in test_jobs)
+        relevant_jobs = [
+            j
+            for j in test_jobs
+            if j["id"] <= target_id_int and j.get("state") == "done" and j.get("result") in valid_results
+        ]
+        consecutive_failures = next(
+            (i for i, j in enumerate(relevant_jobs) if j.get("result") != "failed"), len(relevant_jobs)
+        )
 
         if not found_target:
-            log.warning("Job %s not found in recent history (limit %s). Streak count may be inaccurate.", job_id, test_params["limit"])
+            log.warning(
+                "Job %s not found in recent history (limit %s). Streak count may be inaccurate.",
+                job_id,
+                test_params["limit"],
+            )
 
         hint = ""
         if build_failures > 20:
