@@ -53,20 +53,20 @@ def test_fetch_json_failure() -> None:
 
 def test_fetch_text_success() -> None:
     mock_client = MagicMock(spec=httpx.Client)
-    mock_response = Mock()
-    # Create 300 lines of text
-    mock_response.text = "\n".join(f"line {i}" for i in range(300))
-    mock_client.get.return_value = mock_response
+    mock_response = MagicMock()
+    mock_response.iter_lines.return_value = [f"line {i}" for i in range(300)]
+    mock_client.stream.return_value.__enter__.return_value = mock_response
 
     res = llm_investigate.fetch_text(mock_client, "http://example.com", max_lines=200)
     lines = res.splitlines()
     assert len(lines) == 200
     assert lines[-1] == "line 299"
+    assert lines[0] == "line 100"
 
 
 def test_fetch_text_failure() -> None:
     mock_client = MagicMock(spec=httpx.Client)
-    mock_client.get.side_effect = httpx.RequestError("error")
+    mock_client.stream.side_effect = httpx.RequestError("error")
 
     res = llm_investigate.fetch_text(mock_client, "http://example.com")
     assert not res
