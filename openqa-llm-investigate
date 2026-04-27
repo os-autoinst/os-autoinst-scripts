@@ -118,7 +118,10 @@ def investigate(
             sys.exit(0)
 
         # Fetch job details
-        job_data = fetch_json(client, f"{base_url}/api/v1/jobs/{job_id}")
+        job_data = fetch_json(client, f"{base_url}/api/v1/jobs/{job_id}/details")
+        if not job_data or "job" not in job_data:
+            # Fallback for openQA versions/configurations where /details might fail
+            job_data = fetch_json(client, f"{base_url}/api/v1/jobs/{job_id}")
         if not job_data or "job" not in job_data:
             log.error("Could not retrieve job data for job %s from %s", job_id, base_url)
             sys.exit(1)
@@ -127,6 +130,12 @@ def investigate(
         if job.get("result") in {"passed", "softfailed"}:
             log.info("Job %s %s, skipping investigation.", job_id, job.get("result"))
             sys.exit(0)
+
+        failed_modules = [
+            m.get("name", "unknown")
+            for m in job.get("testresults", [])
+            if m.get("result") == "failed"
+        ]
 
         log_text = fetch_text(client, f"{base_url}/tests/{job_id}/file/autoinst-log.txt")
         investigation = fetch_json(client, f"{base_url}/tests/{job_id}/investigation_ajax")
@@ -140,7 +149,18 @@ def investigate(
         # Search for similar failures in same build (across all tests)
         build_params = {"build": build, "distri": distri, "version": version, "result": "failed"}
         build_history_data = fetch_json(client, f"{base_url}/api/v1/jobs", params=build_params)
-        build_failures = len(build_history_data.get("jobs", []))
+        build_failed_jobs = build_history_data.get("jobs", [])
+        build_failures = len(build_failed_jobs)
+
+        same_module_failures = 0
+        if failed_modules:
+            failed_modules_set = set(failed_modules)
+            for b_job in build_failed_jobs:
+                if str(b_job.get("id")) == str(job_id):
+                    continue
+                b_failed_modules = {m.get("name") for m in b_job.get("modules", []) if m.get("result") == "failed"}
+                if failed_modules_set.intersection(b_failed_modules):
+                    same_module_failures += 1
 
         # Search for consecutive failures of the same test (across all builds)
         test_params = {
@@ -185,6 +205,7 @@ def investigate(
         prompt = f"""You are analyzing an openQA test run failure.
 Job details:
 - Test: {test_name}
+- Failed module(s): {", ".join(failed_modules) if failed_modules else "unknown"}
 - Group: {job.get("group", "unknown")}
 - Build: {build}
 - Distri: {distri}
@@ -193,6 +214,7 @@ Job details:
 - Flavor: {flavor}
 - Result: {job.get("result", "unknown")}
 - Total failed jobs in this build (across all tests): {build_failures}{hint}
+- Other jobs in this build failing in the exact same module(s): {same_module_failures}
 - Consecutive recent failures for this specific test (same name, arch, flavor): {consecutive_failures}
 
 Investigation info (diff to last good):
@@ -204,7 +226,9 @@ Log tail (last 200 lines):
 Provide exactly 3 sentences answering:
 1. Is it a new or existing issue? Is it likely a product regression, test regression, or infrastructure problem?
 2. Does the same issue appear in other tests in the same build, and did it appear in the history of the same build?
-3. Should 'openqa-investigate' be triggered to schedule further bisect tests? Bisection is costly and should ONLY be used to find the origin of NEWly introduced product or test regressions. If this failure is an infrastructure issue, or if the high number of historical or same-build failures indicates this is already a widespread or long-standing issue, you MUST answer NO. Start your 3rd sentence EXACTLY with "BISECT: YES" or "BISECT: NO" followed by the reason.
+3. Should 'openqa-investigate' be triggered to schedule further bisect tests? Start your 3rd sentence EXACTLY with "BISECT: YES" or "BISECT: NO" followed by the reason.
+   - If other jobs in the same build are failing in the exact same module, this is a widespread issue. You MUST answer BISECT: NO to prevent redundant and costly bisections, as another job has likely already triggered it.
+   - If the failure is isolated to ONLY this job in the current build, AND the log contains an explicit product error or test assertion failure (e.g., 'actual size fits X: fail', 'command not found', 'segmentation fault'), it strongly points to a new regression. In this isolated case, you MUST answer BISECT: YES.
 """
 
         req = {

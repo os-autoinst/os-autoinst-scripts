@@ -88,7 +88,12 @@ def setup_mock_client(mock_client_class: MagicMock, overrides: dict[str, Any] | 
 
     responses = {
         "comments": [],
-        "api/v1/jobs?build": {"jobs": [{"id": 123}, {"id": 124}]},
+        "api/v1/jobs?build": {
+            "jobs": [
+                {"id": 123, "modules": [{"name": "isosize", "result": "failed"}]},
+                {"id": 124, "modules": [{"name": "other_mod", "result": "failed"}]},
+            ]
+        },
         "test=": {
             "jobs": [
                 {"id": 120, "state": "done", "result": "passed"},
@@ -102,6 +107,7 @@ def setup_mock_client(mock_client_class: MagicMock, overrides: dict[str, Any] | 
                 "id": 123,
                 "result": "failed",
                 "test": "my_test",
+                "testresults": [{"name": "isosize", "result": "failed"}],
                 "settings": {
                     "BUILD": "1.0",
                     "DISTRI": "opensuse",
