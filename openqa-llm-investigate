@@ -8,6 +8,7 @@ import logging
 import os
 import subprocess
 import sys
+from collections import deque
 from typing import Annotated, Any
 from urllib.parse import urlparse, urlunparse
 
@@ -33,9 +34,12 @@ def fetch_json(client: httpx.Client, url: str, params: dict[str, Any] | None = N
 
 def fetch_text(client: httpx.Client, url: str, max_lines: int = 200) -> str:
     try:
-        response = client.get(url)
-        response.raise_for_status()
-        return "\n".join(response.text.splitlines()[-max_lines:])
+        lines: deque[str] = deque(maxlen=max_lines)
+        with client.stream("GET", url) as response:
+            response.raise_for_status()
+            for line in response.iter_lines():
+                lines.append(line)
+        return "\n".join(lines)
     except Exception as e:
         log.warning("Failed to fetch text from %s: %s", url, e)
         return ""

@@ -54,19 +54,19 @@ class TestFetchJson:
 class TestFetchText:
     def test_fetch_text_success(self) -> None:
         mock_client = MagicMock(spec=httpx.Client)
-        mock_response = Mock()
-        # Create 300 lines of text
-        mock_response.text = "\n".join(f"line {i}" for i in range(300))
-        mock_client.get.return_value = mock_response
+        mock_response = MagicMock()
+        mock_response.iter_lines.return_value = [f"line {i}" for i in range(300)]
+        mock_client.stream.return_value.__enter__.return_value = mock_response
 
         res = llm_investigate.fetch_text(mock_client, "http://example.com", max_lines=200)
         lines = res.splitlines()
         assert len(lines) == 200
         assert lines[-1] == "line 299"
+        assert lines[0] == "line 100"
 
     def test_fetch_text_failure(self) -> None:
         mock_client = MagicMock(spec=httpx.Client)
-        mock_client.get.side_effect = httpx.RequestError("error")
+        mock_client.stream.side_effect = httpx.RequestError("error")
 
         res = llm_investigate.fetch_text(mock_client, "http://example.com")
         assert res == ""
@@ -174,7 +174,9 @@ def test_investigate_cmd_softfailed_job(mock_print: MagicMock, mock_post_class: 
 @patch("llm_investigate.httpx.Client")
 @patch("llm_investigate.log")
 def test_investigate_cmd_already_commented(mock_log: MagicMock, mock_client_class: MagicMock) -> None:
-    setup_mock_client(mock_client_class, overrides={"comments": [{"text": "**LLM Investigation summary:** already done"}]})
+    setup_mock_client(
+        mock_client_class, overrides={"comments": [{"text": "**LLM Investigation summary:** already done"}]}
+    )
 
     with pytest.raises(SystemExit) as exc:
         llm_investigate.investigate("123")
@@ -232,7 +234,7 @@ def test_investigate_logging_levels(mock_basic_config: MagicMock) -> None:
     # We need to mock httpx.Client to avoid real network calls during investigate() call
     with patch("llm_investigate.httpx.Client"), patch("llm_investigate.fetch_json") as mock_fetch:
 
-        def mock_fetch_side_effect(_client: Any, url: str, params: Any = None, **kwargs: Any) -> Any:
+        def mock_fetch_side_effect(_client: Any, url: str, params: Any = None, **_kwargs: Any) -> Any:
             _ = params
             if "comments" in url:
                 return []
