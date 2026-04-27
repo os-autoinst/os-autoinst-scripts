@@ -82,10 +82,7 @@ def test_post_comment(mock_run: MagicMock) -> None:
     assert "text=test comment" in args
 
 
-@patch("llm_investigate.httpx.Client")
-@patch("llm_investigate.post_comment")
-@patch("builtins.print")
-def test_investigate_cmd(mock_print: MagicMock, mock_post: MagicMock, mock_client_class: MagicMock) -> None:
+def setup_mock_client(mock_client_class: MagicMock) -> MagicMock:
     mock_client = MagicMock()
     mock_client_class.return_value.__enter__.return_value = mock_client
 
@@ -128,9 +125,15 @@ def test_investigate_cmd(mock_print: MagicMock, mock_post: MagicMock, mock_clien
         return resp
 
     mock_client.post.side_effect = mock_post_call
+    return mock_client
 
+
+@patch("llm_investigate.httpx.Client")
+@patch("llm_investigate.post_comment")
+@patch("builtins.print")
+def test_investigate_cmd(mock_print: MagicMock, mock_post: MagicMock, mock_client_class: MagicMock) -> None:
+    setup_mock_client(mock_client_class)
     llm_investigate.investigate("123")
-
     mock_print.assert_called_once_with("https://openqa.opensuse.org/tests/123")
     mock_post.assert_called_once()
     assert "BISECT: YES" in mock_post.call_args[0][2]
@@ -139,19 +142,10 @@ def test_investigate_cmd(mock_print: MagicMock, mock_post: MagicMock, mock_clien
 @patch("llm_investigate.httpx.Client")
 @patch("builtins.print")
 def test_investigate_cmd_passed_job(mock_print: MagicMock, mock_client_class: MagicMock) -> None:
-    mock_client = MagicMock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
-
-    def mock_get(url: str, *args: Any, **kwargs: Any) -> Mock:
-        _ = args, kwargs
-        resp = Mock()
-        if "comments" in url:
-            resp.json.return_value = []
-        elif "api/v1/jobs" in url:
-            resp.json.return_value = {"job": {"id": 123, "result": "passed"}}
-        return resp
-
-    mock_client.get.side_effect = mock_get
+    client = setup_mock_client(mock_client_class)
+    client.get.side_effect = lambda url, *_, **__: Mock(
+        json=Mock(return_value=[] if "comments" in url else {"job": {"id": 123, "result": "passed"}})
+    )
 
     with pytest.raises(SystemExit) as exc:
         llm_investigate.investigate("123")
@@ -162,20 +156,11 @@ def test_investigate_cmd_passed_job(mock_print: MagicMock, mock_client_class: Ma
 
 @patch("llm_investigate.httpx.Client")
 @patch("builtins.print")
-def test_investigate_cmd_softfailed_job(mock_print: MagicMock, mock_client_class: MagicMock) -> None:
-    mock_client = MagicMock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
-
-    def mock_get(url: str, *args: Any, **kwargs: Any) -> Mock:
-        _ = args, kwargs
-        resp = Mock()
-        if "comments" in url:
-            resp.json.return_value = []
-        elif "api/v1/jobs" in url:
-            resp.json.return_value = {"job": {"id": 123, "result": "softfailed"}}
-        return resp
-
-    mock_client.get.side_effect = mock_get
+def test_investigate_cmd_softfailed_job(mock_print: MagicMock, mock_post_class: MagicMock) -> None:
+    client = setup_mock_client(mock_post_class)
+    client.get.side_effect = lambda url, *_, **__: Mock(
+        json=Mock(return_value=[] if "comments" in url else {"job": {"id": 123, "result": "softfailed"}})
+    )
 
     with pytest.raises(SystemExit) as exc:
         llm_investigate.investigate("123")
@@ -187,19 +172,10 @@ def test_investigate_cmd_softfailed_job(mock_print: MagicMock, mock_client_class
 @patch("llm_investigate.httpx.Client")
 @patch("llm_investigate.log")
 def test_investigate_cmd_already_commented(mock_log: MagicMock, mock_client_class: MagicMock) -> None:
-    mock_client = MagicMock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
-
-    def mock_get(url: str, *args: Any, **kwargs: Any) -> Mock:
-        _ = args, kwargs
-        resp = Mock()
-        if "comments" in url:
-            resp.json.return_value = [{"text": "**LLM Investigation summary:** already done"}]
-        else:
-            resp.json.return_value = {}
-        return resp
-
-    mock_client.get.side_effect = mock_get
+    client = setup_mock_client(mock_client_class)
+    client.get.side_effect = lambda url, *_, **__: Mock(
+        json=Mock(return_value=[{"text": "**LLM Investigation summary:** already done"}] if "comments" in url else {})
+    )
 
     with pytest.raises(SystemExit) as exc:
         llm_investigate.investigate("123")
@@ -212,38 +188,34 @@ def test_investigate_cmd_already_commented(mock_log: MagicMock, mock_client_clas
 @patch("llm_investigate.httpx.Client")
 @patch("llm_investigate.post_comment")
 @patch("builtins.print")
-def test_investigate_cmd_dry_run(mock_print: MagicMock, mock_post: MagicMock, mock_client_class: MagicMock) -> None:
-    mock_client = MagicMock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
+def test_investigate_cmd_already_commented_with_force(
+    mock_print: MagicMock, mock_post: MagicMock, mock_client_class: MagicMock
+) -> None:
+    client = setup_mock_client(mock_client_class)
+    original_get = client.get.side_effect
 
     def mock_get(url: str, *args: Any, **kwargs: Any) -> Mock:
-        _ = args, kwargs
-        resp = Mock()
         if "comments" in url:
-            resp.json.return_value = []
-        elif "api/v1/jobs" in url and "build=" not in url:
-            resp.json.return_value = {
-                "job": {"id": 123, "result": "failed", "test": "my_test", "settings": {"BUILD": "1.0"}}
-            }
-        elif "investigation_ajax" in url:
-            resp.json.return_value = {"diff_to_last_good": {}}
-        elif "api/v1/jobs?build" in url:
-            resp.json.return_value = {"jobs": []}
-        elif "autoinst-log.txt" in url:
-            resp.text = "failed log"
-        else:
-            resp.json.return_value = {}
-        return resp
+            return Mock(json=Mock(return_value=[{"text": "**LLM Investigation summary:** already done"}]))
+        return original_get(url, *args, **kwargs)
 
-    mock_client.get.side_effect = mock_get
+    client.get.side_effect = mock_get
 
-    def mock_post_call(url: str, json: dict[str, Any] | None = None, *args: Any, **kwargs: Any) -> Mock:
-        _ = url, json, args, kwargs
-        resp = Mock()
-        resp.json.return_value = {"choices": [{"message": {"content": "BISECT: NO. Already known."}}]}
-        return resp
+    llm_investigate.investigate("123", force=True)
 
-    mock_client.post.side_effect = mock_post_call
+    mock_print.assert_called_with("https://openqa.opensuse.org/tests/123")
+    mock_post.assert_called_once()
+    assert "BISECT: YES" in mock_post.call_args[0][2]
+
+
+@patch("llm_investigate.httpx.Client")
+@patch("llm_investigate.post_comment")
+@patch("builtins.print")
+def test_investigate_cmd_dry_run(mock_print: MagicMock, mock_post: MagicMock, mock_client_class: MagicMock) -> None:
+    client = setup_mock_client(mock_client_class)
+    client.post.side_effect = lambda *_, **__: Mock(
+        json=Mock(return_value={"choices": [{"message": {"content": "BISECT: NO. Already known."}}]})
+    )
 
     llm_investigate.investigate("123", dry=True)
 
@@ -255,22 +227,8 @@ def test_investigate_cmd_dry_run(mock_print: MagicMock, mock_post: MagicMock, mo
 @patch("llm_investigate.httpx.Client")
 @patch("llm_investigate.log")
 def test_investigate_cmd_connection_error(mock_log: MagicMock, mock_client_class: MagicMock) -> None:
-    mock_client = MagicMock()
-    mock_client_class.return_value.__enter__.return_value = mock_client
-
-    def mock_get(url: str, *args: Any, **kwargs: Any) -> Mock:
-        _ = args, kwargs
-        resp = Mock()
-        if "comments" in url:
-            resp.json.return_value = []
-        elif "api/v1/jobs" in url and "build=" not in url:
-            resp.json.return_value = {"job": {"id": 123, "result": "failed", "test": "my_test"}}
-        else:
-            resp.json.return_value = {}
-        return resp
-
-    mock_client.get.side_effect = mock_get
-    mock_client.post.side_effect = httpx.ConnectError("Connection refused")
+    client = setup_mock_client(mock_client_class)
+    client.post.side_effect = httpx.ConnectError("Connection refused")
 
     with pytest.raises(SystemExit) as exc:
         llm_investigate.investigate("123")
