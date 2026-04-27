@@ -35,11 +35,7 @@ def fetch_text(client: httpx.Client, url: str, max_lines: int = 200) -> str:
     try:
         response = client.get(url)
         response.raise_for_status()
-        text = response.text
-        lines = text.splitlines()
-        if len(lines) > max_lines:
-            return "\n".join(lines[-max_lines:])
-        return text
+        return "\n".join(response.text.splitlines()[-max_lines:])
     except Exception as e:
         log.warning("Failed to fetch text from %s: %s", url, e)
         return ""
