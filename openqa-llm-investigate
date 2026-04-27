@@ -178,6 +178,10 @@ def investigate(
         if not found_target:
             log.warning("Job %s not found in recent history (limit %s). Streak count may be inaccurate.", job_id, test_params["limit"])
 
+        hint = ""
+        if build_failures > 20:
+            hint = f"\n(Note: {build_failures} failures across this build strongly implies a backend infrastructure outage or a widespread environment issue rather than a specific product bug.)"
+
         prompt = f"""You are analyzing an openQA test run failure.
 Job details:
 - Test: {test_name}
@@ -188,7 +192,7 @@ Job details:
 - Arch: {arch}
 - Flavor: {flavor}
 - Result: {job.get("result", "unknown")}
-- Total failed jobs in this build (across all tests): {build_failures}
+- Total failed jobs in this build (across all tests): {build_failures}{hint}
 - Consecutive recent failures for this specific test (same name, arch, flavor): {consecutive_failures}
 
 Investigation info (diff to last good):
