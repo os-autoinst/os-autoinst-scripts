@@ -1,186 +1,188 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-# 
+# Copyright SUSE LLC
+#
 # Summary: Display the test runtime statistics for a range of openQA test runs
 # Job ranges can be defined via 7..9 (i,e, [7,8, 9]) or 5+2 (i.e. [5,6,7])
-# 
+#
 # Usage example: ./openqa-get-job-runtime-stats https://openqa.opensuse.org/tests/100000+10
-# 
+#
 
-import requests
-import datetime
-import time
-import json
-import sys
+from __future__ import annotations
+
 import argparse
+import datetime
+import sys
+import time
+
 import numpy as np
-
-def parse_t(dt_str) :
-	# "2023-01-25T10:22:21"
-	if dt_str is None : return None
-	dt_str = dt_str.strip()
-	if dt_str == "" : return None
-	return datetime.datetime.strptime(dt_str, '%Y-%m-%dT%H:%M:%S')
+import requests
 
 
-class Job :
-	# Init job by the json object fetched from OpenQA
-	def __init__(self, obj) :
-		# Apply json values to this class. Yes, this is hacky.
-		for k in obj :
-			self.__dict__[k] = obj[k]
-	
-	def done(self) -> bool :
-		return self.state == "done"
-	def passed(self) -> bool :
-		return self.state == "done" and self.result == "passed"
-	def softfailed(self) -> bool :
-		return self.state == "done" and self.result == "softfailed"
-	def isNotOK(self) -> bool :
-		return self.done() and not (self.passed() or self.softfailed())
-
-	def runtime(self) :
-		# Note: Timezone parsing is not needed here
-		t_finished = parse_t(self.t_finished)
-		if t_finished is None : return 0
-		t_started = parse_t(self.t_started)
-		if t_started is None : return 0
-		diff = t_finished - t_started
-		return diff.total_seconds()
-	
-	def __item__(self, index) :
-		return self._obj[index]
+def parse_t(dt_str: str | None) -> datetime.datetime | None:
+    if dt_str is None:
+        return None
+    dt_str = dt_str.strip()
+    if dt_str == "":
+        return None
+    return datetime.datetime.strptime(dt_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=datetime.timezone.utc)
 
 
-def parse_job_number(jobstr) :
-	# Range? (Start..End)
-	if ".." in jobstr :
-		i = jobstr.find("..")
-		try :
-			first = int(jobstr[:i])
-			last = int(jobstr[i+2:])
-			return range(first, last+1)
-		except ValueError :
-			raise ValueError("invalid job id in job range")
-	# Sequence? (Start+Increment, e.g. 4+3 for [4,5,6,7])
-	if "+" in jobstr :
-		i = jobstr.find("+")
-		try :
-			first = int(jobstr[:i])
-			plus = int(jobstr[i+1:])
-			return range(first, first+plus+1)
-		except ValueError :
-			raise ValueError("invalid job id in job sequence")
-	
-	# Try to parse as int
-	try :
-		return [int(jobstr)]
-	except ValueError:
-		raise ValueError("invalid job identifier")
+class Job:
+    # Init job by the json object fetched from OpenQA
+    def __init__(self, obj: dict) -> None:
+        # Apply json values to this class. Yes, this is hacky.
+        for k, v in obj.items():
+            self.__dict__[k] = v
 
-def get_job_api_urls(arg) :
-	url = ""
-	# Check if a URL
-	if "://" in arg :
-		# Get tests
-		if "/tests/" in arg :
-			i = arg.rfind("/tests/")
-			url = arg[:i]
-			jobs = parse_job_number(arg[i+7:])
-		elif "/t" in arg :
-			i = arg.rfind("/t")
-			url = arg[:i]
-			jobs = parse_job_number(arg[i+2:])
-		else :
-			raise ValueError("invalid job identifier")
-	else :
-		# Assume argument are just integer
-		jobs = parse_job_number(arg)
-	return [f"{url}/api/v1/jobs/{i}" for i in jobs]
+    def done(self) -> bool:
+        return getattr(self, "state", "") == "done"
+
+    def passed(self) -> bool:
+        return getattr(self, "state", "") == "done" and getattr(self, "result", "") == "passed"
+
+    def softfailed(self) -> bool:
+        return getattr(self, "state", "") == "done" and getattr(self, "result", "") == "softfailed"
+
+    def isNotOK(self) -> bool:
+        return self.done() and not (self.passed() or self.softfailed())
+
+    def runtime(self) -> float:
+        # Note: Timezone parsing is not needed here
+        t_finished = parse_t(getattr(self, "t_finished", None))
+        if t_finished is None:
+            return 0.0
+        t_started = parse_t(getattr(self, "t_started", None))
+        if t_started is None:
+            return 0.0
+        diff = t_finished - t_started
+        return diff.total_seconds()
+
+    def __getitem__(self, index: str) -> str:
+        return getattr(self, "_obj", {})[index]
+
+
+def parse_job_number(jobstr: str) -> range | list[int]:
+    # Range? (Start..End)
+    if ".." in jobstr:
+        i = jobstr.find("..")
+        try:
+            first = int(jobstr[:i])
+            last = int(jobstr[i + 2 :])
+            return range(first, last + 1)
+        except ValueError:
+            msg = "invalid job id in job range"
+            raise ValueError(msg) from None
+    # Sequence? (Start+Increment, e.g. 4+3 for [4,5,6,7])
+    if "+" in jobstr:
+        i = jobstr.find("+")
+        try:
+            first = int(jobstr[:i])
+            plus = int(jobstr[i + 1 :])
+            return range(first, first + plus + 1)
+        except ValueError:
+            msg = "invalid job id in job sequence"
+            raise ValueError(msg) from None
+
+    # Try to parse as int
+    try:
+        return [int(jobstr)]
+    except ValueError:
+        msg = "invalid job identifier"
+        raise ValueError(msg) from None
+
+
+def get_job_api_urls(arg: str) -> list[str]:
+    url = ""
+    # Check if a URL
+    if "://" in arg:
+        # Get tests
+        if "/tests/" in arg:
+            i = arg.rfind("/tests/")
+            url = arg[:i]
+            jobs = parse_job_number(arg[i + 7 :])
+        elif "/t" in arg:
+            i = arg.rfind("/t")
+            url = arg[:i]
+            jobs = parse_job_number(arg[i + 2 :])
+        else:
+            msg = "invalid job identifier"
+            raise ValueError(msg)
+    else:
+        # Assume argument are just integer
+        jobs = parse_job_number(arg)
+    return [f"{url}/api/v1/jobs/{i}" for i in jobs]
+
 
 if __name__ == "__main__":
-	parser = argparse.ArgumentParser()
-	parser.add_argument("jobs", help="URL to jobs, which should be analyzed", nargs="+")
-	g = parser.add_mutually_exclusive_group(required=False)
-	g.add_argument("-v", "--verbose", help="Verbose mode on", default=False, action="store_true")
-	g.add_argument("-q", "--quiet", help="Quiet mode", default=False, action="store_true")
-	args = parser.parse_args()
-	verbose = args.verbose
-	quiet = args.quiet
-	
-	# Merge jobs argument and expand them to a API URL
-	links = []
-	for link in args.jobs :
-		links += get_job_api_urls(link)
-	
-	# Fetch jobs and get the job item for each of them
-	if not quiet :
-		sys.stdout.write("Fetching %d jobs ... " % (len(links)))
-		if verbose : sys.stdout.write("\n")
-		sys.stdout.flush()
-	
-	runtime = time.time()
-	jobs = []
-	for i in range(len(links)) :
-		url = links[i]
-		if not quiet :
-			if not verbose :
-				sys.stdout.write("\033[E")  # Move cursor to beginning of the line
-				sys.stdout.write("\033[K")  # Erase till end of line
-			sys.stdout.write(f"Fetching job {i}/{len(links)}: {url} ... ")
-			sys.stdout.flush()
-		job = Job(requests.get(url).json()['job'])
-		jobs.append(job)
-		if verbose : sys.stdout.write("ok\n")
-	runtime = time.time() - runtime
+    parser = argparse.ArgumentParser()
+    parser.add_argument("jobs", help="URL to jobs, which should be analyzed", nargs="+")
+    g = parser.add_mutually_exclusive_group(required=False)
+    g.add_argument("-v", "--verbose", help="Verbose mode on", default=False, action="store_true")
+    g.add_argument("-q", "--quiet", help="Quiet mode", default=False, action="store_true")
+    args = parser.parse_args()
+    verbose = args.verbose
+    quiet = args.quiet
 
-	if not quiet :
-		if not verbose :
-			sys.stdout.write("\033[E")  # Move cursor to beginning of the line
-			sys.stdout.write("\033[K")  # Erase till end of line
-		print("Fetched %d jobs in %d seconds" % (len(jobs), runtime))
-	
-	# Group jobs by test
-	groups = {}
-	for job in jobs :
-		test = job.test
-		if test not in groups :
-			groups[test] = []
-		groups[test].append(job)
-	
-	for test in groups :
-		print("Test '%s'" % (test))
-		tests = groups[test]
-		print(f"  Test runs:                         {len(tests)}")
-		# Print some stats about the sample size
-		jobs_done = [j for j in tests if j.done()]
-		jobs_ok = [j for j in tests if j.passed() or j.softfailed()]
-		jobs_failed = [j for j in tests if j.isNotOK()]
-		n_done = len(jobs_done)
-		if len(jobs_done) < len(tests) :
-			print(f"  Incomplete test runs:              {len(tests)-n_done}")
-		print(f"  Sample size:                       {n_done}")
-		if n_done > 0 :
-			n_ok, n_fail = len(jobs_ok), len(jobs_failed)
-			f_rate = float(n_fail) / float(n_ok + n_fail)
-			print("  Failure rate:                      %.1f%% (%d/%d)" % (f_rate*100, n_fail, n_ok+n_fail))
-			
-			# Runtime statistics - Include only jobs that are ok
-			if len(jobs_ok) == 0 :
-				print("  <no passing or softfailed jobs for statistics>")
-			else :
-				runtime = np.array([j.runtime() for j in jobs_ok])
-				median = np.median(runtime)
-				average = np.average(runtime)
-				stdev = np.std(runtime)
-				print("  Value range:                       %d-%d s" % (runtime.min(), runtime.max()))
-				print("  Median runtime:                    %.2f s" % (median))
-				print("  Average runtime:                   %.2f s" % (average ))
-				print("  Standard deviation:                %.2f s" % (stdev))
-				print("  * Median-normalized values *")
-				print("    Average runtime / median:        %.2f s" % (average / median))
-				print("    Standard deviation / median:     %.2f s" % (stdev / median))
-		print("")
+    # Merge jobs argument and expand them to a API URL
+    links = []
+    for link in args.jobs:
+        links += get_job_api_urls(link)
 
-	if not quiet :
-		print("Done.")
+    # Fetch jobs and get the job item for each of them
+    if not quiet:
+        sys.stdout.write(f"Fetching {len(links):d} jobs ... ")
+        if verbose:
+            sys.stdout.write("\n")
+        sys.stdout.flush()
+
+    runtime = time.time()
+    jobs = []
+    for i in range(len(links)):
+        url = links[i]
+        if not quiet:
+            if not verbose:
+                sys.stdout.write("\033[E")  # Move cursor to beginning of the line
+                sys.stdout.write("\033[K")  # Erase till end of line
+            sys.stdout.write(f"Fetching job {i}/{len(links)}: {url} ... ")
+            sys.stdout.flush()
+        job = Job(requests.get(url, timeout=30).json()["job"])
+        jobs.append(job)
+        if verbose:
+            sys.stdout.write("ok\n")
+    runtime = time.time() - runtime
+
+    if not quiet and not verbose:
+        sys.stdout.write("\033[E")  # Move cursor to beginning of the line
+        sys.stdout.write("\033[K")  # Erase till end of line
+
+    # Group jobs by test
+    groups = {}
+    for job in jobs:
+        test = getattr(job, "test", "unknown")
+        if test not in groups:
+            groups[test] = []
+        groups[test].append(job)
+
+    for tests in groups.values():
+        # Print some stats about the sample size
+        jobs_done = [j for j in tests if j.done()]
+        jobs_ok = [j for j in tests if j.passed() or j.softfailed()]
+        jobs_failed = [j for j in tests if j.isNotOK()]
+        n_done = len(jobs_done)
+        if len(jobs_done) < len(tests):
+            pass
+        if n_done > 0:
+            n_ok, n_fail = len(jobs_ok), len(jobs_failed)
+            f_rate = float(n_fail) / float(n_ok + n_fail)
+
+            # Runtime statistics - Include only jobs that are ok
+            if len(jobs_ok) == 0:
+                pass
+            else:
+                runtime = np.array([j.runtime() for j in jobs_ok])
+                median = np.median(runtime)
+                average = np.average(runtime)
+                stdev = np.std(runtime)
+
+    if not quiet:
+        pass

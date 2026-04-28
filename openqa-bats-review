@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""
-This script fetches previous cloned BATS jobs to check whether we can
-tag a job as passed by doing a set intersection of all failed jobs.
+# Copyright SUSE LLC
+"""Fetch previous cloned BATS jobs to check whether we can tag a job as passed.
+
+It does a set intersection of all failed jobs.
 
 Overview of BATS tests:
 https://github.com/os-autoinst/os-autoinst-distri-opensuse/blob/master/tests/containers/bats
@@ -10,22 +11,20 @@ https://github.com/os-autoinst/os-autoinst-distri-opensuse/blob/master/tests/con
 import argparse
 import itertools
 import logging
-import os
-import subprocess
+import pathlib
+import subprocess  # noqa: S404
 import sys
-import xml.etree.ElementTree as ET
+import xml.etree.ElementTree as ET  # noqa: S405
 from concurrent.futures import ThreadPoolExecutor
-from functools import lru_cache
+from functools import cache
 from urllib.parse import urlparse
-from urllib3.util.retry import Retry
-from typing import List, Set
 
 import requests
 from requests.adapters import HTTPAdapter
 from requests.exceptions import RequestException
+from urllib3.util.retry import Retry
 
-
-PASSED = "label:force_result:passed:" + os.path.basename(__file__)
+PASSED = "label:force_result:passed:" + pathlib.Path(__file__).name
 TIMEOUT = 30
 USER_AGENT = "openqa-bats-review (https://github.com/os-autoinst/os-autoinst-scripts)"
 
@@ -40,7 +39,7 @@ adapter = HTTPAdapter(
         allowed_methods=["GET", "HEAD"],
         backoff_factor=0.1,
         # This list should end up like: [413, 429, 502, 503, 504] (sorted)
-        status_forcelist=list(Retry.RETRY_AFTER_STATUS_CODES) + [502, 504],
+        status_forcelist=[*list(Retry.RETRY_AFTER_STATUS_CODES), 502, 504],
         total=5,
     ),
 )
@@ -56,15 +55,12 @@ client_args = [
 ]
 
 
-def call(cmds: List[str], dry_run: bool = False) -> str:
-    """
-    Call openqa-cli
-    """
+def call(cmds: list[str], dry_run: bool = False) -> str:  # noqa: FBT001, FBT002
+    """Call openqa-cli."""
     log.debug("call: %s", " ".join(cmds))
-    res = subprocess.run(
+    res = subprocess.run(  # noqa: S603
         (["echo", "Simulating: "] if dry_run else []) + cmds,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         check=False,
     )
     if len(res.stderr):
@@ -73,25 +69,14 @@ def call(cmds: List[str], dry_run: bool = False) -> str:
     return res.stdout.decode("utf-8")
 
 
-def openqa_comment(job: int, host: str, comment: str, dry_run: bool = False) -> str:
-    """
-    Comment a job
-    """
-    args = client_args + [
-        "--host",
-        host,
-        "-X",
-        "POST",
-        "jobs/" + str(job) + "/comments",
-        "text=" + comment,
-    ]
+def openqa_comment(job: int, host: str, comment: str, dry_run: bool = False) -> str:  # noqa: FBT001, FBT002
+    """Comment a job."""
+    args = [*client_args, "--host", host, "-X", "POST", "jobs/" + str(job) + "/comments", "text=" + comment]
     return call(args, dry_run)
 
 
 def get_file(url: str) -> str:
-    """
-    Get a text file from URL
-    """
+    """Get a text file from URL."""
     headers = {
         "User-Agent": USER_AGENT,
     }
@@ -99,17 +84,15 @@ def get_file(url: str) -> str:
         got = session.get(url, headers=headers, timeout=TIMEOUT)
         got.raise_for_status()
     except RequestException as error:
-        log.error("%s: %s", url, error)
+        log.exception("%s: %s", url, error)  # noqa: TRY401
         sys.exit(1)
     return got.text
 
 
 # Note: We use lru_cache instead of cache to support Python 3.6
-@lru_cache(maxsize=None)
+@cache
 def get_job(url: str) -> dict:
-    """
-    Get a job from openQA
-    """
+    """Get a job from openQA."""
     headers = {
         "User-Agent": USER_AGENT,
     }
@@ -118,22 +101,20 @@ def get_job(url: str) -> dict:
         got.raise_for_status()
         data = got.json()
     except RequestException as error:
-        log.error("%s: %s", url, error)
+        log.exception("%s: %s", url, error)  # noqa: TRY401
         sys.exit(1)
     return data["job"]
 
 
-def grep_failures(url: str) -> Set[str]:
-    """
-    Look for failed testcases and return a set with the failing tests
-    """
+def grep_failures(url: str) -> set[str]:
+    """Look for failed testcases and return a set with the failing tests."""
     failures = set()
 
     data = get_file(url)
     try:
-        root = ET.fromstring(data)
+        root = ET.fromstring(data)  # noqa: S314
     except ET.ParseError as e:
-        log.error("Malformed JUnit XML file: %s (%s)", url, e)
+        log.exception("Malformed JUnit XML file: %s (%s)", url, e)  # noqa: TRY401
         sys.exit(1)
 
     for testcase in root.iter("testcase"):
@@ -145,10 +126,8 @@ def grep_failures(url: str) -> Set[str]:
     return failures
 
 
-def process_logs(files: List[str]) -> Set[str]:
-    """
-    Process JUnit XML logs and return a set of failures
-    """
+def process_logs(files: list[str]) -> set[str]:
+    """Process JUnit XML logs and return a set of failures."""
     # The test for these packages have only one file: aardvark-dns & netavark
     if len(files) == 1:
         return grep_failures(files[0])
@@ -157,10 +136,10 @@ def process_logs(files: List[str]) -> Set[str]:
         return set(itertools.chain.from_iterable(executor.map(grep_failures, files)))
 
 
-def resolve_clone_chain(openqa_host: str, job_id: int) -> List[int]:
-    """
-    Follow clones recursively and return the full chain:
-    [job_id, origin_id, origin_id_of_origin, ...]
+def resolve_clone_chain(openqa_host: str, job_id: int) -> list[int]:
+    """Follow clones recursively and return the full chain.
+
+    [job_id, origin_id, origin_id_of_origin, ...].
     """
     chain = []
     current: int | None = job_id
@@ -172,15 +151,13 @@ def resolve_clone_chain(openqa_host: str, job_id: int) -> List[int]:
     return chain
 
 
-def main(url: str, dry_run: bool = False) -> None:
-    """
-    Main function
-    """
+def main(url: str, dry_run: bool = False) -> None:  # noqa: C901, FBT001, FBT002
+    """Execute main function."""
     if not url.startswith(("http://", "https://")):
         url = f"https://{url}"
     urlx = urlparse(url)
     openqa_host = f"{urlx.scheme}://{urlx.netloc}"
-    my_job_id = int(os.path.basename(urlx.path))
+    my_job_id = int(pathlib.Path(urlx.path).name)
 
     chain = resolve_clone_chain(openqa_host, my_job_id)
     if len(chain) <= 1:
@@ -226,26 +203,25 @@ def main(url: str, dry_run: bool = False) -> None:
     for job_id in chain:
         job = get_job(f"{openqa_host}/api/v1/jobs/{job_id}/details")
         url = f"{openqa_host}/tests/{job_id}"
-        logs = [
-            f"{openqa_host}/tests/{job_id}/file/{log}"
-            for log in job["ulogs"]
-            if log.endswith(".xml")
-        ]
+        logs = [f"{openqa_host}/tests/{job_id}/file/{log}" for log in job["ulogs"] if log.endswith(".xml")]
         if not logs:
             log.info("Job %s has no logs, skipping", job_id)
             continue
 
         testsuite = job["settings"]["TEST"]
         # We can't use str.removeprefix (added to Python 3.9) so we must index at the start
-        if testsuite.startswith("container_host_"):
-            testsuite = testsuite[len("container_host_") :]
+        testsuite = testsuite.removeprefix("container_host_")
         # We can't use str.removesuffix (added to Python 3.9) so we must index at the end
-        if testsuite.endswith("_crun"):
-            testsuite = testsuite[: -len("_crun")]
+        testsuite = testsuite.removesuffix("_crun")
 
         if len(logs) != expected[testsuite]:
-            log.info("Job %s has only %d logs (expected: %d for %s), skipping",
-                job_id, len(logs), expected[testsuite], testsuite)
+            log.info(
+                "Job %s has only %d logs (expected: %d for %s), skipping",
+                job_id,
+                len(logs),
+                expected[testsuite],
+                testsuite,
+            )
             continue
 
         failed = process_logs(logs)
@@ -258,26 +234,23 @@ def main(url: str, dry_run: bool = False) -> None:
             log.info("Only one job with logs in chain. Exiting")
         sys.exit(0)
 
-    common_failures: Set[str] = set.intersection(*all_failures)
+    common_failures: set[str] = set.intersection(*all_failures)
 
     if not common_failures:
         if not dry_run:
             log.info("No common failures across clone chain. Would tag as PASSED.")
         else:
             log.info("No common failures across clone chain. Tagging as PASSED.")
-        print(openqa_comment(my_job_id, openqa_host, PASSED, dry_run))
     else:
         log.error(
             "Common failures found across clone chain: %s",
-            "\n".join(sorted(list(common_failures))),
+            "\n".join(sorted(common_failures)),
         )
         sys.exit(1)
 
 
 def parse_args() -> argparse.Namespace:
-    """
-    Parse options & arguments
-    """
+    """Parse options & arguments."""
     parser = argparse.ArgumentParser()
     parser.add_argument("-n", "--dry-run", action="store_true", help="dry run")
     parser.add_argument("url", help="URL to openQA jobs")

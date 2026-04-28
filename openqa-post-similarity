@@ -1,17 +1,21 @@
 #!/usr/bin/env python3
+# Copyright SUSE LLC
+# ruff: noqa: ANN001, ANN201, C901, FURB101, PLW0602, PLW0603, PTH208, SIM115
 
-from curses.ascii import isdigit
-import os
-import Levenshtein
-from http import client
-from openqa_client.client import OpenQA_Client
-import json
 import argparse
+import json
 import logging
-from tqdm import tqdm
+import operator
+import os
+import pathlib
 import sys
+from curses.ascii import isdigit
+
+import Levenshtein
+from openqa_client.client import OpenQA_Client
 from pyecharts import options as opts
 from pyecharts.charts import Graph
+from tqdm import tqdm
 
 """
 This script scans all autoinst-log.txt files in the testresults directory searching
@@ -35,9 +39,9 @@ def init_logging():
     return logger
 
 
-def read_errors(path):
+def read_errors(path) -> None:
     global id_msg
-    with open(path, 'r') as f:
+    with pathlib.Path(path).open(encoding="utf-8") as f:
         text = f.read()
         anchor = 0
         begin = text.find("Test died", anchor)
@@ -48,49 +52,47 @@ def read_errors(path):
             begin = text.find("Test died", anchor)
 
 
-def read_id_msg(logger, testdir):
+def read_id_msg(logger, testdir) -> None:
     global id_msg
-    if not os.path.exists("id_msg.json"):
+    if not pathlib.Path("id_msg.json").exists():
         logger.info("id_msg.json does not exist.")
         all_dirs = os.listdir(testdir)
         all_dirs = [testdir + item for item in all_dirs]
-        logs = [item + '/autoinst-log.txt' for item in all_dirs]
+        logs = [item + "/autoinst-log.txt" for item in all_dirs]
 
-        for path in tqdm(logs, desc='Processing testresults directory', unit='test'):
+        for path in tqdm(logs, desc="Processing testresults directory", unit="test"):
             read_errors(path)
-        id_msg_json = json.dumps(id_msg, sort_keys=False, indent=4, separators=(',', ':'))
-        with open("id_msg.json", "w") as f:
-            f.write(id_msg_json)
+        id_msg_json = json.dumps(id_msg, sort_keys=False, indent=4, separators=(",", ":"))
+        pathlib.Path("id_msg.json").write_text(id_msg_json, encoding="utf-8")
 
     # If there exists the JSON file
     else:
         logger.info("id_msg.json exists.")
-        with open("id_msg.json", "r") as f:
+        with pathlib.Path("id_msg.json").open(encoding="utf-8") as f:
             id_msg = json.load(f)
         all_dirs = os.listdir(testdir)
         checked_dirs = list(id_msg.keys())
         unchecked_dirs = [i for i in all_dirs if i not in checked_dirs]
-        for job_id in tqdm(unchecked_dirs, desc='Processing testresults directory', unit='test'):
+        for job_id in tqdm(unchecked_dirs, desc="Processing testresults directory", unit="test"):
             path = testdir + job_id + "/autoinst-log.txt"
             read_errors(path)
-        id_msg_json = json.dumps(id_msg, sort_keys=False, indent=4, separators=(',', ':'))
-        with open("id_msg.json", "w") as f:
-            f.write(id_msg_json)
+        id_msg_json = json.dumps(id_msg, sort_keys=False, indent=4, separators=(",", ":"))
+        pathlib.Path("id_msg.json").write_text(id_msg_json, encoding="utf-8")
 
 
 # Compute the Levenshtein result and save it.
 # Saving the result in a file may be unnecessary.
-def cal_distance(logger, output, number):
+def cal_distance(logger, output, number) -> None:
     global result
     if output:
-        f = open("distance_result.txt", "w")
-    for index, (key1, value1) in enumerate(tqdm(id_msg.items(), desc='Calculating message distance', unit="error")):
+        f = pathlib.Path("distance_result.txt").open("w", encoding="utf-8")
+    for index, (key1, value1) in enumerate(tqdm(id_msg.items(), desc="Calculating message distance", unit="error")):
         calculate = {}
         for key2, value2 in id_msg.items():
             if key1 == key2:
                 continue
             calculate[key2] = Levenshtein.distance(value1, value2)
-        calculate_sorted = sorted(calculate.items(), key=lambda x: x[1], reverse=False)
+        calculate_sorted = sorted(calculate.items(), key=operator.itemgetter(1), reverse=False)
         if output:
             f.write("Index: " + str(index) + "\n")
             f.write("Original error message:\n")
@@ -110,16 +112,17 @@ def cal_distance(logger, output, number):
         logger.info("Distance file output.")
         f.close()
 
+
 # Post the results in comments by OpenQA_Client
-def post(server, number):  
+def post(server, number) -> None:
     client = OpenQA_Client(server)
-    for origin, matched in tqdm(result.items(), desc='Posting comments', unit="comment"):
-        data = {'bugrefs': []}
+    for origin, matched in tqdm(result.items(), desc="Posting comments", unit="comment"):
+        data = {"bugrefs": []}
         text = "Top " + str(number) + " similar failures:\r\n"
         for job_id in matched:
             text += "[" + job_id + "](https://openqa.opensuse.org/tests/" + job_id + ")\r\n"
-        data['text'] = text
-        client.openqa_request('POST', 'jobs/' + origin + '/comments', data)
+        data["text"] = text
+        client.openqa_request("POST", "jobs/" + origin + "/comments", data)
 
 
 def dict_slice(adict, s, e):
@@ -130,7 +133,7 @@ def dict_slice(adict, s, e):
     return d_slice
 
 
-def draw(logger, points, geometry, save_path):
+def draw(logger, points, geometry, save_path) -> None:
     resolution = geometry.split("x")
     if len(resolution) != 2:
         logger.warning("Wrong geometry format")
@@ -141,7 +144,7 @@ def draw(logger, points, geometry, save_path):
             return
 
     msg_number = {}
-    for err_id, msg in id_msg.items():
+    for msg in id_msg.values():
         if msg in msg_number:
             msg_number[msg] += 1
         else:
@@ -151,28 +154,26 @@ def draw(logger, points, geometry, save_path):
     nodes_data = []
     for msg, freq in cut.items():
         nodes_data.append(opts.GraphNode(name=msg, symbol_size=freq))
-    
+
     links_data = []
     max_distance = 0
     min_distance = float("inf")
-    for key1 in cut.keys():
-        for key2 in cut.keys():
+    for key1 in cut:
+        for key2 in cut:
             if key1 == key2:
                 continue
             L = Levenshtein.distance(key1, key2)
-            if L > max_distance:
-                max_distance = L
-            if L < min_distance:
-                min_distance = L
-    for key1 in cut.keys():
-        for key2 in cut.keys():
+            max_distance = max(max_distance, L)
+            min_distance = min(min_distance, L)
+    for key1 in cut:
+        for key2 in cut:
             if key1 == key2:
                 continue
             L = Levenshtein.distance(key1, key2)
-            if L < (max_distance + min_distance) / 2:
+            if (max_distance + min_distance) / 2 > L:
                 links_data.append(opts.GraphLink(source=key1, target=key2, value=Levenshtein.distance(key1, key2)))
-    c = (
-        Graph(init_opts=opts.InitOpts(height=resolution[0]+"px", width=resolution[1]+"px"))
+    (
+        Graph(init_opts=opts.InitOpts(height=resolution[0] + "px", width=resolution[1] + "px"))
         .add(
             "",
             nodes_data,
@@ -181,33 +182,42 @@ def draw(logger, points, geometry, save_path):
             edge_length=[10, 1000],
             layout="force",
             gravity=0.01,
-            edge_label=opts.LabelOpts(
-                is_show=False, position="middle", formatter="{b} : {c}"
-            ),
+            edge_label=opts.LabelOpts(is_show=False, position="middle", formatter="{b} : {c}"),
             label_opts=opts.LabelOpts(
                 is_show=False,
             ),
         )
-        .set_global_opts(
-            title_opts=opts.TitleOpts(title="Levenshtein distance")
-        )
+        .set_global_opts(title_opts=opts.TitleOpts(title="Levenshtein distance"))
         .render(save_path)
     )
-        
 
-if __name__ == '__main__':
-    help_message = "This script scans all autoinst-log.txt files in the testresults directory searching for error " \
-                   "messages. Then it " \
-                   "computes the Levenshtein distance and posts the results as openQA comments. "
+
+if __name__ == "__main__":
+    help_message = (
+        "This script scans all autoinst-log.txt files in the testresults directory searching for error "
+        "messages. Then it "
+        "computes the Levenshtein distance and posts the results as openQA comments. "
+    )
     parser = argparse.ArgumentParser(description=help_message)
     parser.add_argument("-o", "--output", action="store_true", help="Whether outputs the results into a txt file")
     parser.add_argument("-s", "--server", default="http://127.0.0.1:9526", type=str, help="OpenQA server URL")
     parser.add_argument("-n", "--number", default=10, type=int, help="Number of similar errors")
-    parser.add_argument("-d", "--dir", default="/var/lib/openqa/testresults/", type=str, help="Directory of OpenQA test results")
+    parser.add_argument(
+        "-d", "--dir", default="/var/lib/openqa/testresults/", type=str, help="Directory of OpenQA test results"
+    )
     parser.add_argument("-p", "--post", action="store_true", help="Whether post similarity to openQA website")
-    parser.add_argument("-c", "--chart", required='--geometry' in sys.argv or '--save' in sys.argv, default=0, type=int, help="Number of points in chart (If the number is 0, the chart won't be drawn)")
+    parser.add_argument(
+        "-c",
+        "--chart",
+        required="--geometry" in sys.argv or "--save" in sys.argv,
+        default=0,
+        type=int,
+        help="Number of points in chart (If the number is 0, the chart won't be drawn)",
+    )
     parser.add_argument("--geometry", default="1920x1080", type=str, help="Chart resolution (e.g. 1920x1080)")
-    parser.add_argument("--save", default="./similarity.html", type=str, help="Path and name to save the chart (e.g. ./similarity.html)")
+    parser.add_argument(
+        "--save", default="./similarity.html", type=str, help="Path and name to save the chart (e.g. ./similarity.html)"
+    )
     args = parser.parse_args()
     logger = init_logging()
     read_id_msg(logger=logger, testdir=args.dir)
