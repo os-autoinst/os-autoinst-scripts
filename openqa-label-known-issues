@@ -1,8 +1,5 @@
 #!/bin/bash -e
 
-# Usage
-# openqa-label-known-issues https://openqahost/tests/1234
-
 set -o pipefail -o errtrace
 
 # shellcheck source=/dev/null
@@ -26,6 +23,23 @@ retries="${retries:-"3"}"
 OPENQA_CLI_RETRY_SLEEP_TIME_S=${OPENQA_CLI_RETRY_SLEEP_TIME_S:-120}
 MOJO_CONNECT_TIMEOUT=${MOJO_CONNECT_TIMEOUT:-30}
 client_args=(api --header 'User-Agent: openqa-label-known-issues (https://github.com/os-autoinst/os-autoinst-scripts)' --host "$host_url" --retries="$retries")
+
+usage() {
+    cat << EOF
+Usage: $0 [OPTIONS] OPENQA_JOB_URL
+
+Takes an openQA job URL, looks for matching "known issues", for example from
+progress.opensuse.org, labels the job and retriggers if specified in the issue
+(see the source code for details how to mark tickets).
+
+Options:
+ -h, --help         display this help
+ -H, --host=HOST    openQA host to contact. Defaults to '$host'.
+ -n, --dry          conduct dry-run without any labelling or restarting of openQA
+                    jobs
+EOF
+    exit "$1"
+}
 
 out="${REPORT_FILE:-$(mktemp -t openqa-label-known-issues--output-XXXX)}"
 trap 'error-handler "$LINENO"' ERR
@@ -175,6 +189,24 @@ investigate_issue() {
 }
 
 label_issue() {
+    local opts
+    opts=$(getopt -o hH: -l help -l host: -n "$0" -- "$@") || usage 1
+    eval set -- "$opts"
+    while true; do
+        case "$1" in
+            -h | --help) usage 0 ;;
+            -H | --host)
+                host=$2
+                shift 2
+                ;;
+            --)
+                shift
+                break
+                ;;
+            *) break ;;
+        esac
+    done
+
     local testurl="${1:?"Need 'testurl'"}"
     [[ "$dry_run" = "1" ]] && client_prefix="echo"
     if [[ -z "$client_call" ]]; then
