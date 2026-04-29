@@ -6,10 +6,47 @@ interval="${interval:-"24 hour"}"
 failed_since="${failed_since:-"(timezone('UTC', now()) - interval '$interval')"}"
 width="${width:-80}"
 threshold="${threshold:-0}"
-[[ ${show_job_ids:-} ]] && additional_columns+=', array_agg(jobs.id) as job_ids'
-if [[ ${show_worker_hosts:-} ]]; then
-    additional_columns+=', array(select distinct host from workers where id = any(array_agg(jobs.assigned_worker_id))) as worker_hosts'
-fi
-query="${query:-"select left(text, $width) as comment_text, count(text) as job_count $additional_columns from jobs join comments on jobs.id = comments.job_id where result='incomplete' and t_finished >= $failed_since group by text having count(text) > $threshold order by job_count desc;"}"
-# shellcheck disable=SC2029
-ssh "$ssh_host" "cd /tmp; sudo -u geekotest psql --command=\"$query\" openqa"
+
+usage() {
+    cat << EOF
+Usage: $0 [OPTIONS]
+
+Get statistics about recent incomplete openQA jobs.
+
+By default queries incomplete openQA jobs since '$failed_since'
+on '$host'.
+
+Can be additionally configured with environment variables.
+
+Needs SSH access to the target openQA host '$ssh_host'.
+
+Options:
+ -h, --help         display this help
+EOF
+    exit "$1"
+}
+
+main() {
+    opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
+    eval set -- "$opts"
+    while true; do
+        case "$1" in
+            -h | --help) usage 0 ;;
+            --)
+                shift
+                break
+                ;;
+            *) break ;;
+        esac
+    done
+
+    [[ ${show_job_ids:-} ]] && additional_columns+=', array_agg(jobs.id) as job_ids'
+    if [[ ${show_worker_hosts:-} ]]; then
+        additional_columns+=', array(select distinct host from workers where id = any(array_agg(jobs.assigned_worker_id))) as worker_hosts'
+    fi
+    query="${query:-"select left(text, $width) as comment_text, count(text) as job_count $additional_columns from jobs join comments on jobs.id = comments.job_id where result='incomplete' and t_finished >= $failed_since group by text having count(text) > $threshold order by job_count desc;"}"
+    # shellcheck disable=SC2029
+    ssh "$ssh_host" "cd /tmp; sudo -u geekotest psql --command=\"$query\" openqa"
+}
+
+caller 0 > /dev/null || main "$@"
