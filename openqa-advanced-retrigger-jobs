@@ -18,13 +18,25 @@ Retrigger openQA jobs based on database queries.
 By default retriggers openQA jobs with '$result' since '$failed_since' on
 '$host'.
 
-Can be restricted to jobs that ran on worker by setting the variable 'WORKER'
-and optionally 'INSTANCE'.
-
-Needs SSH access to the target openQA host '$host'.
+Needs SSH access to the target openQA host '$host' to query the database
+unless 'JOB_IDS' is provided.
 
 Options:
- -h, --help         display this help
+ -h, --help           display this help
+
+Environment variables:
+ host                 target openQA host (default: $host)
+ failed_since         retrigger jobs finished since this date (default: $failed_since)
+ result               retrigger jobs with this result (default: $result)
+ additional_filters   additional SQL filters for the job query
+ comment              comment to add to retriggered jobs
+ dry_run              set to 1 to only print what would be done
+ WORKER               restrict to jobs that ran on this worker host
+ INSTANCE             restrict to jobs that ran on this worker instance
+ sql_command          custom SQL command to fetch job IDs
+ JOB_IDS              comma or space separated list of job IDs to retrigger
+ cli_protocol         protocol for openqa-cli (e.g. https)
+ cli_port             port for openqa-cli
 EOF
     exit "$1"
 }
@@ -51,7 +63,7 @@ main() {
     done
 
     [ "$dry_run" = "1" ] && client_prefix="echo"
-    sql_command="select id from jobs where (${worker_string}${result} and clone_id is null and t_finished >= '$failed_since'$additional_filters);"
+    sql_command="${sql_command:-"select id from jobs where (${worker_string}${result} and clone_id is null and t_finished >= '$failed_since'$additional_filters);"}"
     # shellcheck disable=SC2029
     job_ids=${JOB_IDS:-$(ssh "$host" "sudo -u geekotest psql --no-align --tuples-only --command=\"$sql_command\" openqa")}
 
