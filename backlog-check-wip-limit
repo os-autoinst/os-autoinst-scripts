@@ -1,9 +1,39 @@
-#!/bin/sh -e
+#!/bin/bash -e
 redmine_api_key="${redmine_api_key:?"Need redmine API key"}"
 host="${host:-"https://progress.opensuse.org"}"
 query_id="${query_id:-400}"
 ticket_limit="${ticket_limit:-200}"
 wip_limit="${wip_limit:-10}"
 status="${status:-"In Progress"}"
-tickets=$(curl -s -H "X-Redmine-API-Key: $redmine_api_key" "https://progress.opensuse.org/issues.json?query_id=$query_id&limit=$ticket_limit" | jq -r '.issues | .[] | select(.status.name=="In Progress") | .id')
-test "$(echo "$tickets" | wc -l)" -le "$wip_limit"
+
+usage() {
+    cat << EOF
+Usage: $0 [OPTIONS]
+
+Checks the number of tickets in a redmine query against a "WIP-Limit".
+
+Options:
+ -h, --help         display this help
+EOF
+    exit "$1"
+}
+
+main() {
+    opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
+    eval set -- "$opts"
+    while true; do
+        case "$1" in
+            -h | --help) usage 0 ;;
+            --)
+                shift
+                break
+                ;;
+            *) break ;;
+        esac
+    done
+
+    tickets=$(curl -s -H "X-Redmine-API-Key: $redmine_api_key" "https://progress.opensuse.org/issues.json?query_id=$query_id&limit=$ticket_limit" | jq -r '.issues | .[] | select(.status.name=="In Progress") | .id')
+    test "$(echo "$tickets" | wc -l)" -le "$wip_limit"
+}
+
+caller 0 > /dev/null || main "$@"
