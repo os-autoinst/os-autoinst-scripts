@@ -8,6 +8,7 @@ import logging
 import os
 import subprocess
 import sys
+from collections import deque
 from typing import Annotated, Any
 from urllib.parse import urlparse, urlunparse
 
@@ -21,25 +22,24 @@ log = logging.getLogger(__name__)
 app = typer.Typer(add_completion=False)
 
 
-def fetch_json(client: httpx.Client, url: str) -> dict[str, Any]:
+def fetch_json(client: httpx.Client, url: str, params: dict[str, Any] | None = None, default: Any = None) -> Any:
     try:
-        response = client.get(url)
+        response = client.get(url, params=params)
         response.raise_for_status()
         return response.json()
     except Exception as e:
-        log.warning("Failed to fetch JSON from %s: %s", url, e)
-        return {}
+        log.warning("Failed to fetch JSON from %s with params %s: %s", url, params, e)
+        return default if default is not None else {}
 
 
 def fetch_text(client: httpx.Client, url: str, max_lines: int = 200) -> str:
     try:
-        response = client.get(url)
-        response.raise_for_status()
-        text = response.text
-        lines = text.splitlines()
-        if len(lines) > max_lines:
-            return "\n".join(lines[-max_lines:])
-        return text
+        lines: deque[str] = deque(maxlen=max_lines)
+        with client.stream("GET", url) as response:
+            response.raise_for_status()
+            for line in response.iter_lines():
+                lines.append(line)
+        return "\n".join(lines)
     except Exception as e:
         log.warning("Failed to fetch text from %s: %s", url, e)
         return ""
@@ -96,6 +96,9 @@ def investigate(
     dry: Annotated[  # noqa: FBT002
         bool, typer.Option("--dry", help="Dry run mode: output summary instead of posting a comment")
     ] = False,
+    force: Annotated[  # noqa: FBT002
+        bool, typer.Option("--force", "-f", help="Force another analysis even if an LLM comment already exists")
+    ] = False,
 ) -> None:
     setup_logging(verbose, quiet)
     base_url, job_id = parse_job_url(job_url)
@@ -108,35 +111,110 @@ def investigate(
     llm_model = os.environ.get("LLM_MODEL", "gemma-4-26B-A4B-it")
 
     with httpx.Client(headers={"User-Agent": USER_AGENT}) as client:
+        # Check for existing LLM investigation comments
+        comments = fetch_json(client, f"{base_url}/api/v1/jobs/{job_id}/comments", default=[])
+        if not force and any(c.get("text", "").startswith("**LLM Investigation summary:**") for c in comments):
+            log.info("Job %s already has an LLM investigation summary, skipping.", job_id)
+            sys.exit(0)
+
         # Fetch job details
-        job_data = fetch_json(client, f"{base_url}/api/v1/jobs/{job_id}")
+        job_data = fetch_json(client, f"{base_url}/api/v1/jobs/{job_id}/details")
+        if not job_data or "job" not in job_data:
+            # Fallback for openQA versions/configurations where /details might fail
+            job_data = fetch_json(client, f"{base_url}/api/v1/jobs/{job_id}")
         if not job_data or "job" not in job_data:
             log.error("Could not retrieve job data for job %s from %s", job_id, base_url)
             sys.exit(1)
         job = job_data["job"]
 
-        if job.get("result") == "passed":
-            log.info("Job %s passed, skipping investigation.", job_id)
+        if job.get("result") in {"passed", "softfailed"}:
+            log.info("Job %s %s, skipping investigation.", job_id, job.get("result"))
             sys.exit(0)
+
+        failed_modules = [
+            m.get("name", "unknown")
+            for m in job.get("testresults", [])
+            if m.get("result") == "failed"
+        ]
 
         log_text = fetch_text(client, f"{base_url}/tests/{job_id}/file/autoinst-log.txt")
         investigation = fetch_json(client, f"{base_url}/tests/{job_id}/investigation_ajax")
 
         test_name = job.get("test", "unknown")
-        build = job.get("settings", {}).get("BUILD", "unknown")
+        settings = job.get("settings", {})
+        build, distri, version, arch, flavor = (
+            settings.get(k, "unknown") for k in ("BUILD", "DISTRI", "VERSION", "ARCH", "FLAVOR")
+        )
 
-        # Search for similar failures in same build
-        search_query = f"{base_url}/api/v1/jobs?build={build}&test={test_name}&result=failed"
-        history_data = fetch_json(client, search_query)
-        other_failures = len(history_data.get("jobs", []))
+        # Search for similar failures in same build (across all tests)
+        build_params = {"build": build, "distri": distri, "version": version, "result": "failed"}
+        build_history_data = fetch_json(client, f"{base_url}/api/v1/jobs", params=build_params)
+        build_failed_jobs = build_history_data.get("jobs", [])
+        build_failures = len(build_failed_jobs)
+
+        failed_modules_set = set(failed_modules)
+        same_module_failures = (
+            sum(
+                1
+                for b_job in build_failed_jobs
+                if str(b_job.get("id")) != str(job_id)
+                and failed_modules_set.intersection(
+                    m.get("name") for m in b_job.get("modules", []) if m.get("result") == "failed"
+                )
+            )
+            if failed_modules
+            else 0
+        )
+
+        # Search for consecutive failures of the same test (across all builds)
+        test_params = {
+            "test": test_name,
+            "distri": distri,
+            "version": version,
+            "arch": arch,
+            "flavor": flavor,
+            "limit": 100,
+        }
+        test_history_data = fetch_json(client, f"{base_url}/api/v1/jobs", params=test_params)
+        test_jobs = sorted(test_history_data.get("jobs", []), key=lambda x: x["id"], reverse=True)
+
+        target_id_int = int(job_id)
+        valid_results = {"passed", "softfailed", "failed"}
+        found_target = any(j["id"] == target_id_int for j in test_jobs)
+        relevant_jobs = [
+            j
+            for j in test_jobs
+            if j["id"] <= target_id_int and j.get("state") == "done" and j.get("result") in valid_results
+        ]
+        consecutive_failures = next(
+            (i for i, j in enumerate(relevant_jobs) if j.get("result") != "failed"), len(relevant_jobs)
+        )
+
+        if not found_target:
+            log.warning(
+                "Job %s not found in recent history (limit %s). Streak count may be inaccurate.",
+                job_id,
+                test_params["limit"],
+            )
+
+        hint = ""
+        if build_failures > 20:
+            hint = f"\n(Note: {build_failures} failures across this build strongly implies a backend infrastructure outage or a widespread environment issue rather than a specific product bug.)"
 
         prompt = f"""You are analyzing an openQA test run failure.
 Job details:
 - Test: {test_name}
+- Failed module(s): {", ".join(failed_modules) if failed_modules else "unknown"}
 - Group: {job.get("group", "unknown")}
 - Build: {build}
+- Distri: {distri}
+- Version: {version}
+- Arch: {arch}
+- Flavor: {flavor}
 - Result: {job.get("result", "unknown")}
-- Number of times this failed in the same build: {other_failures}
+- Total failed jobs in this build (across all tests): {build_failures}{hint}
+- Other jobs in this build failing in the exact same module(s): {same_module_failures}
+- Consecutive recent failures for this specific test (same name, arch, flavor): {consecutive_failures}
 
 Investigation info (diff to last good):
 {json.dumps(investigation.get("diff_to_last_good", "None available"))}
@@ -147,7 +225,9 @@ Log tail (last 200 lines):
 Provide exactly 3 sentences answering:
 1. Is it a new or existing issue? Is it likely a product regression, test regression, or infrastructure problem?
 2. Does the same issue appear in other tests in the same build, and did it appear in the history of the same build?
-3. Should 'openqa-investigate' be triggered to schedule further bisect tests? Start your 3rd sentence EXACTLY with "INVESTIGATE: YES" or "INVESTIGATE: NO" followed by the reason.
+3. Should 'openqa-investigate' be triggered to schedule further bisect tests? Start your 3rd sentence EXACTLY with "BISECT: YES" or "BISECT: NO" followed by the reason.
+   - If other jobs in the same build are failing in the exact same module, this is a widespread issue. You MUST answer BISECT: NO to prevent redundant and costly bisections, as another job has likely already triggered it.
+   - If the failure is isolated to ONLY this job in the current build, AND the log contains an explicit product error or test assertion failure (e.g., 'actual size fits X: fail', 'command not found', 'segmentation fault'), it strongly points to a new regression. In this isolated case, you MUST answer BISECT: YES.
 """
 
         req = {
@@ -174,9 +254,9 @@ Provide exactly 3 sentences answering:
             log.error("LLM API request failed: %s", e)
             sys.exit(1)
 
-        # Print the job URL to stdout ONLY if INVESTIGATE: YES is recommended
+        # Print the job URL to stdout ONLY if BISECT: YES is recommended
         # This makes the script act as a gatekeeper, similar to `openqa-label-known-issues`
-        if "INVESTIGATE: YES" in llm_response.upper():
+        if "BISECT: YES" in llm_response.upper():
             print(f"{base_url}/tests/{job_id}")
 
         if dry:
