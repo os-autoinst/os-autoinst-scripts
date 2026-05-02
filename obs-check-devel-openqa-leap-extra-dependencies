@@ -2,16 +2,45 @@
 
 osc="osc --apiurl https://api.opensuse.org"
 
-for project in $($osc search --project -s 'devel:openQA:Leap:' | grep -o '^devel:openQA:Leap:.*'); do
-    for package in $($osc list "$project"); do
-        $osc api "/comments/package/$project/$package" \
-            | yq -pxml -oy '.comments.comment |= ([] + .) | .comments.comment[].+content' \
-            | grep -q "Reason for linking:" \
-            || {
-                echo "No reason for $project/$package, consider adding a comment or remove the link (see poo#128087 for details)" >&2
-                problem=1
-            }
-    done
-done
+usage() {
+    cat << EOF
+Usage: $0 [OPTIONS]
 
-test -z "$problem"
+Checks devel:openQA:Leap: OBS project dependencies.
+
+Options:
+ -h, --help         display this help
+EOF
+    exit "$1"
+}
+
+main() {
+    opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
+    eval set -- "$opts"
+    while true; do
+        case "$1" in
+            -h | --help) usage 0 ;;
+            --)
+                shift
+                break
+                ;;
+            *) break ;;
+        esac
+    done
+
+    for project in $($osc search --project -s 'devel:openQA:Leap:' | grep -o '^devel:openQA:Leap:.*'); do
+        for package in $($osc list "$project"); do
+            $osc api "/comments/package/$project/$package" \
+                | yq -pxml -oy '.comments.comment |= ([] + .) | .comments.comment[].+content' \
+                | grep -q "Reason for linking:" \
+                || {
+                    echo "No reason for $project/$package, consider adding a comment or remove the link (see poo#128087 for details)" >&2
+                    problem=1
+                }
+        done
+    done
+
+    test -z "$problem"
+}
+
+caller 0 > /dev/null || main "$@"
