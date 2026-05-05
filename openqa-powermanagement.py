@@ -1,5 +1,7 @@
 #!/usr/bin/python3
 # Copyright SUSE LLC
+"""Power management for openQA worker machines based on scheduled job requirements."""
+
 import argparse
 import configparser
 import json

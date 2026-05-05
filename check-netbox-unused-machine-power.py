@@ -1,10 +1,11 @@
 #!/usr/bin/python3
 # Copyright SUSE LLC
-
 # ruff: noqa: T201
+"""Report QE machines that draw unexpected power via SNMP PDU queries.
 
-# This script will exit 1 if QE machines that are marked as unused
-# in netbox still draw more than MAX_POWER Watts (default: 5).
+Exits 1 if any machine not marked active in NetBox draws more than MAX_POWER Watts (default: 5),
+indicating it may still be powered on despite being decommissioned or unused.
+"""
 
 import os
 import re
@@ -14,6 +15,8 @@ from urllib.parse import urlparse
 import netsnmp
 import pynetbox
 
+BACHMANN_RELAY_ON = 19  # Bachmann PDU relay status value for "on"
+
 verbose = os.environ.get("VERBOSE") == "1"
 debug = os.environ.get("DEBUG") == "1"
 netbox_token = os.environ["NETBOX_TOKEN"]
@@ -21,12 +24,14 @@ max_power = int(os.environ.get("MAX_POWER", "5"))
 
 
 def snmp_get(host: str, community: str, oid: str) -> int:
+    """Retrieve a single integer SNMP value by OID from the given host."""
     if debug:
         print(f"snmp_get({host=}, {community=}, {oid=})")
     return int(netsnmp.snmpget(oid, Version=1, DestHost=host, Community=community)[0])
 
 
 def pdu_get_power(host: str, outlet: int) -> tuple[int, bool]:
+    """Return watts and relay state for a PDU outlet, dispatching by PDU type and location."""
     if debug:
         print(f"get_pdu_power({host=}, {outlet=})")
     parsed = urlparse(host if "://" in host else f"//{host}")
@@ -46,8 +51,8 @@ def pdu_get_power(host: str, outlet: int) -> tuple[int, bool]:
             fuse = (outlet - 1) // 14
             port = (outlet - 1) % 14
             watts = snmp_get(snmp_proxy, community, f".1.3.6.1.4.1.31770.2.2.8.4.1.5.0.0.0.0.{fuse}.{port}.0.19") // 10
-            # 19=on, 20=off
-            relay = snmp_get(snmp_proxy, community, f".1.3.6.1.4.1.31770.2.2.9.1.1.5.0.0.0.0.{fuse}.{port}.0.0") == 19
+            relay_oid = f".1.3.6.1.4.1.31770.2.2.9.1.1.5.0.0.0.0.{fuse}.{port}.0.0"
+            relay = snmp_get(snmp_proxy, community, relay_oid) == BACHMANN_RELAY_ON
         elif host.startswith("pdu-j"):
             # PRG2-J PDUs are type Rittal and can be reached via SNMP proxy on qe-jumpy.prg2.suse.org
             var_index_watts = 175 + (outlet - 1) * 33
@@ -59,20 +64,24 @@ def pdu_get_power(host: str, outlet: int) -> tuple[int, bool]:
 
 
 def red(s: str) -> str:
+    """Wrap string in ANSI red color codes."""
     return f"\x1b[31m{s}\x1b[0m"
 
 
 def green(s: str) -> str:
+    """Wrap string in ANSI green color codes."""
     return f"\x1b[32m{s}\x1b[0m"
 
 
 def print_device(device: pynetbox.models.dcim.Devices, dev_pdu_power: dict, watts: int) -> None:
+    """Report device power consumption per PDU outlet for human review."""
     s = "  " if verbose else ""
     dev_pdu_power = " ".join([f"{h}:{green(p) if s else red(p)}={w}W" for (h, p), (w, s) in dev_pdu_power.items()])
     print(f"{s}{device.name} status={device.status.value} {dev_pdu_power} ∑{watts}W")
 
 
 def print_no_connection(device: pynetbox.models.dcim.Devices) -> None:
+    """Warn that power consumption for this device cannot be verified."""
     if verbose:
         print(f"No connection for {device.name} ({device.display_url})", file=sys.stderr)
 
