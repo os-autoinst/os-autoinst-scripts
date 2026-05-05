@@ -2,13 +2,13 @@
 # Copyright SUSE LLC
 # ruff: noqa: ANN001, ANN201, B005, C901, G001, G002, G003, G004, PLR0911, PLR0916, PLW1510, PYI063, S113, S324, S404, S603, TRY401, FBT002, SIM112, UP031
 
-"""
-Trigger openQA tests bisecting which pending operating system maintenance
-update, called "incident", might be the reason for an openQA test failure.
-Can be called manually and is also called by openQA hook scripts, see
-http://open.qa/docs/#_enable_custom_hook_scripts_on_job_done_based_on_result
-"""
+"""Trigger openQA tests bisecting maintenance updates.
 
+Determine which pending operating system maintenance update, called "incident",
+might be the reason for an openQA test failure.
+Can be called manually and is also called by openQA hook scripts, see
+http://open.qa/docs/#_enable_custom_hook_scripts_on_job_done_based_on_result.
+"""
 
 import argparse
 import hashlib

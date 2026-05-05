@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""
-This script allows you to list incidents for the openQA job.
+# Copyright SUSE LLC
+# ruff: noqa: T201
+
+"""List incidents for the openQA job.
+
 For each incident it shows the relevant packages and tickets
-for bugzilla.suse.com and jira.suse.com
+for bugzilla.suse.com and jira.suse.com.
 
 To fetch the titles of the tickets you can use the -v option
 which needs the private tokens for Bugzilla & Jira.
@@ -10,8 +13,11 @@ You can either modify this script or export then as environment
 variables: BUGZILLA_TOKEN and JIRA_TOKEN
 """
 
+from __future__ import annotations
+
 import argparse
 import os
+import pathlib
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import cache
@@ -20,7 +26,6 @@ from urllib.parse import parse_qs, urlparse
 
 import requests
 from requests.exceptions import RequestException
-
 
 BUGZILLA_TOKEN = os.getenv("BUGZILLA_TOKEN")
 JIRA_TOKEN = os.getenv("JIRA_TOKEN")
@@ -38,9 +43,7 @@ session = requests.Session()
 
 
 def has_host(url: str, host_name: str) -> bool:
-    """
-    Return whether URL hostname matches the specified host_name exactly.
-    """
+    """Return whether URL hostname matches the specified host_name exactly."""
     try:
         parsed = urlparse(url)
     except ValueError:
@@ -50,9 +53,7 @@ def has_host(url: str, host_name: str) -> bool:
 
 
 def get_bugzilla_issues(issues: list[str]) -> list[dict]:
-    """
-    Get Bugzilla issues
-    """
+    """Get Bugzilla issues."""
     if not BUGZILLA_TOKEN:
         return []
     issues = [i.split("=")[-1] for i in issues]
@@ -75,12 +76,10 @@ def get_bugzilla_issues(issues: list[str]) -> list[dict]:
 
 
 def get_jira_issue(url: str) -> dict | None:
-    """
-    Get Jira issue
-    """
+    """Get Jira issue."""
     if not JIRA_TOKEN:
         return None
-    issue = os.path.basename(url)
+    issue = pathlib.Path(url).name
     api_url = f"https://jira.suse.com/rest/api/2/issue/{issue}"
     headers = {"Authorization": f"Bearer {JIRA_TOKEN}"}
     params = {"fields": "summary"}
@@ -99,12 +98,10 @@ def get_jira_issue(url: str) -> dict | None:
 
 
 def get_jira_issues(urls: list[str]) -> list[dict]:
-    """
-    Get Jira issues
-    """
+    """Get Jira issues."""
     if not JIRA_TOKEN:
         return []
-    issues = [os.path.basename(i) for i in urls]
+    issues = [pathlib.Path(i).name for i in urls]
     url = "https://jira.suse.com/rest/api/2/search"
     headers = {"Authorization": f"Bearer {JIRA_TOKEN}"}
     bugs = []
@@ -119,45 +116,31 @@ def get_jira_issues(urls: list[str]) -> list[dict]:
         except RequestException as exc:
             print(f"ERROR: {url}: {exc}", file=sys.stderr)
             return []
-        bugs.extend(
-            [
-                {
-                    "id": issue["key"],
-                    "summary": issue["fields"]["summary"],
-                    "url": f"https://jira.suse.com/browse/{issue['key']}",
-                }
-                for issue in got.json()["issues"]
-            ]
-        )
+        bugs.extend([
+            {
+                "id": issue["key"],
+                "summary": issue["fields"]["summary"],
+                "url": f"https://jira.suse.com/browse/{issue['key']}",
+            }
+            for issue in got.json()["issues"]
+        ])
     # Some Jira issues may be missing because they were renamed, etc
-    missing = [u for u in urls if u not in set(b["url"] for b in bugs)]
+    missing = [u for u in urls if u not in {b["url"] for b in bugs}]
     if missing:
         with ThreadPoolExecutor() as executor:
-            for bug in executor.map(get_jira_issue, missing):
-                if bug is not None:
-                    bugs.append(bug)
+            bugs.extend(bug for bug in executor.map(get_jira_issue, missing) if bug is not None)
     return bugs
 
 
 @cache
 def get_all_issues() -> list[dict]:
-    """
-    Get all issues from Bugzilla and Jira for all incidents
-    """
+    """Get all issues from Bugzilla and Jira for all incidents."""
     incidents = get_all_incidents()
 
     bugzillas = [
-        u["url"]
-        for i in incidents
-        for u in i["incident"]["references"]
-        if has_host(u["url"], "bugzilla.suse.com")
+        u["url"] for i in incidents for u in i["incident"]["references"] if has_host(u["url"], "bugzilla.suse.com")
     ]
-    jiras = [
-        u["url"]
-        for i in incidents
-        for u in i["incident"]["references"]
-        if has_host(u["url"], "jira.suse.com")
-    ]
+    jiras = [u["url"] for i in incidents for u in i["incident"]["references"] if has_host(u["url"], "jira.suse.com")]
 
     issues = []
     with ThreadPoolExecutor(max_workers=2) as executor:
@@ -173,17 +156,15 @@ def get_all_issues() -> list[dict]:
 
 
 def get_title(url: str) -> str:
-    """
-    Get title for Bugzilla or Jira issue
-    """
+    """Get title for Bugzilla or Jira issue."""
     if not url:
         return ""
     issue_id: int | str | None = None
     issues = get_all_issues()
     if has_host(url, "bugzilla.suse.com"):
-        issue_id = int(url.split("=")[-1])
+        issue_id = int(url.rsplit("=", maxsplit=1)[-1])
     elif has_host(url, "jira.suse.com"):
-        issue_id = os.path.basename(url)
+        issue_id = pathlib.Path(url).name
     else:
         return ""
     for issue in issues:
@@ -193,9 +174,7 @@ def get_title(url: str) -> str:
 
 
 def get_incidents(route: str) -> list[dict]:
-    """
-    Fetch data from SMELT
-    """
+    """Fetch data from SMELT."""
     url = f"https://smelt.suse.de/api/v1/overview/{route}/"
     results = []
     while url:
@@ -209,20 +188,15 @@ def get_incidents(route: str) -> list[dict]:
 
 @cache
 def get_all_incidents() -> list[dict]:
-    """
-    Get all incidents from SMELT
-    """
+    """Get all incidents from SMELT."""
     routes = ["tested_declined", "tested_ready", "testing"]
     with ThreadPoolExecutor(max_workers=len(routes)) as executor:
         results = executor.map(get_incidents, routes)
-    incidents = list(chain.from_iterable(results))
-    return incidents
+    return list(chain.from_iterable(results))
 
 
 def get_api_url(job: str) -> str:
-    """
-    Get openQA API URL from job string
-    """
+    """Get openQA API URL from job string."""
     # Add scheme if missing so we can use urlparse()
     if job.startswith("http://"):
         job = job.removeprefix("http://")
@@ -243,26 +217,22 @@ def get_api_url(job: str) -> str:
         job = str(data[0]["id"])
     else:
         # Support both "/t1234" & "/tests/1234"
-        job = os.path.basename(url.path).removeprefix("t")
+        job = pathlib.Path(url.path).name.removeprefix("t")
 
     assert job.isdigit()
     return f"https://{url.netloc}/api/v1/jobs/{job}"
 
 
 def fetch_incident(incident_id: int) -> dict | None:
-    """
-    Return incident information
-    """
+    """Return incident information."""
     for incident in get_all_incidents():
         if incident["incident"]["incident_id"] == incident_id:
             return incident
     return None
 
 
-def print_incident(incident_id: int | dict, verbose: bool = False) -> None:
-    """
-    Print information for incident
-    """
+def print_incident(incident_id: int | dict, *, verbose: bool = False) -> None:
+    """Print information for incident."""
     if isinstance(incident_id, int):
         incident = fetch_incident(incident_id)
         if incident is None:
@@ -272,17 +242,9 @@ def print_incident(incident_id: int | dict, verbose: bool = False) -> None:
         incident = incident_id
     packages = sorted(incident["packages"], key=str.casefold)
     if verbose:
-        refs = [
-            _["url"]
-            for _ in incident["incident"]["references"]
-            if not _["name"].startswith("CVE-")
-        ]
+        refs = [_["url"] for _ in incident["incident"]["references"] if not _["name"].startswith("CVE-")]
     else:
-        refs = [
-            _["name"]
-            for _ in incident["incident"]["references"]
-            if not _["name"].startswith("CVE-")
-        ]
+        refs = [_["name"] for _ in incident["incident"]["references"] if not _["name"].startswith("CVE-")]
     refs = sorted(refs) or [""]
     sm_id = incident["incident"]["project"].replace("SUSE:Maintenance", "S:M")
     sm_id += f":{incident['request_id']}"
@@ -302,10 +264,8 @@ def print_incident(incident_id: int | dict, verbose: bool = False) -> None:
         print(fmt.format(sm_id, ",".join(packages), ",".join(refs)))
 
 
-def print_incidents(url: str, verbose: bool = False) -> None:
-    """
-    Print incidents
-    """
+def print_incidents(url: str, *, verbose: bool = False) -> None:
+    """Print incidents."""
     url = get_api_url(url)
     try:
         got = session.get(url)
@@ -316,15 +276,11 @@ def print_incidents(url: str, verbose: bool = False) -> None:
     settings = job["settings"]
     ids = set()
     for issue in [x for x in settings if "_TEST_ISSUES" in x]:
-        ids |= set(int(x.strip()) for x in settings[issue].split(","))
+        ids |= {int(x.strip()) for x in settings[issue].split(",")}
     incidents = [i for i in get_all_incidents() if i["incident"]["incident_id"] in ids]
     incidents.sort(key=lambda i: str.casefold(i["packages"][0]))
     for incident in incidents:
         print_incident(incident, verbose=verbose)
-    # Uncomment if you want to print incidents that are no longer in the database
-    # not_found = ids - {i["incident"]["incident_id"] for i in incidents}
-    # for id_ in list(sorted(not_found)):
-    #     print(f"NOT FOUND: {id_}")
 
 
 if __name__ == "__main__":
@@ -335,9 +291,7 @@ if __name__ == "__main__":
 
     try:
         # Calculate maximum package string length
-        PACKAGE_WIDTH = max(
-            len(package) for inc in get_all_incidents() for package in inc["packages"]
-        )
+        PACKAGE_WIDTH = max(len(package) for inc in get_all_incidents() for package in inc["packages"])
         print_incidents(args.url, verbose=args.verbose)
     except KeyboardInterrupt:
         sys.exit("Cancelled")
