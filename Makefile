@@ -75,6 +75,11 @@ check-code-health:
 	@vulture $$(git ls-files "**.py") --min-confidence 80
 
 
+.PHONY: tidy
+tidy: ## Format code and fix linting issues
+	ruff format $(PY_FILES)
+	ruff check --fix $(PY_FILES)
+
 update-deps:
 	tools/update-deps --cpanfile cpanfile --specfile dist/rpm/os-autoinst-scripts-deps.spec
 
