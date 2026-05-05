@@ -42,7 +42,7 @@ test-online:
 	# Invalid JSON causes the job to abort with an error
 	-tw_openqa_host=example.com dry_run=1 ./trigger-openqa_in_openqa
 
-checkstyle: test-shellcheck test-yaml checkstyle-python
+checkstyle: test-shellcheck test-yaml checkstyle-python check-code-health
 
 shfmt:
 	shfmt -w ${SH_FILES}
@@ -57,9 +57,22 @@ test-yaml:
 	@which yamllint >/dev/null 2>&1 || echo "Command 'yamllint' not found, can not execute YAML syntax checks"
 	yamllint --strict $$(git ls-files "*.yml" "*.yaml" ":!external/")
 
-checkstyle-python:
+checkstyle-python: check-ruff check-conventions
+check-ruff:
 	@which ruff >/dev/null 2>&1 || echo "Command 'ruff' not found, can not execute python style checks"
-	ruff format --check && ruff check
+	ruff check
+	ruff format --check
+
+check-conventions:
+	@if git grep -nE '^\s*@(unittest\.mock\.|mock\.)?patch' tests/; then \
+		echo "Error: @patch decorator detected. Avoid to prevent argument ordering bugs."; \
+		echo "   Fix: Use the 'mocker' fixture (pytest-mock) or a 'with patch():' context manager."; \
+		exit 1; \
+	fi
+
+check-code-health:
+	@echo "Checking code health…"
+	@vulture $$(git ls-files "**.py") --min-confidence 80
 
 update-deps:
 	tools/update-deps --cpanfile cpanfile --specfile dist/rpm/os-autoinst-scripts-deps.spec

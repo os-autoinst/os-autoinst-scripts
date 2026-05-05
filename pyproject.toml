@@ -33,6 +33,7 @@ dev = [
     "coverage",
     "radon",
     "ruff",
+    "vulture",
 ]
 
 [build-system]
@@ -104,7 +105,7 @@ extend-select =[
     "PT", # https://docs.astral.sh/ruff/rules/#flake8-pytest-style-pt
     "SLOT", # https://docs.astral.sh/ruff/rules/#flake8-slots-slot
     "TID", # https://docs.astral.sh/ruff/rules/#flake8-tidy-imports-tid
-    #"TC", # https://docs.astral.sh/ruff/rules/#flake8-type-checking-tc
+    "TC", # https://docs.astral.sh/ruff/rules/#flake8-type-checking-tc
     "PTH", # https://docs.astral.sh/ruff/rules/#flake8-use-pathlib-pth
     "FLY", # https://docs.astral.sh/ruff/rules/#flynt-fly
     "NPY", # https://docs.astral.sh/ruff/rules/#numpy-specific-rules-npy
@@ -118,45 +119,20 @@ extend-select =[
 ]
 
 ignore = [
-    "D100",   # missing-module-docstring
-    "D101",   # missing-class-docstring
-    "D102",   # missing-method-docstring
-    "D103",   # missing-function-docstring
-    "D104",   # missing-package-docstring
-    "D105",   # missing-magic-method-docstring
-    "D107",   # missing-init-docstring
     "D203",   # incorrect-blank-line-before-class
-    "N801",   # invalid-class-name
-    "N802",   # invalid-function-name
-    "N803",   # invalid-argument-name
-    "N806",   # invalid-variable-name
-    "UP032",
-    "PLC0415", # import-outside-toplevel
     "PLC1802", # use-implicit-booleaness-not-len
-    "F821",
-    "PLR0912", # too-many-branches
-    "PLR0913", # too-many-arguments
-    "PLR0914", # too-many-locals
-    "PLR0915", # too-many-statements
-    "PLR2004", # magic-value-comparison
     "D213", # multi-line-summary-second-line
-    "PLW2901", # redefined-loop-name
-    "PLW0127", # self-assigning-variable
-    "PLW0128", # redeclared-assigned-name
-    "PLW0129", # assert-on-string-literal
-    "B019",
-    "ANN401", # any-type
-    "S101",
-    "PLR6301", # no-self-use
-    "PLC1901", # compare-to-empty-string
+    "PLR0904", # too-many-public-methods
     "DOC201", # docstring-missing-returns
     "DOC501", # docstring-missing-exception
     "COM812", # missing-trailing-comma
-    "TC001", # typing-only-first-party-import
-    "TC002", # typing-only-third-party-import
-    "TC003", # typing-only-standard-library-import
-    "FURB140", # reimplemented-starmap: less efficient than comprehensions https://github.com/astral-sh/ruff/issues/7771
 ]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 9
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["PLR2004", "ANN401", "PLR0913", "S101", "S105", "S106", "PLR0917", "D103"]
 
 [tool.ruff.format]
 # Enable reformatting of code snippets in docstrings.
@@ -165,3 +141,7 @@ docstring-code-format = true
 [tool.ruff.lint.flake8-copyright]
 author = "SUSE LLC"
 notice-rgx = "Copyright"
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"os.system".msg = "Use `subprocess.run` or `sh` library instead."
+"subprocess.call".msg = "Use `subprocess.run` with `check=True`."
