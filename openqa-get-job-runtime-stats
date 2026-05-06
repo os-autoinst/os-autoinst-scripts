@@ -169,8 +169,6 @@ if __name__ == "__main__":
         jobs_ok = [j for j in tests if j.passed() or j.softfailed()]
         jobs_failed = [j for j in tests if j.isNotOK()]
         n_done = len(jobs_done)
-        if len(jobs_done) < len(tests):
-            pass
         if n_done > 0:
             n_ok, n_fail = len(jobs_ok), len(jobs_failed)
             f_rate = float(n_fail) / float(n_ok + n_fail)
@@ -183,6 +181,3 @@ if __name__ == "__main__":
                 median = np.median(runtime)
                 average = np.average(runtime)
                 stdev = np.std(runtime)
-
-    if not quiet:
-        pass
