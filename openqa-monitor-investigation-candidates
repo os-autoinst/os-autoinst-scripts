@@ -36,9 +36,43 @@ query="${query:-"
   select included_jobs.id, test from included_jobs where parent_id is null;
 "}"
 
-# shellcheck disable=SC2029
-for i in $(ssh "$ssh_host" "cd /tmp; sudo -u geekotest psql --no-align --tuples-only --command=\"$query\" openqa"); do
-    url="$scheme://$host/tests/${i%|*}"
-    details="${i#*|}"
-    echo "$url" "$details"
-done
+usage() {
+    cat << EOF
+Usage: $0 [OPTIONS]
+
+Prints a list of openQA jobs considered good candidates for further failure
+investigation from '$ssh_host' since '$failed_since' as result of a database
+query.
+
+Needs SSH access to the target openQA host '$ssh_host'.
+
+Can be configured additionally with environment variables.
+
+Options:
+ -h, --help         display this help
+EOF
+    exit "$1"
+}
+
+main() {
+    opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
+    eval set -- "$opts"
+    while true; do
+        case "$1" in
+            -h | --help) usage 0 ;;
+            --)
+                shift
+                break
+                ;;
+            *) break ;;
+        esac
+    done
+    # shellcheck disable=SC2029
+    for i in $(ssh "$ssh_host" "cd /tmp; sudo -u geekotest psql --no-align --tuples-only --command=\"$query\" openqa"); do
+        url="$scheme://$host/tests/${i%|*}"
+        details="${i#*|}"
+        echo "$url" "$details"
+    done
+}
+
+caller 0 > /dev/null || main "$@"
