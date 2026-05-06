@@ -13,6 +13,9 @@ usage() {
     cat << EOF
 Usage: $0 path_to_testapi path_to_code_repository [path_to_another_repository] [...]
 
+For all testapi functions, lists the number of times the function is used in
+the code of the given directory
+
 Options:
  -h, --help         display this help
 EOF
