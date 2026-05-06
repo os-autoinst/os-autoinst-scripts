@@ -9,31 +9,50 @@ rgg() {
     rg --engine pcre2 --stats "(?<!_)${1}" "${2}" || :
 }
 
-[ "$#" -ne 0 ] || {
-    echo "Usage: $0 path_to_testapi path_to_code_repository [path_to_another_repository] [...]"
-    exit 1
-}
-which rg &> /dev/null || {
-    echo "rg (ripgrep) not found, please install it first" >&2
-    exit 2
+usage() {
+    cat << EOF
+Usage: $0 path_to_testapi path_to_code_repository [path_to_another_repository] [...]
+
+Options:
+ -h, --help         display this help
+EOF
+    exit "$1"
 }
 
-if [ -f "$1" ]; then
-    testapi_path=$1
-else
-    testapi_path=$1/testapi.pm
-fi
-shift
-
-[ -r "$testapi_path" ] || {
-    echo "$testapi_path not found" >&2
-    exit 1
-}
-grep -q 'package testapi' "$testapi_path" || echo "Warning: provided file does not look like testapi.pm" >&2
-
-while (($#)); do
-    get_function_list | while read -r; do
-        echo "$1 - ${REPLY} : $(rgg "${REPLY}" "$1" | tail -8 | head -n1)"
+main() {
+    opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
+    eval set -- "$opts"
+    while true; do
+        case "$1" in
+            -h | --help) usage 0 ;;
+            --)
+                shift
+                break
+                ;;
+            *) break ;;
+        esac
     done
+    which rg &> /dev/null || {
+        echo "rg (ripgrep) not found, please install it first" >&2
+        exit 2
+    }
+    if [ -f "$1" ]; then
+        testapi_path=$1
+    else
+        testapi_path=$1/testapi.pm
+    fi
     shift
-done
+    [ -r "$testapi_path" ] || {
+        echo "$testapi_path not found" >&2
+        exit 1
+    }
+    grep -q 'package testapi' "$testapi_path" || echo "Warning: provided file does not look like testapi.pm" >&2
+    while (($#)); do
+        get_function_list | while read -r; do
+            echo "$1 - ${REPLY} : $(rgg "${REPLY}" "$1" | tail -8 | head -n1)"
+        done
+        shift
+    done
+}
+
+caller 0 > /dev/null || main "$@"
