@@ -7,6 +7,7 @@ import importlib.util
 import json
 import pathlib
 import re
+import subprocess  # noqa: S404
 from argparse import Namespace
 from typing import Any
 from unittest.mock import MagicMock, call, patch
@@ -61,9 +62,7 @@ cmds = [
 ]
 
 
-def test_catch_CalledProcessError(caplog: pytest.LogCaptureFixture) -> None:
-    import subprocess  # noqa: S404
-
+def test_catch_called_process_error(caplog: pytest.LogCaptureFixture) -> None:
     args = args_factory()
     args.url = "https://openqa.opensuse.org/tests/7848818"
     openqa.fetch_url = MagicMock(side_effect=mocked_fetch_url)

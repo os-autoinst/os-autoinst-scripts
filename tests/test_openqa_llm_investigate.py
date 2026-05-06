@@ -9,7 +9,7 @@ import logging
 import pathlib
 import sys
 from typing import Any
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock, Mock
 
 import httpx
 import pytest
@@ -24,51 +24,51 @@ sys.modules[loader.name] = llm_investigate
 loader.exec_module(llm_investigate)
 
 
-class TestFetchJson:
-    def test_fetch_json_success(self) -> None:
-        mock_client = MagicMock(spec=httpx.Client)
-        mock_response = Mock()
-        mock_response.json.return_value = {"foo": "bar"}
-        mock_client.get.return_value = mock_response
+def test_fetch_json_success() -> None:
+    mock_client = MagicMock(spec=httpx.Client)
+    mock_response = Mock()
+    mock_response.json.return_value = {"foo": "bar"}
+    mock_client.get.return_value = mock_response
 
-        res = llm_investigate.fetch_json(mock_client, "http://example.com")
-        assert res == {"foo": "bar"}
-        mock_client.get.assert_called_once_with("http://example.com")
-        mock_response.raise_for_status.assert_called_once()
-
-    def test_fetch_json_failure(self) -> None:
-        mock_client = MagicMock(spec=httpx.Client)
-        mock_response = Mock()
-        mock_response.raise_for_status.side_effect = httpx.HTTPStatusError("error", request=Mock(), response=Mock())
-        mock_client.get.return_value = mock_response
-
-        res = llm_investigate.fetch_json(mock_client, "http://example.com")
-        assert res == {}
+    res = llm_investigate.fetch_json(mock_client, "http://example.com")
+    assert res == {"foo": "bar"}
+    mock_client.get.assert_called_once_with("http://example.com")
+    mock_response.raise_for_status.assert_called_once()
 
 
-class TestFetchText:
-    def test_fetch_text_success(self) -> None:
-        mock_client = MagicMock(spec=httpx.Client)
-        mock_response = Mock()
-        # Create 300 lines of text
-        mock_response.text = "\n".join(f"line {i}" for i in range(300))
-        mock_client.get.return_value = mock_response
+def test_fetch_json_failure() -> None:
+    mock_client = MagicMock(spec=httpx.Client)
+    mock_response = Mock()
+    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError("error", request=Mock(), response=Mock())
+    mock_client.get.return_value = mock_response
 
-        res = llm_investigate.fetch_text(mock_client, "http://example.com", max_lines=200)
-        lines = res.splitlines()
-        assert len(lines) == 200
-        assert lines[-1] == "line 299"
-
-    def test_fetch_text_failure(self) -> None:
-        mock_client = MagicMock(spec=httpx.Client)
-        mock_client.get.side_effect = httpx.RequestError("error")
-
-        res = llm_investigate.fetch_text(mock_client, "http://example.com")
-        assert res == ""
+    res = llm_investigate.fetch_json(mock_client, "http://example.com")
+    assert res == {}
 
 
-@patch("llm_investigate.subprocess.run")
-def test_post_comment(mock_run: MagicMock) -> None:
+def test_fetch_text_success() -> None:
+    mock_client = MagicMock(spec=httpx.Client)
+    mock_response = Mock()
+    # Create 300 lines of text
+    mock_response.text = "\n".join(f"line {i}" for i in range(300))
+    mock_client.get.return_value = mock_response
+
+    res = llm_investigate.fetch_text(mock_client, "http://example.com", max_lines=200)
+    lines = res.splitlines()
+    assert len(lines) == 200
+    assert lines[-1] == "line 299"
+
+
+def test_fetch_text_failure() -> None:
+    mock_client = MagicMock(spec=httpx.Client)
+    mock_client.get.side_effect = httpx.RequestError("error")
+
+    res = llm_investigate.fetch_text(mock_client, "http://example.com")
+    assert not res
+
+
+def test_post_comment(mocker: pytest.MockerFixture) -> None:
+    mock_run = mocker.patch("llm_investigate.subprocess.run")
     llm_investigate.post_comment("http://base", "123", "test comment")
     mock_run.assert_called_once()
     args = mock_run.call_args[0][0]
@@ -77,10 +77,10 @@ def test_post_comment(mock_run: MagicMock) -> None:
     assert "text=test comment" in args
 
 
-@patch("llm_investigate.httpx.Client")
-@patch("llm_investigate.post_comment")
-@patch("builtins.print")
-def test_investigate_cmd(mock_print: MagicMock, mock_post: MagicMock, mock_client_class: MagicMock) -> None:
+def test_investigate_cmd(mocker: pytest.MockerFixture) -> None:
+    mock_client_class = mocker.patch("llm_investigate.httpx.Client")
+    mock_post = mocker.patch("llm_investigate.post_comment")
+    mock_print = mocker.patch("builtins.print")
     mock_client = MagicMock()
     mock_client_class.return_value.__enter__.return_value = mock_client
 
@@ -118,9 +118,9 @@ def test_investigate_cmd(mock_print: MagicMock, mock_post: MagicMock, mock_clien
     assert "INVESTIGATE: YES" in mock_post.call_args[0][2]
 
 
-@patch("llm_investigate.httpx.Client")
-@patch("builtins.print")
-def test_investigate_cmd_passed_job(mock_print: MagicMock, mock_client_class: MagicMock) -> None:
+def test_investigate_cmd_passed_job(mocker: pytest.MockerFixture) -> None:
+    mock_client_class = mocker.patch("llm_investigate.httpx.Client")
+    mock_print = mocker.patch("builtins.print")
     mock_client = MagicMock()
     mock_client_class.return_value.__enter__.return_value = mock_client
 
@@ -140,10 +140,10 @@ def test_investigate_cmd_passed_job(mock_print: MagicMock, mock_client_class: Ma
     mock_print.assert_not_called()
 
 
-@patch("llm_investigate.httpx.Client")
-@patch("llm_investigate.post_comment")
-@patch("builtins.print")
-def test_investigate_cmd_dry_run(mock_print: MagicMock, mock_post: MagicMock, mock_client_class: MagicMock) -> None:
+def test_investigate_cmd_dry_run(mocker: pytest.MockerFixture) -> None:
+    mock_client_class = mocker.patch("llm_investigate.httpx.Client")
+    mock_post = mocker.patch("llm_investigate.post_comment")
+    mock_print = mocker.patch("builtins.print")
     mock_client = MagicMock()
     mock_client_class.return_value.__enter__.return_value = mock_client
 
@@ -181,9 +181,9 @@ def test_investigate_cmd_dry_run(mock_print: MagicMock, mock_post: MagicMock, mo
     mock_print.assert_any_call("**LLM Investigation summary:**\n\nINVESTIGATE: NO. Already known.")
 
 
-@patch("llm_investigate.httpx.Client")
-@patch("llm_investigate.log")
-def test_investigate_cmd_connection_error(mock_log: MagicMock, mock_client_class: MagicMock) -> None:
+def test_investigate_cmd_connection_error(mocker: pytest.MockerFixture) -> None:
+    mock_client_class = mocker.patch("llm_investigate.httpx.Client")
+    mock_log = mocker.patch("llm_investigate.log")
     mock_client = MagicMock()
     mock_client_class.return_value.__enter__.return_value = mock_client
 
@@ -207,36 +207,36 @@ def test_investigate_cmd_connection_error(mock_log: MagicMock, mock_client_class
     assert "Could not connect to LLM server" in mock_log.error.call_args[0][0]
 
 
-@patch("llm_investigate.logging.basicConfig")
-def test_investigate_logging_levels(mock_basic_config: MagicMock) -> None:
-    # We need to mock httpx.Client to avoid real network calls during investigate() call
-    with patch("llm_investigate.httpx.Client"), patch("llm_investigate.fetch_json") as mock_fetch:
-        mock_fetch.return_value = {"job": {"id": 123, "result": "passed"}}
+def test_investigate_logging_levels(mocker: pytest.MockerFixture) -> None:
+    mock_basic_config = mocker.patch("llm_investigate.logging.basicConfig")
+    mocker.patch("llm_investigate.httpx.Client")
+    mock_fetch = mocker.patch("llm_investigate.fetch_json")
+    mock_fetch.return_value = {"job": {"id": 123, "result": "passed"}}
 
-        # Test default: warning
-        with pytest.raises(SystemExit):
-            llm_investigate.investigate("123", verbose=0, quiet=False)
-        mock_basic_config.assert_called_with(
-            level=logging.WARNING, format="%(levelname)s: %(message)s", stream=sys.stderr, force=True
-        )
+    # Test default: warning
+    with pytest.raises(SystemExit):
+        llm_investigate.investigate("123", verbose=0, quiet=False)
+    mock_basic_config.assert_called_with(
+        level=logging.WARNING, format="%(levelname)s: %(message)s", stream=sys.stderr, force=True
+    )
 
-        # Test verbose 1: info
-        with pytest.raises(SystemExit):
-            llm_investigate.investigate("123", verbose=1, quiet=False)
-        mock_basic_config.assert_called_with(
-            level=logging.INFO, format="%(levelname)s: %(message)s", stream=sys.stderr, force=True
-        )
+    # Test verbose 1: info
+    with pytest.raises(SystemExit):
+        llm_investigate.investigate("123", verbose=1, quiet=False)
+    mock_basic_config.assert_called_with(
+        level=logging.INFO, format="%(levelname)s: %(message)s", stream=sys.stderr, force=True
+    )
 
-        # Test verbose 2: debug
-        with pytest.raises(SystemExit):
-            llm_investigate.investigate("123", verbose=2, quiet=False)
-        mock_basic_config.assert_called_with(
-            level=logging.DEBUG, format="%(levelname)s: %(message)s", stream=sys.stderr, force=True
-        )
+    # Test verbose 2: debug
+    with pytest.raises(SystemExit):
+        llm_investigate.investigate("123", verbose=2, quiet=False)
+    mock_basic_config.assert_called_with(
+        level=logging.DEBUG, format="%(levelname)s: %(message)s", stream=sys.stderr, force=True
+    )
 
-        # Test quiet: error
-        with pytest.raises(SystemExit):
-            llm_investigate.investigate("123", verbose=0, quiet=True)
-        mock_basic_config.assert_called_with(
-            level=logging.ERROR, format="%(levelname)s: %(message)s", stream=sys.stderr, force=True
-        )
+    # Test quiet: error
+    with pytest.raises(SystemExit):
+        llm_investigate.investigate("123", verbose=0, quiet=True)
+    mock_basic_config.assert_called_with(
+        level=logging.ERROR, format="%(levelname)s: %(message)s", stream=sys.stderr, force=True
+    )
