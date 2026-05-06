@@ -27,6 +27,7 @@ packages = []
 
 [project.optional-dependencies]
 dev = [
+    "ty",
     "pytest",
     "pytest-cov",
     "pytest-mock",
@@ -47,6 +48,13 @@ branch = true
 fail_under = 100
 show_missing = true
 skip_covered = true
+
+[tool.setuptools]
+include-package-data = true
+zip-safe = false
+
+[tool.setuptools.packages]
+find = {}
 
 [tool.ruff]
 line-length = 120
@@ -141,7 +149,13 @@ docstring-code-format = true
 [tool.ruff.lint.flake8-copyright]
 author = "SUSE LLC"
 notice-rgx = "Copyright"
-
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "os.system".msg = "Use `subprocess.run` or `sh` library instead."
 "subprocess.call".msg = "Use `subprocess.run` with `check=True`."
+
+[tool.pyright]
+include = ["src", "tests", "*.py"]
+
+[tool.pytest.ini_options]
+pythonpath = "src"
+
