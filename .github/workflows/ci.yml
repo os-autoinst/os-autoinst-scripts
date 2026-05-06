@@ -14,7 +14,7 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-      - name: Setup enviroment
+      - name: Setup environment
         run: uv sync --extra dev
       - run: |
           sudo apt-get install cpanminus html-xml-utils xmlstarlet
@@ -36,8 +36,9 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
+      - name: Setup environment
+        run: uv sync --extra dev
       - name: Static checks
         run: |
           git config --global --add safe.directory .
-          uv sync --extra dev
           uv run make checkstyle
