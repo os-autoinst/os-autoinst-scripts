@@ -2,9 +2,6 @@
 
 set -eo pipefail
 
-# "hook script" intended to be called by openQA instances taking a job ID as
-# parameter and forwarding a complete job URL to "openqa-label-known-issues"
-# on stdin and all left unknowns to "openqa-investigate"
 dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 PATH=$PATH:$dir
@@ -44,6 +41,18 @@ label() {
 }
 
 hook() {
+    opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
+    eval set -- "$opts"
+    while true; do
+        case "$1" in
+            -h | --help) usage 0 ;;
+            --)
+                shift
+                break
+                ;;
+            *) break ;;
+        esac
+    done
     local id="${1:?"Need 'job_id'"}"
     local url=$host_url/tests/$id
     local rc=0
@@ -68,6 +77,20 @@ hook() {
     else
         echo "$url" | investigate-and-bisect
     fi
+}
+
+usage() {
+    cat << EOF
+Usage: $0 [OPTIONS]
+
+"hook script" intended to be called by openQA instances taking a job ID as
+parameter and forwarding a complete job URL to "openqa-label-known-issues" on
+stdin and all left unknowns to "openqa-investigate"
+
+Options:
+ -h, --help         display this help
+EOF
+    exit "$1"
 }
 
 caller 0 > /dev/null || hook "$@"
