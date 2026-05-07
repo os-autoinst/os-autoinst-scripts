@@ -14,14 +14,18 @@ import operator
 import os
 import sys
 from functools import reduce
+from typing import TYPE_CHECKING
 
 import pynetbox
 from sh import ErrorReturnCode, ping
 
+if TYPE_CHECKING:
+    from pynetbox.models import dcim, ipam
+
 ping_args = {"-c1", "-W1"}
 
 
-def check_ping(destination: str | pynetbox.models.ipam.IpAddresses) -> bool:
+def check_ping(destination: str | ipam.IpAddresses) -> bool:
     """Signal (True) that a machine is reachable when it should not be."""
     destination = str(destination).split("/")[0]
     try:
@@ -32,7 +36,7 @@ def check_ping(destination: str | pynetbox.models.ipam.IpAddresses) -> bool:
     return True
 
 
-def check_machine(machine: pynetbox.models.dcim.Devices) -> bool:
+def check_machine(machine: dcim.Devices) -> bool:
     """Detect reachability across all known addresses of a machine to avoid false negatives."""
     attributes_to_check = {"oob_ip", "primary_ip", "primary_ip4", "primary_ip6"}
     machine_attributes = [getattr(machine, attr) for attr in attributes_to_check if getattr(machine, attr) is not None]
@@ -55,11 +59,11 @@ def main(args: argparse.Namespace) -> int:
     return int(any(check_machine(machine) for machine in our_machines))
 
 
-def loglevel_to_int(loglevel: str) -> int:
+def loglevel_to_int(loglevel: str) -> float:
     """Allow LOGLEVEL env var to set the default verbosity as if the user had passed that many -v flags."""
     loglevel_step = logging.CRITICAL - logging.ERROR
     max_loglevel = logging.CRITICAL / loglevel_step
-    return max_loglevel - int(getattr(logging, loglevel.upper(), None) / loglevel_step)
+    return max_loglevel - int(getattr(logging, loglevel.upper(), max(verbose_to_log)) / loglevel_step)
 
 
 log = logging.getLogger(sys.argv[0] if __name__ == "__main__" else __name__)
