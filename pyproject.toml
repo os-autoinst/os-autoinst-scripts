@@ -34,6 +34,7 @@ dev = [
     "radon",
     "ruff",
     "vulture",
+    "ty>=0.0.21",
 ]
 
 [build-system]
@@ -145,3 +146,6 @@ notice-rgx = "Copyright"
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "os.system".msg = "Use `subprocess.run` or `sh` library instead."
 "subprocess.call".msg = "Use `subprocess.run` with `check=True`."
+
+[tool.ty.terminal]
+error-on-warning = true
