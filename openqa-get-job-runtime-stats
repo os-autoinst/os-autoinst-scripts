@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # Copyright SUSE LLC
-#
-# Summary: Display the test runtime statistics for a range of openQA test runs
-# Job ranges can be defined via 7..9 (i,e, [7,8, 9]) or 5+2 (i.e. [5,6,7])
-#
-# Usage example: ./openqa-get-job-runtime-stats https://openqa.opensuse.org/tests/100000+10
-#
+"""Display the test runtime statistics for a range of openQA test runs.
+
+Job ranges can be defined via 7..9 (i,e, [7,8, 9]) or 5+2 (i.e. [5,6,7])
+
+Usage example: ./openqa-get-job-runtime-stats https://openqa.opensuse.org/tests/100000+10
+"""
 
 from __future__ import annotations
 
@@ -19,34 +19,43 @@ import requests
 
 
 def parse_t(dt_str: str | None) -> datetime.datetime | None:
+    """Parse openQA timestamp string."""
     if dt_str is None:
         return None
     dt_str = dt_str.strip()
-    if dt_str == "":
+    if not dt_str:
         return None
     return datetime.datetime.strptime(dt_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=datetime.timezone.utc)
 
 
 class Job:
+    """openQA job representation."""
+
     # Init job by the json object fetched from OpenQA
     def __init__(self, obj: dict) -> None:
+        """Initialize job from dictionary."""
         # Apply json values to this class. Yes, this is hacky.
         for k, v in obj.items():
             self.__dict__[k] = v
 
     def done(self) -> bool:
+        """Return whether the job is finished."""
         return getattr(self, "state", "") == "done"
 
     def passed(self) -> bool:
+        """Return whether the job passed."""
         return getattr(self, "state", "") == "done" and getattr(self, "result", "") == "passed"
 
     def softfailed(self) -> bool:
+        """Return whether the job softfailed."""
         return getattr(self, "state", "") == "done" and getattr(self, "result", "") == "softfailed"
 
-    def isNotOK(self) -> bool:
+    def is_not_ok(self) -> bool:
+        """Return whether the job failed."""
         return self.done() and not (self.passed() or self.softfailed())
 
     def runtime(self) -> float:
+        """Return the job runtime in seconds."""
         # Note: Timezone parsing is not needed here
         t_finished = parse_t(getattr(self, "t_finished", None))
         if t_finished is None:
@@ -58,10 +67,12 @@ class Job:
         return diff.total_seconds()
 
     def __getitem__(self, index: str) -> str:
+        """Allow indexing into the job object."""
         return getattr(self, "_obj", {})[index]
 
 
 def parse_job_number(jobstr: str) -> range | list[int]:
+    """Parse job number or range from string."""
     # Range? (Start..End)
     if ".." in jobstr:
         i = jobstr.find("..")
@@ -92,6 +103,7 @@ def parse_job_number(jobstr: str) -> range | list[int]:
 
 
 def get_job_api_urls(arg: str) -> list[str]:
+    """Return a list of API URLs for the given job identifier."""
     url = ""
     # Check if a URL
     if "://" in arg:
@@ -167,7 +179,7 @@ if __name__ == "__main__":
         # Print some stats about the sample size
         jobs_done = [j for j in tests if j.done()]
         jobs_ok = [j for j in tests if j.passed() or j.softfailed()]
-        jobs_failed = [j for j in tests if j.isNotOK()]
+        jobs_failed = [j for j in tests if j.is_not_ok()]
         n_done = len(jobs_done)
         if n_done > 0:
             n_ok, n_fail = len(jobs_ok), len(jobs_failed)
