@@ -119,7 +119,7 @@ def _perform_investigation(
         sys.exit(1)
     job = job_data["job"]
 
-    if job.get("result") in {"passed", "softfailed"}:
+    if not force and job.get("result") in {"passed", "softfailed"}:
         log.info("Job %s %s, skipping investigation.", job_id, job.get("result"))
         sys.exit(0)
 
@@ -255,7 +255,12 @@ def investigate(
         bool, typer.Option("--dry", help="Dry run mode: output summary instead of posting a comment")
     ] = False,
     force: Annotated[  # noqa: FBT002
-        bool, typer.Option("--force", "-f", help="Force another analysis even if an LLM comment already exists")
+        bool,
+        typer.Option(
+            "--force",
+            "-f",
+            help="Force another analysis even if an LLM comment already exists or if the job passed/softfailed",
+        ),
     ] = False,
 ) -> None:
     setup_logging(verbose, quiet)
