@@ -259,7 +259,7 @@ def investigate(
         bool, typer.Option("--force", "-f", help="Force another analysis even if an LLM comment already exists")
     ] = False,
     timeout: Annotated[int, typer.Option("--timeout", help="Timeout for LLM API requests in seconds")] = int(
-        os.environ.get("LLM_TIMEOUT", "300")
+        os.environ.get("LLM_TIMEOUT", "600")
     ),
 ) -> None:
     setup_logging(verbose, quiet)
