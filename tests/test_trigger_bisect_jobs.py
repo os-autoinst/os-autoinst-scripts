@@ -9,7 +9,7 @@ import pathlib
 import re
 import subprocess  # noqa: S404
 from argparse import Namespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, call, patch
 from urllib.parse import urlparse
 
@@ -20,7 +20,8 @@ rootpath = pathlib.Path(__file__).parent.parent.resolve()
 
 loader = importlib.machinery.SourceFileLoader("openqa", f"{rootpath}/openqa-trigger-bisect-jobs")
 spec = importlib.util.spec_from_loader(loader.name, loader)
-openqa = importlib.util.module_from_spec(spec)
+assert spec is not None
+openqa = cast("Any", importlib.util.module_from_spec(spec))
 loader.exec_module(openqa)
 
 Incident = openqa.Incident
@@ -36,11 +37,11 @@ def args_factory() -> Namespace:
 
 def mocked_fetch_url(url: str, request_type: str = "text") -> Any:
     content = ""
-    url = urlparse(url)
+    parsed = urlparse(url)
 
-    if url.scheme in {"http", "https"}:
-        path = url.geturl()
-        path = path[len(url.scheme) + 3 :]
+    if parsed.scheme in {"http", "https"}:
+        path = parsed.geturl()
+        path = path[len(parsed.scheme) + 3 :]
         path = "tests/data/python-requests/" + path
         content = pathlib.Path(path).read_text(encoding="utf-8")
     if request_type == "json":
