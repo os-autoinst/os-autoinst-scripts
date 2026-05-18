@@ -246,7 +246,7 @@ def test_problems() -> None:
     args.url = "http://openqa.opensuse.org/tests/101"
     openqa.log.info = MagicMock()
     openqa.main(args)
-    openqa.log.info.assert_called_with("Job 101 (foo) is passed, skipping bisection")
+    openqa.log.info.assert_called_with("Job %d (%s) is passed, skipping bisection", 101, "foo")
     assert (
         call(
             "http://openqa.opensuse.org/tests/101/investigation_ajax",
