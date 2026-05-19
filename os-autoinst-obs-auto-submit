@@ -28,7 +28,7 @@ git_obs=${git_obs:-"$prefix retry -e -- git-obs"}
 git_obs_no_retry=${git_obs_no_retry:-"$prefix git-obs"}
 
 # Use fixed Backport version for now
-submit_target_extra=${submit_target_extra:-"openSUSE:Backports:SLE-15-SP6:Update,openSUSE:Leap:16.0"}
+submit_target_extra=${submit_target_extra:-"openSUSE:Backports:SLE-15-SP7:Update,openSUSE:Leap:16.0"}
 IFS=',' read -ra targets <<< "$submit_target,$submit_target_extra"
 failed_packages=()
 
