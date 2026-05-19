@@ -230,10 +230,10 @@ Provide exactly 3 sentences answering:
         )
         sys.exit(1)
     except httpx.HTTPStatusError as e:
-        log.error("LLM API returned an error status: %s. Detail: %s", e.response.status_code, e.response.text)
+        log.error("LLM API %s (%s) status %d: %s", llm_url, llm_model, e.response.status_code, e.response.text)
         sys.exit(1)
     except Exception as e:
-        log.error("LLM API request failed: %s", e)
+        log.error("LLM API %s (%s) failed: %s", llm_url, llm_model, e)
         sys.exit(1)
 
     # Print the job URL to stdout ONLY if BISECT: YES is recommended

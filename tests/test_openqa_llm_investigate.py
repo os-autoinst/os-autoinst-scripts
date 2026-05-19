@@ -230,6 +230,27 @@ def test_investigate_cmd_connection_error(mocker: MockerFixture) -> None:
     assert "Could not connect to LLM server" in mock_log.error.call_args[0][0]
 
 
+def test_investigate_cmd_http_status_error(mocker: MockerFixture) -> None:
+    mock_log = mocker.patch("llm_investigate.log")
+    client = setup_mock_client(mocker)
+    mock_resp = Mock()
+    mock_resp.status_code = 500
+    mock_resp.text = "Internal Server Error"
+    client.post.side_effect = httpx.HTTPStatusError("error", request=Mock(), response=mock_resp)
+
+    with pytest.raises(SystemExit) as exc:
+        llm_investigate.investigate("123")
+
+    assert exc.value.code == 1
+    mock_log.error.assert_called_once()
+    error_msg = mock_log.error.call_args[0][0]
+    assert error_msg == "LLM API %s (%s) status %d: %s"
+    assert mock_log.error.call_args[0][1] == "http://localhost:8080/v1/chat/completions"
+    assert mock_log.error.call_args[0][2] == "gemma-4-26B-A4B-it"
+    assert mock_log.error.call_args[0][3] == 500
+    assert mock_log.error.call_args[0][4] == "Internal Server Error"
+
+
 def test_investigate_logging_levels(mocker: MockerFixture) -> None:
     mock_basic_config = mocker.patch("llm_investigate.logging.basicConfig")
     mocker.patch("llm_investigate.httpx.Client")
