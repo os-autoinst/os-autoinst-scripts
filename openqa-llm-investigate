@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 # Copyright SUSE LLC
-# ruff: noqa: BLE001, E501, S404, S603, T201, TRY300, TRY400
+# ruff: noqa: ANN401, BLE001, C901, D103, E501, FA102, FBT001, FURB118, PLR0913, PLR0914, PLR0915, PLR0917, PLR2004, S404, S603, T201, TRY400
 """Investigates an openQA job failure using an LLM."""
 
 import json
@@ -65,7 +65,7 @@ def post_comment(base_url: str, job_id: str, comment: str) -> None:
         log.error("Failed to post comment: %s", e.stderr)
 
 
-def setup_logging(verbose: int, quiet: bool) -> None:  # noqa: FBT001
+def setup_logging(verbose: int, quiet: bool) -> None:
     if quiet:
         level = logging.ERROR
     elif verbose >= 2:
@@ -102,6 +102,7 @@ def _perform_investigation(
     dry: bool,
     llm_url: str,
     llm_model: str,
+    timeout: int,
 ) -> None:
     # Check for existing LLM investigation comments
     comments = fetch_json(client, f"{base_url}/api/v1/jobs/{job_id}/comments", default=[])
@@ -218,7 +219,7 @@ Provide exactly 3 sentences answering:
     }
 
     try:
-        res = client.post(llm_url, json=req, timeout=300)
+        res = client.post(llm_url, json=req, timeout=timeout)
         res.raise_for_status()
         res_json = res.json()
         llm_response = res_json["choices"][0]["message"]["content"]
@@ -262,6 +263,9 @@ def investigate(
             help="Force another analysis even if an LLM comment already exists or if the job passed/softfailed",
         ),
     ] = False,
+    timeout: Annotated[int, typer.Option("--timeout", help="Timeout for LLM API requests in seconds")] = int(
+        os.environ.get("LLM_TIMEOUT", "600")
+    ),
 ) -> None:
     setup_logging(verbose, quiet)
     base_url, job_id = parse_job_url(job_url)
@@ -274,7 +278,7 @@ def investigate(
     llm_model = os.environ.get("LLM_MODEL", "gemma-4-26B-A4B-it")
 
     with httpx.Client(headers={"User-Agent": USER_AGENT}) as client:
-        _perform_investigation(client, base_url, job_id, force, dry, llm_url, llm_model)
+        _perform_investigation(client, base_url, job_id, force, dry, llm_url, llm_model, timeout)
 
 
 if __name__ == "__main__":
