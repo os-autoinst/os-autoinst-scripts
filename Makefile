@@ -58,7 +58,7 @@ test-yaml:
 	@which yamllint >/dev/null 2>&1 || echo "Command 'yamllint' not found, can not execute YAML syntax checks"
 	yamllint --strict $$(git ls-files "*.yml" "*.yaml" ":!external/")
 
-checkstyle-python: check-ruff check-conventions
+checkstyle-python: check-ruff check-conventions check-ty
 check-ruff:
 	@which ruff >/dev/null 2>&1 || echo "Command 'ruff' not found, can not execute python style checks"
 	@if [ -n "$(PY_FILES)" ]; then ruff format --check $(PY_FILES) && ruff check $(PY_FILES); fi
@@ -69,6 +69,10 @@ check-conventions:
 		echo "   Fix: Use the 'mocker' fixture (pytest-mock) or a 'with patch():' context manager."; \
 		exit 1; \
 	fi
+
+.PHONY: check-ty
+check-ty: ## Run ty type checker
+	uv run ty check
 
 check-code-health:
 	@echo "Checking code health…"

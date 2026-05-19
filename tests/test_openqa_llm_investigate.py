@@ -8,11 +8,14 @@ import importlib.util
 import logging
 import pathlib
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, Mock
 
 import httpx
 import pytest
+
+if TYPE_CHECKING:
+    from pytest_mock import MockerFixture
 
 # Load the script as module "llm_investigate" (the file is named `openqa-llm-investigate`)
 rootpath = pathlib.Path(__file__).parent.parent.resolve()
@@ -72,7 +75,7 @@ def test_fetch_text_failure() -> None:
     assert not res
 
 
-def test_post_comment(mocker: pytest.MockerFixture) -> None:
+def test_post_comment(mocker: MockerFixture) -> None:
     mock_run = mocker.patch("llm_investigate.subprocess.run")
     llm_investigate.post_comment("http://base", "123", "test comment")
     mock_run.assert_called_once()
@@ -82,7 +85,7 @@ def test_post_comment(mocker: pytest.MockerFixture) -> None:
     assert "text=test comment" in args
 
 
-def setup_mock_client(mocker: pytest.MockerFixture, overrides: dict[str, Any] | None = None) -> MagicMock:
+def setup_mock_client(mocker: MockerFixture, overrides: dict[str, Any] | None = None) -> MagicMock:
     mock_client_class = mocker.patch("llm_investigate.httpx.Client")
     mock_client = MagicMock()
     mock_client_class.return_value.__enter__.return_value = mock_client
@@ -143,7 +146,7 @@ def setup_mock_client(mocker: pytest.MockerFixture, overrides: dict[str, Any] | 
     return mock_client
 
 
-def test_investigate_cmd(mocker: pytest.MockerFixture) -> None:
+def test_investigate_cmd(mocker: MockerFixture) -> None:
     mock_post = mocker.patch("llm_investigate.post_comment")
     mock_print = mocker.patch("builtins.print")
     setup_mock_client(mocker)
@@ -153,7 +156,7 @@ def test_investigate_cmd(mocker: pytest.MockerFixture) -> None:
     assert "BISECT: YES" in mock_post.call_args[0][2]
 
 
-def test_investigate_cmd_passed_job(mocker: pytest.MockerFixture) -> None:
+def test_investigate_cmd_passed_job(mocker: MockerFixture) -> None:
     mock_print = mocker.patch("builtins.print")
     setup_mock_client(mocker, overrides={"api/v1/jobs": {"job": {"id": 123, "result": "passed"}}})
 
@@ -164,7 +167,7 @@ def test_investigate_cmd_passed_job(mocker: pytest.MockerFixture) -> None:
     mock_print.assert_not_called()
 
 
-def test_investigate_cmd_softfailed_job(mocker: pytest.MockerFixture) -> None:
+def test_investigate_cmd_softfailed_job(mocker: MockerFixture) -> None:
     mock_print = mocker.patch("builtins.print")
     setup_mock_client(mocker, overrides={"api/v1/jobs": {"job": {"id": 123, "result": "softfailed"}}})
 
@@ -175,7 +178,7 @@ def test_investigate_cmd_softfailed_job(mocker: pytest.MockerFixture) -> None:
     mock_print.assert_not_called()
 
 
-def test_investigate_cmd_already_commented(mocker: pytest.MockerFixture) -> None:
+def test_investigate_cmd_already_commented(mocker: MockerFixture) -> None:
     mock_log = mocker.patch("llm_investigate.log")
     setup_mock_client(mocker, overrides={"comments": [{"text": "**LLM Investigation summary:** already done"}]})
 
@@ -187,7 +190,7 @@ def test_investigate_cmd_already_commented(mocker: pytest.MockerFixture) -> None
     assert "already has an LLM investigation summary" in mock_log.info.call_args[0][0]
 
 
-def test_investigate_cmd_already_commented_with_force(mocker: pytest.MockerFixture) -> None:
+def test_investigate_cmd_already_commented_with_force(mocker: MockerFixture) -> None:
     mock_post = mocker.patch("llm_investigate.post_comment")
     mock_print = mocker.patch("builtins.print")
     setup_mock_client(mocker, overrides={"comments": [{"text": "**LLM Investigation summary:** already done"}]})
@@ -199,7 +202,7 @@ def test_investigate_cmd_already_commented_with_force(mocker: pytest.MockerFixtu
     assert "BISECT: YES" in mock_post.call_args[0][2]
 
 
-def test_investigate_cmd_dry_run(mocker: pytest.MockerFixture) -> None:
+def test_investigate_cmd_dry_run(mocker: MockerFixture) -> None:
     mock_post = mocker.patch("llm_investigate.post_comment")
     mock_print = mocker.patch("builtins.print")
     client = setup_mock_client(mocker)
@@ -214,7 +217,7 @@ def test_investigate_cmd_dry_run(mocker: pytest.MockerFixture) -> None:
     mock_print.assert_any_call("**LLM Investigation summary:**\n\nBISECT: NO. Already known.")
 
 
-def test_investigate_cmd_connection_error(mocker: pytest.MockerFixture) -> None:
+def test_investigate_cmd_connection_error(mocker: MockerFixture) -> None:
     mock_log = mocker.patch("llm_investigate.log")
     client = setup_mock_client(mocker)
     client.post.side_effect = httpx.ConnectError("Connection refused")
@@ -227,7 +230,7 @@ def test_investigate_cmd_connection_error(mocker: pytest.MockerFixture) -> None:
     assert "Could not connect to LLM server" in mock_log.error.call_args[0][0]
 
 
-def test_investigate_logging_levels(mocker: pytest.MockerFixture) -> None:
+def test_investigate_logging_levels(mocker: MockerFixture) -> None:
     mock_basic_config = mocker.patch("llm_investigate.logging.basicConfig")
     mocker.patch("llm_investigate.httpx.Client")
     mock_fetch = mocker.patch("llm_investigate.fetch_json")

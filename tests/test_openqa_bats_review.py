@@ -8,11 +8,14 @@ import importlib.machinery
 import importlib.util
 import pathlib
 import sys
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import Mock
 
 import pytest
 from requests.exceptions import RequestException
+
+if TYPE_CHECKING:
+    from pytest_mock import MockerFixture
 
 # Load the script as module "bats_review" (the file is named `openqa-bats-review`)
 rootpath = pathlib.Path(__file__).parent.parent.resolve()
@@ -29,7 +32,7 @@ loader.exec_module(bats_review)
 #
 
 
-def test_get_file_success(mocker: pytest.MockerFixture) -> None:
+def test_get_file_success(mocker: MockerFixture) -> None:
     mock_session = mocker.patch("bats_review.session")
     resp = Mock()
     resp.text = "hello"
@@ -46,7 +49,7 @@ def test_get_file_success(mocker: pytest.MockerFixture) -> None:
     resp.raise_for_status.assert_called_once()
 
 
-def test_get_file_request_exception(mocker: pytest.MockerFixture) -> None:
+def test_get_file_request_exception(mocker: MockerFixture) -> None:
     mock_session = mocker.patch("bats_review.session")
     mock_log = mocker.patch("bats_review.log")
     mock_session.get.side_effect = RequestException("network")
@@ -56,7 +59,7 @@ def test_get_file_request_exception(mocker: pytest.MockerFixture) -> None:
     mock_log.exception.assert_called_once()
 
 
-def test_get_job_success(mocker: pytest.MockerFixture) -> None:
+def test_get_job_success(mocker: MockerFixture) -> None:
     with contextlib.suppress(Exception):
         bats_review.get_job.cache_clear()
     mock_session = mocker.patch("bats_review.session")
@@ -74,7 +77,7 @@ def test_get_job_success(mocker: pytest.MockerFixture) -> None:
     )
 
 
-def test_get_job_request_exception(mocker: pytest.MockerFixture) -> None:
+def test_get_job_request_exception(mocker: MockerFixture) -> None:
     with contextlib.suppress(Exception):
         bats_review.get_job.cache_clear()
     mock_session = mocker.patch("bats_review.session")
@@ -86,7 +89,7 @@ def test_get_job_request_exception(mocker: pytest.MockerFixture) -> None:
     mock_log.exception.assert_called_once()
 
 
-def test_grep_failures_success(mocker: pytest.MockerFixture) -> None:
+def test_grep_failures_success(mocker: MockerFixture) -> None:
     mock_get_file = mocker.patch("bats_review.get_file")
     # one passing, one failing testcase (with classname)
     mock_get_file.return_value = """
@@ -101,7 +104,7 @@ def test_grep_failures_success(mocker: pytest.MockerFixture) -> None:
     assert result == {"suite1:failing_test"}
 
 
-def test_grep_failures_malformed(mocker: pytest.MockerFixture) -> None:
+def test_grep_failures_malformed(mocker: MockerFixture) -> None:
     mock_get_file = mocker.patch("bats_review.get_file")
     mock_log = mocker.patch("bats_review.log")
     mock_get_file.return_value = "<this is not xml"
@@ -112,7 +115,7 @@ def test_grep_failures_malformed(mocker: pytest.MockerFixture) -> None:
     mock_log.exception.assert_called_once()
 
 
-def test_process_logs_single_file(mocker: pytest.MockerFixture) -> None:
+def test_process_logs_single_file(mocker: MockerFixture) -> None:
     mock_grep = mocker.patch("bats_review.grep_failures")
     mock_grep.return_value = {"a", "b"}
     res = bats_review.process_logs(["http://example.com/a.xml"])
@@ -120,7 +123,7 @@ def test_process_logs_single_file(mocker: pytest.MockerFixture) -> None:
     mock_grep.assert_called_once_with("http://example.com/a.xml")
 
 
-def test_process_logs_multiple_files(mocker: pytest.MockerFixture) -> None:
+def test_process_logs_multiple_files(mocker: MockerFixture) -> None:
     mock_executor_class = mocker.patch("bats_review.ThreadPoolExecutor")
     # build fake executor that returns map -> iterator of sets
     fake_executor = Mock()
@@ -134,7 +137,7 @@ def test_process_logs_multiple_files(mocker: pytest.MockerFixture) -> None:
     fake_executor.map.assert_called_once()
 
 
-def test_resolve_clone_chain_single(mocker: pytest.MockerFixture) -> None:
+def test_resolve_clone_chain_single(mocker: MockerFixture) -> None:
     with contextlib.suppress(Exception):
         bats_review.get_job.cache_clear()
     mock_get_job = mocker.patch("bats_review.get_job")
@@ -144,7 +147,7 @@ def test_resolve_clone_chain_single(mocker: pytest.MockerFixture) -> None:
     mock_get_job.assert_called_once_with("http://openqa/api/v1/jobs/123/details")
 
 
-def test_resolve_clone_chain_multiple(mocker: pytest.MockerFixture) -> None:
+def test_resolve_clone_chain_multiple(mocker: MockerFixture) -> None:
     with contextlib.suppress(Exception):
         bats_review.get_job.cache_clear()
     mock_get_job = mocker.patch("bats_review.get_job")
@@ -167,7 +170,7 @@ def test_resolve_clone_chain_multiple(mocker: pytest.MockerFixture) -> None:
 # main
 
 
-def test_main_no_clones(mocker: pytest.MockerFixture) -> None:
+def test_main_no_clones(mocker: MockerFixture) -> None:
     with contextlib.suppress(Exception):
         bats_review.get_job.cache_clear()
     mock_resolve = mocker.patch("bats_review.resolve_clone_chain")
@@ -179,7 +182,7 @@ def test_main_no_clones(mocker: pytest.MockerFixture) -> None:
     mock_log.info.assert_called_with("No clones. Exiting")
 
 
-def test_main_no_common_failures(mocker: pytest.MockerFixture) -> None:
+def test_main_no_common_failures(mocker: MockerFixture) -> None:
     """Two jobs in chain; each produces different failures -> no common failures.
 
     main should log Tagging as PASSED.
@@ -208,7 +211,7 @@ def test_main_no_common_failures(mocker: pytest.MockerFixture) -> None:
     mock_log.info.assert_called_with("No common failures across clone chain. Tagging as PASSED.")
 
 
-def test_main_insufficient_logs(mocker: pytest.MockerFixture) -> None:
+def test_main_insufficient_logs(mocker: MockerFixture) -> None:
     """If jobs do not have the expected number of logs (e.g. podman expects 4 but provides 2).
 
     main should log the 'only X logs' messages for each job and eventually exit(0).
@@ -235,13 +238,13 @@ def test_main_insufficient_logs(mocker: pytest.MockerFixture) -> None:
     mock_log.info.assert_any_call("No logs found in chain. Exiting")
 
 
-def test_parse_args_success(mocker: pytest.MockerFixture) -> None:
+def test_parse_args_success(mocker: MockerFixture) -> None:
     mocker.patch("sys.argv", ["script.py", "http://example.com/tests/123"])
     args = bats_review.parse_args()
     assert args.url == "http://example.com/tests/123"
 
 
-def test_parse_args_missing_url(mocker: pytest.MockerFixture) -> None:
+def test_parse_args_missing_url(mocker: MockerFixture) -> None:
     mocker.patch("sys.argv", ["script.py"])
     with pytest.raises(SystemExit):
         bats_review.parse_args()
@@ -250,7 +253,7 @@ def test_parse_args_missing_url(mocker: pytest.MockerFixture) -> None:
 # Integration test
 
 
-def test_full_workflow_no_common_failures(mocker: pytest.MockerFixture) -> None:
+def test_full_workflow_no_common_failures(mocker: MockerFixture) -> None:
     """Patch session.get to simulate two jobs each with a different failing testcase.
 
     Asserts that the script decides to tag as PASSED (dry_run) when there are no common failures.
