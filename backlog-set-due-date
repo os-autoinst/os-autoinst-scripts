@@ -2,9 +2,11 @@
 
 dry_run="${dry_run:-"0"}"
 query_id="${query_id:-230}"
-ticket_limit="${ticket_limit:-200}"
+query_id_clear="${query_id_clear:-541}"
+ticket_limit="${ticket_limit:-100}"
 host="${host:-"https://progress.opensuse.org"}"
 status="${status:-"In Progress"}"
+status_clear="${status_clear:-Resolved}"
 duration="${duration:-"14 days"}"
 priority="${priority:-"Low"}"
 
@@ -15,6 +17,9 @@ Usage: $0 [OPTIONS]
 This script sets the due date on tickets in Redmine based on
 specified conditions.
 
+By default, it sets due dates on "In Progress" tickets. With --clear
+it removes due dates from "Resolved" tickets instead.
+
 If you want to run this for testing there are two options:
 1. Run the script without updating the tickets
 dry_run=1 ./backlog-set-due-date
@@ -24,16 +29,48 @@ dry_run=1 ./backlog-set-due-date <issues-json-file>
 
 Options:
  -h, --help         display this help
+ -c, --clear        remove due dates from "Resolved" tickets
+
+Environment variables:
+ query_id           query used to find tickets to update (default: 230)
+ query_id_clear     query used to find tickets to clear (default: 541 query "QE tools team - closed within last 60 days")
 EOF
     exit "$1"
 }
 
+update-due-date() {
+    local due_date_json=$1 notes=$2 id=$3 payload
+    payload=$(jq -cn --argjson due_date "$due_date_json" --arg notes "$notes" \
+        '{issue: {due_date: $due_date, notes: $notes}}')
+    $prefix curl -f -v -H "X-Redmine-API-Key: $redmine_api_key" -H 'Content-Type: application/json' -X PUT \
+        -d "$payload" "$host/issues/$id.json"
+}
+
+fetch-issues() {
+    local offset=0 page count
+    while :; do
+        page=$(curl -sS -f -H "X-Redmine-API-Key: $redmine_api_key" \
+            "$host/issues.json?query_id=$fetch_query_id&limit=$ticket_limit&offset=$offset")
+        jq -r "$jquery" <<< "$page"
+        count=$(jq '.issues | length' <<< "$page")
+        if [ "$count" -lt "$ticket_limit" ]; then
+            break
+        fi
+        offset=$((offset + count))
+    done
+}
+
 main() {
-    opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
+    local clear=0
+    opts=$(getopt -o hc -l help,clear -n "$0" -- "$@") || usage 1
     eval set -- "$opts"
     while true; do
         case "$1" in
             -h | --help) usage 0 ;;
+            -c | --clear)
+                clear=1
+                shift
+                ;;
             --)
                 shift
                 break
@@ -42,24 +79,35 @@ main() {
         esac
     done
 
+    if [ "$clear" = "1" ]; then
+        fetch_query_id="$query_id_clear"
+        jquery=".issues | .[] | select(.due_date!=null and .status.name==\"$status_clear\")"
+        due_date_json=null
+        message="Removing due date because ticket is $status_clear"
+        action="Clearing due date for $status_clear ticket"
+    else
+        fetch_query_id="$query_id"
+        jquery=".issues | .[] | select(.priority.name!=\"$priority\" and .due_date==null and .assigned_to!=null and .status.name==\"$status\")"
+        due_date=$(date -d"+$duration" +%Y-%m-%d)
+        due_date_json="\"$due_date\""
+        message="Setting due date based on mean cycle time of SUSE QE Tools"
+        action="Setting due date to $due_date for ticket"
+    fi
+
     issues=$(mktemp -t backlog-set-due-date-XXXX)
-    jquery=".issues | .[] | select(.priority.name!=\"$priority\" and .due_date==null and .assigned_to!=null and .status.name==\"$status\")"
 
     if [ $# -eq 1 ] && [ -f "$1" ] && [ "$dry_run" = "1" ]; then
         jq -r "$jquery" "$1" > "$issues"
     else
         redmine_api_key="${redmine_api_key:?"Need redmine API key"}"
-        curl -sS -H "X-Redmine-API-Key: $redmine_api_key" "$host/issues.json?query_id=$query_id&limit=$ticket_limit" | jq -r "$jquery" > "$issues"
+        fetch-issues > "$issues"
     fi
 
     [ "$dry_run" = "1" ] && prefix="echo"
 
     for id in $(jq .id "$issues"); do
-        due_date=$(date -d"+$duration" +%Y-%m-%d)
-        echo "Updating ticket $id, new due date setup to $due_date"
-        $prefix curl -v -H "X-Redmine-API-Key: $redmine_api_key" -H 'Content-Type: application/json' -X PUT \
-            -d "{\"issue\": {\"due_date\": \"$due_date\", \"notes\": \"Setting due date based on mean cycle time of SUSE QE Tools\"}}" \
-            "$host/issues/$id.json"
+        echo "$action $id"
+        update-due-date "$due_date_json" "$message" "$id"
     done
 }
 
