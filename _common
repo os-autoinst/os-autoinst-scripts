@@ -5,7 +5,7 @@
 
 errorlog=""
 prefix="${prefix:-""}"
-osc="${osc:-"$prefix retry -e -- osc"}"
+osc=${osc:-"$prefix retry -r 11 -e -- osc"}
 submit_target=${submit_target:-openSUSE:Factory}
 
 warn() { printf '%s\n' "$@" >&2; }
