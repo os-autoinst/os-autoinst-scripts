@@ -1,0 +1,52 @@
+{
+  "issues": [
+    {
+      "id": 101,
+      "subject": "In Progress without due date",
+      "status": {
+        "name": "In Progress"
+      },
+      "priority": {
+        "name": "Normal"
+      },
+      "assigned_to": {
+        "id": 1,
+        "name": "SUSE QE Tools"
+      },
+      "due_date": null
+    },
+    {
+      "id": 102,
+      "subject": "Resolved with due date",
+      "status": {
+        "name": "Resolved"
+      },
+      "priority": {
+        "name": "Normal"
+      },
+      "assigned_to": {
+        "id": 1,
+        "name": "SUSE QE Tools"
+      },
+      "due_date": "2026-01-15"
+    },
+    {
+      "id": 103,
+      "subject": "Resolved without due date",
+      "status": {
+        "name": "Resolved"
+      },
+      "priority": {
+        "name": "Normal"
+      },
+      "assigned_to": {
+        "id": 1,
+        "name": "SUSE QE Tools"
+      },
+      "due_date": null
+    }
+  ],
+  "total_count": 3,
+  "offset": 0,
+  "limit": 100
+}
