@@ -19,7 +19,11 @@ BPAN := .bpan
 #------------------------------------------------------------------------------
 # User targets
 #------------------------------------------------------------------------------
-default:
+.PHONY: help
+help: ## Show this help
+	@grep -h -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
+
+default: help
 
 .PHONY: test
 ifeq ($(CHECKSTYLE),0)
@@ -27,43 +31,43 @@ checkstyle_tests =
 else
 checkstyle_tests = checkstyle
 endif
-test: $(checkstyle_tests) test-unit
+test: $(checkstyle_tests) test-unit ## Run style checks and unit tests
 
-test-unit: test-bash test-python
+test-unit: test-bash test-python ## Run all unit tests (bash and python)
 
-test-bash: $(BPAN)
+test-bash: $(BPAN) ## Run bash tests
 	"${PROVE}" -r $(if $v,-v )$(test)
 
-test-python:
+test-python: ## Run python tests
 	py.test tests
 
-test-online:
+test-online: ## Run tests that require online connection
 	dry_run=1 bash -x ./openqa-label-known-issues-multi < ./tests/incompletes
 	dry_run=1 ./trigger-openqa_in_openqa
 	# Invalid JSON causes the job to abort with an error
 	-tw_openqa_host=example.com dry_run=1 ./trigger-openqa_in_openqa
 
-checkstyle: test-shellcheck test-yaml checkstyle-python check-code-health test-gitlint
+checkstyle: test-shellcheck test-yaml checkstyle-python check-code-health test-gitlint ## Run all style checks
 
-shfmt:
+shfmt: ## Format shell scripts
 	shfmt -w ${SH_FILES}
 
-test-shellcheck:
+test-shellcheck: ## Run shell script checks
 	@which shfmt >/dev/null 2>&1 || echo "Command 'shfmt' not found, can not execute shell script formating checks"
 	shfmt -d ${SH_FILES}
 	@which shellcheck >/dev/null 2>&1 || echo "Command 'shellcheck' not found, can not execute shell script checks"
 	if [ -n "${SH_SHELLCHECK_FILES}" ]; then shellcheck -x ${SH_SHELLCHECK_FILES}; fi
 
-test-yaml:
+test-yaml: ## Run YAML syntax checks
 	@which yamllint >/dev/null 2>&1 || echo "Command 'yamllint' not found, can not execute YAML syntax checks"
 	yamllint --strict $$(git ls-files "*.yml" "*.yaml" ":!external/")
 
-checkstyle-python: check-ruff check-conventions check-ty
-check-ruff:
+checkstyle-python: check-ruff check-conventions check-ty ## Run python style checks
+check-ruff: ## Run python style checks with ruff
 	@which ruff >/dev/null 2>&1 || echo "Command 'ruff' not found, can not execute python style checks"
 	@if [ -n "$(PY_FILES)" ]; then ruff format --check $(PY_FILES) && ruff check $(PY_FILES); fi
 
-check-conventions:
+check-conventions: ## Check project conventions
 	@if git grep -nE '^\s*@(unittest\.mock\.|mock\.)?patch' tests/; then \
 		echo "Error: @patch decorator detected. Avoid to prevent argument ordering bugs."; \
 		echo "   Fix: Use the 'mocker' fixture (pytest-mock) or a 'with patch():' context manager."; \
@@ -74,7 +78,7 @@ check-conventions:
 check-ty: ## Run ty type checker
 	ty check
 
-check-code-health:
+check-code-health: ## Run code health checks (vulture)
 	@echo "Checking code health…"
 	@vulture $$(git ls-files "**.py") --min-confidence 80
 
@@ -90,10 +94,10 @@ tidy: ## Format code and fix linting issues
 	ruff format $(PY_FILES)
 	ruff check --fix $(PY_FILES)
 
-update-deps:
+update-deps: ## Update dependencies package spec and cpanfile
 	tools/update-deps --cpanfile cpanfile --specfile dist/rpm/os-autoinst-scripts-deps.spec
 
-clean:
+clean: ## Clean up generated files
 	$(RM) job_post_response
 	$(RM) -r $(BPAN)
 	$(RM) -r .pytest_cache/
