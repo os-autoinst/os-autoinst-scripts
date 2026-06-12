@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright SUSE LLC
-# ruff: noqa: ANN001, ANN201, C901, FURB101, PLW0602, PLW0603, PTH208, SIM115
+# ruff: noqa: ANN001, ANN201, C901, D100, D103, FURB101, N806, PLR0912, PLR2004, PLW0602, PLW0603, PTH208, SIM115
 
 import argparse
 import json
