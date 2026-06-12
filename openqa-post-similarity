@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright SUSE LLC
-# ruff: noqa: ANN001, ANN201, C901, D100, D103, FURB101, N806, PLW0602, PLW0603, PTH208, SIM115
+# ruff: noqa: ANN001, ANN201, C901, D100, D103, FURB101, N806, PTH208, SIM115
 
 from __future__ import annotations
 
@@ -43,7 +43,6 @@ def init_logging():
 
 
 def read_errors(path) -> None:
-    global id_msg
     with pathlib.Path(path).open(encoding="utf-8") as f:
         text = f.read()
         anchor = 0
@@ -56,7 +55,6 @@ def read_errors(path) -> None:
 
 
 def read_id_msg(logger, testdir) -> None:
-    global id_msg
     if not pathlib.Path("id_msg.json").exists():
         logger.info("id_msg.json does not exist.")
         all_dirs = os.listdir(testdir)
@@ -72,7 +70,8 @@ def read_id_msg(logger, testdir) -> None:
     else:
         logger.info("id_msg.json exists.")
         with pathlib.Path("id_msg.json").open(encoding="utf-8") as f:
-            id_msg = json.load(f)
+            id_msg.clear()
+            id_msg.update(json.load(f))
         all_dirs = os.listdir(testdir)
         checked_dirs = list(id_msg.keys())
         unchecked_dirs = [i for i in all_dirs if i not in checked_dirs]
@@ -86,7 +85,6 @@ def read_id_msg(logger, testdir) -> None:
 # Compute the Levenshtein result and save it.
 # Saving the result in a file may be unnecessary.
 def cal_distance(logger, output, number) -> None:
-    global result
     if output:
         f = pathlib.Path("distance_result.txt").open("w", encoding="utf-8")
     for index, (key1, value1) in enumerate(tqdm(id_msg.items(), desc="Calculating message distance", unit="error")):
