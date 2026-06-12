@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # Copyright SUSE LLC
-# ruff: noqa: ANN001, ANN201, C901, D100, D103, FURB101, N806, PLR0912, PLR2004, PLW0602, PLW0603, PTH208, SIM115
+# ruff: noqa: ANN001, ANN201, C901, D100, D103, FURB101, N806, PLW0602, PLW0603, PTH208, SIM115
+
+from __future__ import annotations
 
 import argparse
 import json
@@ -25,6 +27,7 @@ results as openQA comments.
 
 id_msg = {}
 result = {}
+EXPECTED_DIMENSIONS = 2
 
 
 # I used a JSON file to store some intermediate computation results to reduce time cost.
@@ -133,15 +136,22 @@ def dict_slice(adict, s, e):
     return d_slice
 
 
-def draw(logger, points, geometry, save_path) -> None:
+def parse_geometry(geometry: str, logger) -> list[str] | None:
     resolution = geometry.split("x")
-    if len(resolution) != 2:
+    if len(resolution) != EXPECTED_DIMENSIONS:
         logger.warning("Wrong geometry format")
-        return
+        return None
     for item in resolution:
         if not isdigit(item):
             logger.warning("Wrong geometry format")
-            return
+            return None
+    return resolution
+
+
+def draw(logger, points, geometry, save_path) -> None:
+    resolution = parse_geometry(geometry, logger)
+    if not resolution:
+        return
 
     msg_number = {}
     for msg in id_msg.values():
