@@ -1,97 +1,275 @@
-#!/bin/bash -ex
+#!/usr/bin/env python3
+# Copyright SUSE LLC
+# ruff: noqa: D103, PLR0913, PLR0917, S404, S603, T201, TRY400
+"""Monitor an openQA job by polling the status of a job over the API."""
 
-set -euo pipefail
+import json
+import logging
+import os
+import pathlib
+import re
+import shlex
+import subprocess
+import sys
+import time
+from typing import Annotated, Any
 
-# configuration variables with defaults.
-color=${color:-auto}
-sleep_time="${sleep_time:-"10"}"
-openqa_cli="${openqa_cli:-"openqa-cli"}"
-host="${host:-"https://openqa.opensuse.org"}"
-openqa_groupid="${openqa_groupid:-"24"}"
-obs_component="${obs_component:-"package"}"
-obs_package_name="${1:-""}"
-staging_project=${staging_project:-devel:openQA:testing}
-comment_on_obs=${comment_on_obs:-}
-OPENQA_CLI_RETRIES="${openqa_cli_retries:-7}"
+import httpx
+import tenacity
+import typer
 
-export OPENQA_CLI_RETRIES
+log = logging.getLogger(__name__)
 
-usage() {
-    cat << EOF
-Usage: $0 [OPTIONS]
 
+def load_job_ids(path: str = "job_post_response") -> list[int]:
+    try:
+        with pathlib.Path(path).open("r", encoding="utf-8") as f:
+            data = json.load(f)
+        ids = data.get("ids", [])
+        return [int(jid) for jid in ids]
+    except FileNotFoundError as e:
+        print(f"Need job response status file '{path}'", file=sys.stderr)
+        raise typer.Exit(code=2) from e
+    except Exception as e:
+        log.error("Failed to read or parse '%s': %s", path, e)
+        raise typer.Exit(code=2) from e
+
+
+def fetch_job_api(client: httpx.Client, url: str, params: dict[str, Any], retries: int) -> dict[str, Any]:
+    for attempt in tenacity.Retrying(
+        stop=tenacity.stop_after_attempt(retries),
+        wait=tenacity.wait_exponential(multiplier=1, min=1, max=10),
+        reraise=True,
+    ):
+        with attempt:
+            response = client.get(url, params=params, timeout=30.0)
+            response.raise_for_status()
+            return response.json()
+    return {}  # pragma: no cover
+
+
+def get_err_msg(e: subprocess.CalledProcessError) -> str:
+    return e.stderr.strip() if e.stderr else str(e)
+
+
+def delete_packages_from_obs_project(obs_project: str, osc_cmd_str: str) -> None:
+    log.info("delete_packages_from_obs_project()")
+    cmd_ls = [*shlex.split(osc_cmd_str), "ls", obs_project]
+    try:
+        res = subprocess.run(cmd_ls, check=True, capture_output=True, text=True)
+        packages = []
+        for line in res.stdout.splitlines():
+            pkg = line.strip()
+            if pkg and not pkg.endswith("-test"):
+                packages.append(pkg)
+    except subprocess.CalledProcessError as e:
+        log.debug("osc ls failed or project is empty: %s", get_err_msg(e))
+        packages = []
+
+    for package in packages:
+        log.info("Deleting %s from %s", package, obs_project)
+        cmd_del = [
+            *shlex.split(osc_cmd_str),
+            "rdelete",
+            "-m",
+            f"Cleaning up {package} to allow triggering new jobs",
+            obs_project,
+            package,
+        ]
+        try:
+            subprocess.run(cmd_del, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as e:
+            log.error("Failed to delete package %s from %s: %s", package, obs_project, get_err_msg(e))
+
+
+def extract_comment_ids(api_output: str) -> list[str]:
+    comment_ids = []
+    for line in api_output.splitlines():
+        match = re.search(r'id="([^"]*)">.*test.*failed', line)
+        if match:
+            comment_ids.append(match.group(1))
+    return comment_ids
+
+
+def delete_old_comments(osc_cmd_str: str, obs_component: str, obs_package_name: str) -> None:
+    cmd = [*shlex.split(osc_cmd_str), "api", f"/comments/{obs_component}/{obs_package_name}"]
+    try:
+        res = subprocess.run(cmd, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as e:
+        log.warning("Failed to query comments for %s: %s", obs_package_name, get_err_msg(e))
+        return
+
+    comment_ids = extract_comment_ids(res.stdout)
+    for cid in comment_ids:
+        log.info("Deleting comment ID %s", cid)
+        cmd_del = [*shlex.split(osc_cmd_str), "api", "-X", "DELETE", f"/comment/{cid}"]
+        try:
+            subprocess.run(cmd_del, check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError as e:
+            log.warning("Failed to delete comment %s: %s", cid, get_err_msg(e))
+
+
+def post_comment(osc_cmd_str: str, obs_component: str, obs_package_name: str, comment_text: str) -> None:
+    cmd_post = [
+        *shlex.split(osc_cmd_str),
+        "api",
+        f"--data={comment_text}",
+        "-X",
+        "POST",
+        f"/comments/{obs_component}/{obs_package_name}",
+    ]
+    try:
+        subprocess.run(cmd_post, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as e:
+        log.error("Failed to post comment to OBS: %s", get_err_msg(e))
+
+
+def comment_on_failed_jobs(
+    osc_cmd_str: str,
+    obs_component: str,
+    obs_package_name: str,
+    comment_on_obs: str,
+    failed_jobs: list[int],
+    failed_versions: dict[str, int],
+    openqa_groupid_val: str,
+    host_val: str,
+) -> None:
+    if not comment_on_obs or not obs_package_name:
+        raise typer.Exit(code=1)
+
+    log.info("Posting comment with failed jobs to OBS")
+    delete_old_comments(osc_cmd_str, obs_component, obs_package_name)
+
+    job_ids_str = " ".join(str(jid) for jid in failed_jobs)
+    comment_text = f"openQA-in-openQA test(s) failed (job IDs: {job_ids_str}), see {host_val}/tests/overview?"
+    for ver in sorted(failed_versions.keys()):
+        comment_text += f"version={ver}&"
+    comment_text += f"groupid={openqa_groupid_val}"
+
+    post_comment(osc_cmd_str, obs_component, obs_package_name, comment_text)
+    raise typer.Exit(code=1)
+
+
+def monitor_single_job(
+    client: httpx.Client,
+    job_id: int,
+    host_val: str,
+    retries: int,
+    sleep_time_val: int,
+) -> tuple[int, str, str]:
+    """Poll openQA job status until complete. Returns (final_id, result, version)."""
+    log.info("Waiting for job %d to finish", job_id)
+    url = f"{host_val}/api/v1/jobs/{job_id}"
+    params = {"follow": 1}
+    current_id = job_id
+    while True:
+        try:
+            res_json = fetch_job_api(client, url, params, retries)
+        except Exception as e:
+            log.warning("openqa-cli monitor failed with an unexpected error (%s)", e)
+            raise typer.Exit(code=1) from e
+
+        job = res_json.get("job", {})
+        state = job.get("state")
+
+        # job_id might have changed if it was restarted
+        followed_id = job.get("id", current_id)
+        if followed_id != current_id:
+            log.info("Job %d was restarted/cloned to %d", current_id, followed_id)
+            current_id = followed_id
+            url = f"{host_val}/api/v1/jobs/{current_id}"
+
+        if state in {"done", "cancelled"}:
+            result = job.get("result", "")
+            version = job.get("settings", {}).get("VERSION", "")
+            return current_id, result, version
+
+        time.sleep(sleep_time_val)
+
+
+app = typer.Typer(add_completion=False)
+
+
+@app.command(
+    help="""
 Monitor an openQA job by polling the status of a job over the API.
 
 Continuously polls the openQA API for the status of the specified jobs until
 all jobs finish. After the jobs have finished this program exits with an exit
 code corresponding to the jobs' result. For example all jobs pass it would
 exit this program with exit code 0 for success; otherwise with 1.
+"""
+)
+def main(
+    obs_package_name: Annotated[str, typer.Argument(help="OBS package name to comment on if test failed.")] = "",
+    sleep_time: Annotated[int, typer.Option(envvar="sleep_time", help="Polling interval in seconds.")] = 10,
+    host: Annotated[str, typer.Option(envvar="host", help="openQA host URL.")] = "https://openqa.opensuse.org",
+    openqa_groupid: Annotated[str, typer.Option(envvar="openqa_groupid", help="openQA group ID.")] = "24",
+    obs_component: Annotated[
+        str, typer.Option(envvar="obs_component", help="OBS component type (package or project).")
+    ] = "package",
+    staging_project: Annotated[
+        str, typer.Option(envvar="staging_project", help="OBS staging project.")
+    ] = "devel:openQA:testing",
+    comment_on_obs: Annotated[str, typer.Option(envvar="comment_on_obs", help="Whether to comment on OBS.")] = "",
+    openqa_cli_retries: Annotated[
+        int, typer.Option(envvar="openqa_cli_retries", help="Number of openqa-cli retries.")
+    ] = 7,
+) -> None:
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 
-Options:
- -h, --help         display this help
-EOF
-    exit "$1"
-}
+    sleep_time_val = sleep_time if sleep_time is not None else 10
+    host_val = host or "https://openqa.opensuse.org"
+    openqa_groupid_val = openqa_groupid or "24"
+    obs_component_val = obs_component or "package"
+    staging_project_val = staging_project or "devel:openQA:testing"
 
-opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
-eval set -- "$opts"
-while true; do
-    case "$1" in
-        -h | --help) usage 0 ;;
-        --)
-            shift
-            break
-            ;;
-        *) break ;;
-    esac
-done
+    # Check OPENQA_CLI_RETRIES or openqa_cli_retries env vars or defaults
+    retries_env = os.environ.get("OPENQA_CLI_RETRIES")
+    try:
+        retries = int(retries_env) if retries_env else openqa_cli_retries
+    except ValueError:
+        retries = 7
 
-# shellcheck source=/dev/null
-. "$(dirname "$0")"/_common
+    prefix = os.environ.get("PREFIX", "")
+    osc_cmd_str = os.environ.get("OSC", "")
+    if not osc_cmd_str:
+        osc_cmd_str = f"{prefix} retry -r 11 -e -- osc" if prefix else "retry -r 11 -e -- osc"
 
-[[ -f job_post_response ]] || (echo "Need job response status file 'job_post_response'" && exit 2)
-declare -A failed_versions
-failed_jobs=()
-for job_id in $(job_ids job_post_response); do
-    log-info "Waiting for job $job_id to finish"
-    rc=0
-    $openqa_cli monitor --host "$host" --follow --poll-interval "$sleep_time" "$job_id" || rc=$?
-    if [[ $rc != 0 && $rc != 2 ]]; then
-        log-warn "openqa-cli monitor failed with an unexpected error ($rc)"
-        exit "$rc"
-    fi
-    response=$($openqa_cli api --host "$host" jobs/"$job_id" follow=1)
-    result=$(echo "$response" | jq -r '.job.result')
-    # job_id might have changed if it was restarted
-    job_id=$(echo "$response" | jq -r '.job.id')
-    log-info "Result of job $job_id: $result"
-    if [[ $result != 'passed' ]] && [[ -n $obs_package_name ]]; then
-        version=$(echo "$response" | jq -r '.job.settings.VERSION')
-        failed_versions[$version]=1
-        failed_jobs+=("$job_id")
-    fi
-done
+    job_ids = load_job_ids("job_post_response")
+    failed_jobs: list[int] = []
+    failed_versions: dict[str, int] = {}
 
-((${#failed_jobs[@]} > 0)) || exit 0
-log-warn "${#failed_jobs[@]} jobs did not pass:"
-for id in "${failed_jobs[@]}"; do
-    log-warn "$host/t$id"
-done
+    with httpx.Client() as client:
+        for job_id in job_ids:
+            final_id, result, version = monitor_single_job(client, job_id, host_val, retries, sleep_time_val)
+            log.info("Result of job %d: %s", final_id, result)
+            if result != "passed":
+                failed_jobs.append(final_id)
+                if obs_package_name and version:
+                    failed_versions[version] = 1
 
-# delete packages from staging project in error case as we will not continue submitting those packages
-delete_packages_from_obs_project "$staging_project"
+    if not failed_jobs:
+        raise typer.Exit(code=0)
 
-# comment on failed jobs
-[[ $comment_on_obs ]] || exit 1
+    log.warning("%d jobs did not pass:", len(failed_jobs))
+    for fid in failed_jobs:
+        log.warning("%s/t%d", host_val, fid)
 
-log-info "Posting comment with failed jobs to OBS"
-osc api "/comments/$obs_component/$obs_package_name" | grep id= | sed -n 's/.*id="\([^"]*\)">.*test.* failed.*/\1/p' | while read -r id; do
-    osc api -X DELETE /comment/"$id"
-done
-comment="openQA-in-openQA test(s) failed (job IDs: ${failed_jobs[*]}), see https://openqa.opensuse.org/tests/overview?"
-for version in "${!failed_versions[@]}"; do
-    comment+="version=${version}&"
-done
-comment+="groupid=$openqa_groupid"
-osc api --data="$comment" -X POST "/comments/${obs_component}/$obs_package_name"
-exit 1
+    # delete packages from staging project in error case as we will not continue submitting those packages
+    delete_packages_from_obs_project(staging_project_val, osc_cmd_str)
+
+    comment_on_failed_jobs(
+        osc_cmd_str=osc_cmd_str,
+        obs_component=obs_component_val,
+        obs_package_name=obs_package_name,
+        comment_on_obs=comment_on_obs,
+        failed_jobs=failed_jobs,
+        failed_versions=failed_versions,
+        openqa_groupid_val=openqa_groupid_val,
+        host_val=host_val,
+    )
+
+
+if __name__ == "__main__":  # pragma: no cover
+    app()
