@@ -44,7 +44,7 @@ def run_cmd(cmd: str, *, check: bool = True, verbose: bool = False) -> str:
 
 def get_running_jobs(hypervisor_host: str, *, verbose: bool = False) -> list[int]:
     """Fetch job IDs currently assigned to workers using this hypervisor."""
-    try:
+    try:  # noqa: PLW0717
         # Extract the short name (e.g., s390zl12) from the FQDN
         short_name = hypervisor_host.split(".", maxsplit=1)[0]
 

@@ -151,7 +151,7 @@ def resolve_clone_chain(openqa_host: str, job_id: int) -> list[int]:
     return chain
 
 
-def main(url: str, dry_run: bool = False) -> None:  # noqa: C901, FBT001, FBT002
+def main(url: str, dry_run: bool = False) -> None:  # noqa: C901, FBT001, FBT002, PLR0912, PLR0915
     """Execute main function."""
     if not url.startswith(("http://", "https://")):
         url = f"https://{url}"
@@ -227,7 +227,7 @@ def main(url: str, dry_run: bool = False) -> None:  # noqa: C901, FBT001, FBT002
         failed = process_logs(logs)
         all_failures.append(failed)
 
-    if len(all_failures) < 2:
+    if len(all_failures) < 2:  # noqa: PLR2004
         if not all_failures:
             log.info("No logs found in chain. Exiting")
         else:

@@ -17,7 +17,6 @@ from urllib.parse import urlparse
 
 import netsnmp
 import pynetbox
-from pynetbox.models import dcim
 
 if TYPE_CHECKING:
     from pynetbox.models import dcim
@@ -83,7 +82,9 @@ def green(s: str) -> str:
 def print_device(device: dcim.Devices, dev_pdu_power: dict[tuple[str, int], tuple[int, bool]], watts: int) -> None:
     """Report device power consumption per PDU outlet for human review."""
     s = "  " if verbose else ""
-    pdu_power = " ".join([f"{h}:{green(str(p)) if s else red(str(p))}={w}W" for (h, p), (w, s) in dev_pdu_power.items()])
+    pdu_power = " ".join([
+        f"{h}:{green(str(p)) if s else red(str(p))}={w}W" for (h, p), (w, s) in dev_pdu_power.items()
+    ])
     print(f"{s}{device.name} status={device.status.value} {pdu_power} ∑{watts}W")
 
 
