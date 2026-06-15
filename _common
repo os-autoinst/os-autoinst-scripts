@@ -18,6 +18,8 @@ curl_args=()
 markdown_cmd=$(command -v Markdown.pl) || markdown_cmd=$(command -v markdown) \
     || warn "+++ (Markdown.pl|markdown) not found, please install Text::Markdown +++"
 openqa_cli="${openqa_cli:-""}"
+host_url="${host_url:-""}"
+tw_openqa_host="${tw_openqa_host:-"https://openqa.opensuse.org"}"
 # shellcheck disable=SC2034
 not_found_regex='404 Not Found'
 
