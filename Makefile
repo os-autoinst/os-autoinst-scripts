@@ -34,6 +34,7 @@ test-unit: test-bash test-python
 test-bash: $(BPAN)
 	"${PROVE}" -r $(if $v,-v )$(test)
 
+.PHONY: test-python
 test-python:
 	py.test tests
 
@@ -58,8 +59,10 @@ test-yaml:
 	@which yamllint >/dev/null 2>&1 || echo "Command 'yamllint' not found, can not execute YAML syntax checks"
 	yamllint --strict $$(git ls-files "*.yml" "*.yaml" ":!external/")
 
+.PHONY: checkstyle-python
 checkstyle-python: check-ruff check-conventions check-ty
 check-ruff:
+
 	@which ruff >/dev/null 2>&1 || echo "Command 'ruff' not found, can not execute python style checks"
 	@if [ -n "$(PY_FILES)" ]; then ruff format --check $(PY_FILES) && ruff check $(PY_FILES); fi
 
@@ -85,11 +88,14 @@ test-gitlint: ## Run commit message checks using gitlint
 	BASE=$$(git merge-base --independent $$BASES | head -n 1); \
 	gitlint --commits "$$BASE..HEAD"
 
+.PHONY: test-with-coverage
+test-with-coverage:
+	pytest --cov=src/os-autoinst-scripts tests/
+
 .PHONY: tidy
 tidy: ## Format code and fix linting issues
 	ruff format $(PY_FILES)
 	ruff check --fix $(PY_FILES)
-
 update-deps:
 	tools/update-deps --cpanfile cpanfile --specfile dist/rpm/os-autoinst-scripts-deps.spec
 
