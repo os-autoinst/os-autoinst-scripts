@@ -55,7 +55,7 @@ def is_transient_osc_error(exc: BaseException) -> bool:
 
 
 def run_osc_cmd(cmd: list[str], dry_run: bool = False, mutating: bool = False) -> subprocess.CompletedProcess[str]:
-    if dry_run:
+    if dry_run and mutating:
         log.info("[dry-run] Would execute: %s", " ".join(cmd))
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
 
@@ -67,9 +67,16 @@ def run_osc_cmd(cmd: list[str], dry_run: bool = False, mutating: bool = False) -
         reraise=True,
     ):
         with attempt:
-            res = subprocess.run(cmd, check=True, capture_output=True, text=True)
-            log.debug("Command '%s' output:\n%s", " ".join(cmd), res.stdout)
-            return res
+            try:
+                res = subprocess.run(cmd, check=True, capture_output=True, text=True)
+                log.debug("Command '%s' output:\n%s", " ".join(cmd), res.stdout)
+            except Exception as e:
+                if dry_run:
+                    log.warning("[dry-run] Command '%s' failed (%s), falling back to dummy success.", " ".join(cmd), e)
+                    return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+                raise
+            else:
+                return res
     return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")  # pragma: no cover
 
 
