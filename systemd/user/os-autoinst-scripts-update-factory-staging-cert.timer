@@ -1,0 +1,10 @@
+[Unit]
+Description=Update the certificate of openSUSE Factory staging builds needed for SecureBoot
+
+[Timer]
+OnCalendar=weekly
+Persistent=true
+Unit=os-autoinst-scripts-update-cert-from-obs@factory-staging.service
+
+[Install]
+WantedBy=timers.target
