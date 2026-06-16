@@ -31,13 +31,13 @@ main_requires:
   perl(Mojo::File):
   perl(Text::Markdown):
   perl(YAML::PP):
+  python3-httpx:
   python3-pynetbox:
   python3-net-snmp:
   python3-requests:
   python3-sh:
   python3-tenacity:
   python3-typer:
-  python3-httpx:
   retry:
   sed:
   sudo:
