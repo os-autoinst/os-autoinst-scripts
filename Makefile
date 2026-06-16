@@ -43,7 +43,7 @@ test-online:
 	# Invalid JSON causes the job to abort with an error
 	-tw_openqa_host=example.com dry_run=1 ./trigger-openqa_in_openqa
 
-checkstyle: test-shellcheck test-yaml checkstyle-python check-code-health
+checkstyle: test-shellcheck test-yaml checkstyle-python check-code-health test-gitlint
 
 shfmt:
 	shfmt -w ${SH_FILES}
@@ -78,6 +78,12 @@ check-code-health:
 	@echo "Checking code health…"
 	@vulture $$(git ls-files "**.py") --min-confidence 80
 
+.PHONY: test-gitlint
+test-gitlint: ## Run commit message checks using gitlint
+	@command -v gitlint >/dev/null 2>&1 || (echo "Command 'gitlint' not found, can not execute commit message checks. Install with 'python3-gitlint' (openSUSE) or 'pip install gitlint-core'" && false)
+	@BASES=$$(for i in upstream/master upstream/main origin/master origin/main master main; do git rev-parse --verify $$i 2>/dev/null; done ||:); \
+	BASE=$$(git merge-base --independent $$BASES | head -n 1); \
+	gitlint --commits "$$BASE..HEAD"
 
 .PHONY: tidy
 tidy: ## Format code and fix linting issues

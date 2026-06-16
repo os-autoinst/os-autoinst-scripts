@@ -53,5 +53,6 @@ test_requires:
   python3-pytest-mock:
   python3-radon:
 devel_requires:
+  python3-gitlint:
   python3-yamllint:
   shfmt:

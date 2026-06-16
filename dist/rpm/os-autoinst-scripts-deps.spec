@@ -35,7 +35,7 @@ Source0:        %{base_name}-%{version}.tar.xz
 # The following line is generated from dependencies.yaml
 %define test_requires perl(Test::MockModule) perl(Test::Most) perl(Test::Output) perl(Test::Warnings) python3-pytest python3-pytest-mock python3-radon
 # The following line is generated from dependencies.yaml
-%define devel_requires python3-yamllint shfmt
+%define devel_requires python3-gitlint python3-yamllint shfmt
 Requires:       %main_requires
 BuildRequires:  make %main_requires %test_requires
 Suggests:       salt
