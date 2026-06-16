@@ -52,11 +52,39 @@ def get_err_msg(e: subprocess.CalledProcessError) -> str:
     return e.stderr.strip() if e.stderr else str(e)
 
 
+def is_transient_osc_error(exc: BaseException) -> bool:
+    if isinstance(exc, subprocess.CalledProcessError):
+        err = get_err_msg(exc)
+        transient_markers = [
+            "HTTP Error 500",
+            "HTTP Error 502",
+            "HTTP Error 503",
+            "HTTP Error 504",
+            "Service Unavailable",
+            "Internal Server Error",
+        ]
+        return any(marker in err for marker in transient_markers)
+    return False
+
+
+def run_osc_cmd(cmd: list[str]) -> subprocess.CompletedProcess[str]:
+    for attempt in tenacity.Retrying(
+        retry=tenacity.retry_if_exception(is_transient_osc_error),
+        wait=tenacity.wait_exponential(multiplier=2, min=3, max=300),
+        stop=tenacity.stop_after_delay(3600),
+        before_sleep=tenacity.before_sleep_log(log, logging.WARNING),
+        reraise=True,
+    ):
+        with attempt:
+            return subprocess.run(cmd, check=True, capture_output=True, text=True)
+    return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")  # pragma: no cover
+
+
 def delete_packages_from_obs_project(obs_project: str, osc_cmd_str: str) -> None:
     log.info("delete_packages_from_obs_project()")
     cmd_ls = [*shlex.split(osc_cmd_str), "ls", obs_project]
     try:
-        res = subprocess.run(cmd_ls, check=True, capture_output=True, text=True)
+        res = run_osc_cmd(cmd_ls)
         packages = []
         for line in res.stdout.splitlines():
             pkg = line.strip()
@@ -77,7 +105,7 @@ def delete_packages_from_obs_project(obs_project: str, osc_cmd_str: str) -> None
             package,
         ]
         try:
-            subprocess.run(cmd_del, check=True, capture_output=True, text=True)
+            run_osc_cmd(cmd_del)
         except subprocess.CalledProcessError as e:
             log.error("Failed to delete package %s from %s: %s", package, obs_project, get_err_msg(e))
 
@@ -94,7 +122,7 @@ def extract_comment_ids(api_output: str) -> list[str]:
 def delete_old_comments(osc_cmd_str: str, obs_component: str, obs_package_name: str) -> None:
     cmd = [*shlex.split(osc_cmd_str), "api", f"/comments/{obs_component}/{obs_package_name}"]
     try:
-        res = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        res = run_osc_cmd(cmd)
     except subprocess.CalledProcessError as e:
         log.warning("Failed to query comments for %s: %s", obs_package_name, get_err_msg(e))
         return
@@ -104,7 +132,7 @@ def delete_old_comments(osc_cmd_str: str, obs_component: str, obs_package_name: 
         log.info("Deleting comment ID %s", cid)
         cmd_del = [*shlex.split(osc_cmd_str), "api", "-X", "DELETE", f"/comment/{cid}"]
         try:
-            subprocess.run(cmd_del, check=True, capture_output=True, text=True)
+            run_osc_cmd(cmd_del)
         except subprocess.CalledProcessError as e:
             log.warning("Failed to delete comment %s: %s", cid, get_err_msg(e))
 
@@ -119,7 +147,7 @@ def post_comment(osc_cmd_str: str, obs_component: str, obs_package_name: str, co
         f"/comments/{obs_component}/{obs_package_name}",
     ]
     try:
-        subprocess.run(cmd_post, check=True, capture_output=True, text=True)
+        run_osc_cmd(cmd_post)
     except subprocess.CalledProcessError as e:
         log.error("Failed to post comment to OBS: %s", get_err_msg(e))
 
@@ -234,7 +262,7 @@ def main(
     prefix = os.environ.get("PREFIX", "")
     osc_cmd_str = os.environ.get("OSC", "")
     if not osc_cmd_str:
-        osc_cmd_str = f"{prefix} retry -r 11 -e -- osc" if prefix else "retry -r 11 -e -- osc"
+        osc_cmd_str = f"{prefix} osc" if prefix else "osc"
 
     job_ids = load_job_ids("job_post_response")
     failed_jobs: list[int] = []
