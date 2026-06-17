@@ -72,7 +72,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=CustomFormatter)
     parser.add_argument("-t", "--token-name", type=str, required=True, default=None,
                         help="Project Access Token Name (default: None)")
-    parser.add_argument("-c", "--ci-var-name", type=str, default=None,
+    parser.add_argument("-c", "--ci-var-name", type=str, default=CI_VAR_KEY,
                         help="CI Variable Name holding Project Access Token Value")
     args = parser.parse_args()
 
