@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright SUSE LLC
-# ruff: noqa: BLE001, C901, D103, D400, D401, D415, E501, FBT001, FBT003, PLR0911, PLR0912, PLR0913, PLR0914, PLR0915, PLR0917, PLR2004, PLW0717, S110, S404, S603, SIM105, SIM112, T201, TRY300, PERF203, PERF401
+# ruff: noqa: BLE001, C901, D103, D401, E501, FBT001, FBT003, PLR0911, PLR0912, PLR0913, PLR0914, PLR0915, PLR0917, PLR2004, PLW0717, S110, S404, S603, SIM105, SIM112, T201, TRY300, PERF203, PERF401
 """Takes an openQA job URL, looks for matching "known issues" and labels/restarts."""
 
 from __future__ import annotations
@@ -548,19 +548,20 @@ def investigate_issue(
 @app.command()
 def main(
     job_url: str = typer.Argument(None, help="The openQA job URL"),
-    host: str = typer.Option(None, "--host", "-H", help="openQA host to contact"),
+    host: str = typer.Option(
+        os.environ.get("host", "openqa.opensuse.org"),
+        "--host",
+        "-H",
+        help="openQA host to contact.",
+    ),
     dry: bool = typer.Option(False, "--dry", "-n", help="conduct dry-run without any labelling or restarting"),
 ) -> None:
-    """Takes an openQA job URL, looks for matching "known issues", for example from
-
-    progress.opensuse.org, labels the job and retriggers if specified in the issue
-    (see the source code for details how to mark tickets).
-    """
+    """Takes an openQA job URL, looks for matching "known issues", for example from progress.opensuse.org, labels the job and retriggers if specified in the issue (see the source code for details how to mark tickets)."""
     if not job_url:
         print("Need 'testurl'", file=sys.stderr)
         raise typer.Exit(1)
 
-    host_val = host or os.environ.get("host", "openqa.opensuse.org")
+    host_val = host
     scheme_val = os.environ.get("scheme", "https")
     host_url_val = f"{scheme_val}://{host_val}"
 
