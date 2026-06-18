@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import pathlib
 import re
@@ -13,7 +14,7 @@ import subprocess
 import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Annotated, Any
 
 import httpx
 import typer
@@ -21,8 +22,14 @@ import typer
 app = typer.Typer(add_completion=False)
 
 
-def setup_logging() -> None:
-    pass
+def setup_logging(verbose: int) -> None:
+    if verbose >= 2:
+        level = logging.DEBUG
+    elif verbose >= 1:
+        level = logging.INFO
+    else:
+        level = logging.WARNING
+    logging.basicConfig(level=level, format="%(levelname)s: %(message)s", stream=sys.stderr, force=True)
 
 
 def extract_timeago(html_content: str) -> str | None:
@@ -466,7 +473,9 @@ def investigate_issue(
 
     try:
         print(f"Requesting jobs/{job_id} via openqa-cli")
-        cmd_job = ["openqa-cli"] + [arg for arg in client_call if arg not in {"echo", "openqa-cli"}] + [f"jobs/{job_id}"]
+        cmd_job = (
+            ["openqa-cli"] + [arg for arg in client_call if arg not in {"echo", "openqa-cli"}] + [f"jobs/{job_id}"]
+        )
         try:
             res = subprocess.run(cmd_job, check=True, capture_output=True, text=True)
             job_data = json.loads(res.stdout)
@@ -555,8 +564,10 @@ def main(
         help="openQA host to contact.",
     ),
     dry: bool = typer.Option(False, "--dry", "-n", help="conduct dry-run without any labelling or restarting"),
+    verbose: Annotated[int, typer.Option("--verbose", "-v", count=True, help="Increase verbosity")] = 0,
 ) -> None:
     """Takes an openQA job URL, looks for matching "known issues", for example from progress.opensuse.org, labels the job and retriggers if specified in the issue (see the source code for details how to mark tickets)."""
+    setup_logging(verbose)
     if not job_url:
         print("Need 'testurl'", file=sys.stderr)
         raise typer.Exit(1)
