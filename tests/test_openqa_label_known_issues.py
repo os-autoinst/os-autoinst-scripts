@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -346,6 +348,79 @@ def test_label_on_issues_from_issue_tracker(mocker: MockerFixture) -> None:
     mock_lbl.reset_mock()
     assert openqa_label_known_issues.label_on_issues_from_issue_tracker("123", issues_list4, "file", ["api"]) is False
     mock_lbl.assert_not_called()
+
+
+def test_get_default_retry_limit(mocker: MockerFixture) -> None:
+    # 1. Fallback default
+    mocker.patch.dict("os.environ", {}, clear=True)
+    assert openqa_label_known_issues.get_default_retry_limit(7) == 7
+
+    # 2. Env override
+    mocker.patch.dict("os.environ", {"auto_review_retry_limit": "4"}, clear=True)
+    assert openqa_label_known_issues.get_default_retry_limit(7) == 4
+
+    # 3. Custom parameter override
+    mocker.patch.dict("os.environ", {}, clear=True)
+    assert openqa_label_known_issues.get_default_retry_limit(5) == 5
+
+
+def test_count_restarts(mocker: MockerFixture) -> None:
+    # No clone_id/cloned_from
+    job = {"id": 123}
+    assert openqa_label_known_issues.count_restarts(job, ["api"]) == 0
+
+    # With nested clone structure (restarts = 2)
+    job_with_parent = {"id": 123, "cloned_from": 122}
+
+    # Mock subprocess.run for parent call
+    mock_run = mocker.patch("subprocess.run")
+    # First parent call returns a job that is cloned from 121
+    # Second parent call returns a job that has no cloned_from
+    res1 = mocker.MagicMock()
+    res1.stdout = json.dumps({"job": {"id": 122, "cloned_from": 121}})
+    res2 = mocker.MagicMock()
+    res2.stdout = json.dumps({"job": {"id": 121}})
+    mock_run.side_effect = [res1, res2]
+
+    assert openqa_label_known_issues.count_restarts(job_with_parent, ["api"]) == 2
+    assert mock_run.call_count == 2
+
+
+@pytest.mark.parametrize(
+    ("restarts_count", "expected_restart"),
+    [
+        (1, "1"),  # Under the limit, should restart
+        (3, ""),   # Over/equal the limit, should not restart
+    ],
+)
+def test_label_on_issues_from_issue_tracker_retry_limit(
+    mocker: MockerFixture, restarts_count: int, expected_restart: str
+) -> None:
+    mocker.patch.dict("os.environ", {"min_search_term": "5"})
+
+    issues_list = [
+        {
+            "id": "1",
+            "subject": 'test auto_review:"match_me":retry:3',
+            "tracker_name": "openqa-force-result",
+        }
+    ]
+    mock_lbl = mocker.patch("openqa_label_known_issues.label_on_issue", return_value=True)
+    mocker.patch("openqa_label_known_issues.count_restarts", return_value=restarts_count)
+
+    assert openqa_label_known_issues.label_on_issues_from_issue_tracker(
+        "123", issues_list, "file", ["api"], job={"id": 123}
+    ) is True
+
+    mock_lbl.assert_called_once_with(
+        "123",
+        "match_me",
+        'poo#1 test auto_review:"match_me":retry:3',
+        "file",
+        expected_restart,
+        "",
+        ["api"],
+    )
 
 
 def test_label_on_issues_without_tickets(mocker: MockerFixture) -> None:
