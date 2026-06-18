@@ -35,7 +35,9 @@ spec.loader.exec_module(openqa_label_known_issues)
 
 
 def test_setup_logging() -> None:
-    openqa_label_known_issues.setup_logging()
+    openqa_label_known_issues.setup_logging(0)
+    openqa_label_known_issues.setup_logging(1)
+    openqa_label_known_issues.setup_logging(2)
 
 
 def test_extract_timeago() -> None:
