@@ -201,3 +201,52 @@ def test_comment_on_failed_jobs(mocker: MockerFixture, pkg: str, comment_obs: st
     if comment_obs:
         mock_del.assert_called_once()
         mock_post.assert_called_once()
+
+
+@pytest.mark.parametrize(
+    ("stderr", "expected"),
+    [
+        ("Server returned an error: HTTP Error 503: Service Unavailable", True),
+        ("Server returned an error: HTTP Error 500: Internal Server Error", True),
+        ("Server returned an error: HTTP Error 404: Not Found", False),
+        ("", False),
+    ],
+)
+def test_is_transient_osc_error(stderr: str, expected: bool) -> None:
+    exc = subprocess.CalledProcessError(1, "osc", stderr=stderr)
+    assert monitor_job.is_transient_osc_error(exc) is expected
+
+
+def test_is_transient_osc_error_non_called_process_error() -> None:
+    assert monitor_job.is_transient_osc_error(ValueError("some error")) is False
+
+
+def test_run_osc_cmd_success(mocker: MockerFixture) -> None:
+    mock_run = mocker.patch("monitor_job.subprocess.run")
+    mock_run.return_value = subprocess.CompletedProcess(["osc"], 0, stdout="success")
+    res = monitor_job.run_osc_cmd(["osc"])
+    assert res.stdout == "success"
+    mock_run.assert_called_once_with(["osc"], check=True, capture_output=True, text=True)
+
+
+def test_run_osc_cmd_retry_then_success(mocker: MockerFixture) -> None:
+    mocker.patch("time.sleep")
+    mock_run = mocker.patch("monitor_job.subprocess.run")
+    err_503 = subprocess.CalledProcessError(1, "osc", stderr="HTTP Error 503: Service Unavailable")
+    success = subprocess.CompletedProcess(["osc"], 0, stdout="done")
+    mock_run.side_effect = [err_503, success]
+
+    res = monitor_job.run_osc_cmd(["osc"])
+    assert res.stdout == "done"
+    assert mock_run.call_count == 2
+
+
+def test_run_osc_cmd_non_transient_fails_immediately(mocker: MockerFixture) -> None:
+    mocker.patch("time.sleep")
+    mock_run = mocker.patch("monitor_job.subprocess.run")
+    err_404 = subprocess.CalledProcessError(1, "osc", stderr="HTTP Error 404: Not Found")
+    mock_run.side_effect = err_404
+
+    with pytest.raises(subprocess.CalledProcessError):
+        monitor_job.run_osc_cmd(["osc"])
+    assert mock_run.call_count == 1
