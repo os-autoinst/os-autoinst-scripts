@@ -26,21 +26,25 @@ automatically labeled with the corresponding ticket and optionally retriggered
 where it makes sense.
 
 For this the subject line of a ticket must include text following the format
-`auto_review:"<search_term>"[:retry][:force_result:<result>]`
+`auto_review:"<search_term>"[:retry[:<limit>]][:force_result:<result>]`
 
 Note that the `force_result` feature is disabled by default.
 
 * `<search_term>`: the perl extended regex to search for
 * `:retry`: (optional) boolean switch after the quoted search term to instruct
   for retriggering the according openQA job.
+* `:retry:<limit>`: (optional) like `:retry`, but overrides the default limit of
+  7 retries with a custom `<limit>` number of retries.
 * `:force_result:<result>`: (optional) give the job a special label which
   forces the result to be the given string
 
 Examples:
 * `auto_review:"error 42 found"`.
 * `auto_review:"error 42 found":retry`.
+* `auto_review:"error 42 found":retry:3`.
 * `auto_review:"error 42 found":force_result:softfailed`.
 * `auto_review:"error 42 found":retry:force_result:softfailed`.
+* `auto_review:"error 42 found":retry:3:force_result:softfailed`.
 
 The search terms are crosschecked against the logfiles and "reason" field of
 the openQA jobs. A multi-line search is possible, for example using the

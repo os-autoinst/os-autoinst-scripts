@@ -189,14 +189,49 @@ def label_on_issue(
     return True
 
 
+def get_default_retry_limit(default_limit: int = 7) -> int:
+    env_limit = os.environ.get("auto_review_retry_limit")
+    if env_limit is not None:
+        try:
+            return int(env_limit)
+        except ValueError:
+            pass
+    return default_limit
+
+
+def count_restarts(job: dict, client_call: list[str]) -> int:
+    restarts = 0
+    current_job = job
+    while restarts < 100:
+        cloned_from = current_job.get("cloned_from") or current_job.get("settings", {}).get("cloned_from")
+        if not cloned_from:
+            break
+        restarts += 1
+        current_id = str(cloned_from)
+        cmd_job = (
+            ["openqa-cli"] + [arg for arg in client_call if arg not in {"echo", "openqa-cli"}] + [f"jobs/{current_id}"]
+        )
+        try:
+            res = subprocess.run(cmd_job, check=True, capture_output=True, text=True)
+            job_data = json.loads(res.stdout)
+            current_job = job_data.get("job", {})
+        except Exception as e:
+            log.warning("Failed to fetch parent job %s: %s", current_id, e)
+            break
+    return restarts
+
+
 def label_on_issues_from_issue_tracker(
     job_id: str,
     issues_list: list[dict[str, str]],
     report_file: str,
     client_call: list[str],
+    job: dict | None = None,
+    default_retry_limit: int = 7,
 ) -> bool:
     min_search_term = int(os.environ.get("min_search_term", "16"))
     force_result_tracker = os.environ.get("force_result_tracker", "openqa-force-result")
+    job = job or {}
 
     for issue_info in issues_list:
         issue_id = issue_info["id"]
@@ -224,7 +259,21 @@ def label_on_issues_from_issue_tracker(
                         f'{label} (ignoring force result for ticket which is not in tracker "{force_result_tracker}")'
                     )
 
-            restart = "1" if '":retry' in after else ""
+            restart = ""
+            match_retry = re.search(r'":retry(?::(\d+))?', after)
+            if match_retry:
+                limit_str = match_retry.group(1)
+                limit = int(limit_str) if limit_str is not None else get_default_retry_limit(default_retry_limit)
+                restarts_count = count_restarts(job, client_call)
+                if restarts_count < limit:
+                    restart = "1"
+                else:
+                    log.info(
+                        "Job %s has already been restarted %s times, limit is %s. Skipping restart.",
+                        job_id,
+                        restarts_count,
+                        limit,
+                    )
 
             if label_on_issue(job_id, search, label, report_file, restart, force_result, client_call):
                 return True
@@ -457,6 +506,7 @@ def investigate_issue(
     client_call: list[str],
     issues_list: list[dict[str, str]],
     host_url: str,
+    default_retry_limit: int = 7,
 ) -> None:
     job_id = testurl.rstrip("/").split("/")[-1]
     if not job_id.isdigit():
@@ -520,7 +570,9 @@ def investigate_issue(
                 print(f"'{testurl}' does not have autoinst-log.txt or reason, cannot label", file=sys.stderr)
                 return
 
-        if label_on_issues_from_issue_tracker(job_id, issues_list, report_file, client_call):
+        if label_on_issues_from_issue_tracker(
+            job_id, issues_list, report_file, client_call, job=job, default_retry_limit=default_retry_limit
+        ):
             return
 
         if label_on_issues_without_tickets(job_id, report_file, client_call):
@@ -564,6 +616,11 @@ def main(
     ),
     dry: bool = typer.Option(False, "--dry", "-n", help="conduct dry-run without any labelling or restarting"),
     verbose: Annotated[int, typer.Option("--verbose", "-v", count=True, help="Increase verbosity")] = 0,
+    retry_limit: int = typer.Option(
+        int(os.environ.get("auto_review_retry_limit", "7")),
+        "--retry-limit",
+        help="Default retry limit for the auto-review feature.",
+    ),
 ) -> None:
     """Takes an openQA job URL, looks for matching "known issues", for example from progress.opensuse.org, labels the job and retriggers if specified in the issue (see the source code for details how to mark tickets)."""
     setup_logging(verbose)
@@ -607,6 +664,7 @@ def main(
             client_call=client_call,
             issues_list=issues_list,
             host_url=host_url_val,
+            default_retry_limit=retry_limit,
         )
 
 
