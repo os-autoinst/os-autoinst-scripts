@@ -23,12 +23,12 @@ app = typer.Typer(add_completion=False)
 
 
 def setup_logging(verbose: int) -> None:
-    if verbose >= 2:
-        level = logging.DEBUG
-    elif verbose >= 1:
-        level = logging.INFO
-    else:
-        level = logging.WARNING
+    level_map = {
+        0: logging.WARNING,
+        1: logging.INFO,
+        2: logging.DEBUG,
+    }
+    level = level_map.get(min(verbose, 2), logging.WARNING)
     logging.basicConfig(level=level, format="%(levelname)s: %(message)s", stream=sys.stderr, force=True)
 
 
