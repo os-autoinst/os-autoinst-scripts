@@ -370,7 +370,7 @@ def handle_unreviewed(
         cmd_group = (
             ["openqa-cli"]
             + [arg for arg in client_call if arg not in {"echo", "openqa-cli"}]
-            + ["job_groups", group_id]
+            + [f"job_groups/{group_id}"]
         )
         try:
             res = subprocess.run(cmd_group, check=True, capture_output=True, text=True)
@@ -466,7 +466,7 @@ def investigate_issue(
 
     try:
         print(f"Requesting jobs/{job_id} via openqa-cli")
-        cmd_job = ["openqa-cli"] + [arg for arg in client_call if arg not in {"echo", "openqa-cli"}] + ["jobs", job_id]
+        cmd_job = ["openqa-cli"] + [arg for arg in client_call if arg not in {"echo", "openqa-cli"}] + [f"jobs/{job_id}"]
         try:
             res = subprocess.run(cmd_job, check=True, capture_output=True, text=True)
             job_data = json.loads(res.stdout)
