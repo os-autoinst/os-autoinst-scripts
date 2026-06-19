@@ -32,6 +32,8 @@ from gitlab.v4.objects import Project
 GITLAB_URL = os.getenv("CI_SERVER_PROTOCOL", "https") + "://" + os.getenv("CI_SERVER_HOST", "gitlab.suse.de")
 PROJECT_ID = os.getenv("CI_PROJECT_ID", "13758")
 CI_VAR_KEY = "CI_PUSH_TOKEN"
+CI_ROTATE_SCHED_DESC = "Rotate_Proj_Access_Token"
+DAYS_UNTIL_TOKEN_ROTATION = 21
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -41,9 +43,44 @@ class CustomFormatter(argparse.ArgumentDefaultsHelpFormatter, argparse.RawDescri
     """Preserve multi-line __doc__ and provide default arguments in help strings."""
 
 
+def create_or_update_ci_pipeline(gl_proj: Project, token_expiry_date: date) -> None:
+    """Create a new or update existing scheduled CI pipeline for Token Rotation using newly generated token."""
+    sched_exists = False
+    # Keep CI Schedule to run two day before DAYS_UNTIL_TOKEN_ROTATION
+    rotation_date = datetime(token_expiry_date.year, token_expiry_date.month, token_expiry_date.day, 23, 55,
+                             0, 0, tzinfo=timezone.utc) - timedelta(days=(DAYS_UNTIL_TOKEN_ROTATION - 2))
+    cron_sched = rotation_date.strftime("%M %H %d %m *")
+    # List all schedules (use get_all=True to bypass default pagination)
+    schedules = gl_proj.pipelineschedules.list(get_all=True)
+    for sched in schedules:
+        # Search for active schedule on master branch of our interest matching CI_ROTATE_SCHED_DESC
+        if sched.description == CI_ROTATE_SCHED_DESC and sched.active and "master" in sched.ref:
+            sched_exists = True
+            # Do not modify CI Pipeline schedule if cron schedule matches
+            if cron_sched != sched.cron:
+                logger.info("Updating CI Pipeline Schedule %s to run on %s", sched.id, cron_sched)
+                # Take ownership of the CI schedule before saving to avoid permission denied error
+                sched.take_ownership()
+                sched.cron = cron_sched
+                sched.description = CI_ROTATE_SCHED_DESC
+                sched.active = True
+                sched.save()
+    # Create a new CI Pipeline schedule if one doesn't exist
+    # If this logic run once, it may never run again unless somehow the schedule created by this logic gets deleted
+    if not sched_exists:
+        new_sched = gl_proj.pipelineschedules.create({
+            "ref": "refs/heads/master",
+            "description": CI_ROTATE_SCHED_DESC,
+            "cron": cron_sched,
+            "cron_timezone": "UTC",
+            "active": True
+        })
+        new_sched.save()
+
+
 def update_ci_var(ci_var_key: str, new_access_token: str) -> None:
     """Authenticate with the NEW token to update the CI/CD variable."""
-    gl = gitlab.Gitlab(GITLAB_URL, private_token=new_access_token, ssl_verify=False)
+    gl = gitlab.Gitlab(GITLAB_URL, private_token=new_access_token, ssl_verify=True)
     glproject = gl.projects.get(PROJECT_ID)
 
     try:
@@ -92,7 +129,7 @@ def main() -> None:
     logger.info("CI_VAR_KEY: %s", ci_var_name)
 
     # Authenticate with current token
-    gl = gitlab.Gitlab(GITLAB_URL, private_token=ci_push_tok, ssl_verify=False)
+    gl = gitlab.Gitlab(GITLAB_URL, private_token=ci_push_tok, ssl_verify=True)
     glproject = gl.projects.get(PROJECT_ID)
 
     tok_id = fetch_tokenid_by_name(glproject, proj_access_tok_key)
@@ -102,18 +139,20 @@ def main() -> None:
 
     access_token = glproject.access_tokens.get(tok_id)
 
-    # Calculate days left for token expiry
+    # Calculate days left for token expiry, rotate token 3 weeks before
     expires_at_date = date.fromisoformat(access_token.expires_at)
     days_left = (expires_at_date - datetime.now(timezone.utc).date()).days
-    if days_left <= 1:
-        logger.info("Rotating existing token with id: %s", access_token.id)
+    if days_left <= DAYS_UNTIL_TOKEN_ROTATION:
         expiry_date = datetime.now(timezone.utc).date() + timedelta(364)
+        expires_at_date = date.fromisoformat(expiry_date.strftime("%Y-%m-%d"))
+        create_or_update_ci_pipeline(glproject, expires_at_date)
+        logger.info("Rotating existing token with id: %s", access_token.id)
         # access_levels:
         # 10 (Guest), 15 (Planner), 20 (Reporter), 25 (Security Manager)
         # 30 (Developer), 40 (Maintainer), and 50 (Owner)
         new_access_tok = access_token.rotate(self_rotate=True, access_level=40,
                                              expires_at=expiry_date.strftime("%Y-%m-%d"))
-        logger.info("New Token ID: %s valid upto: %s", new_access_tok.get("id"), new_access_tok.get("expires_at"))
+        logger.info("New Token ID: %s valid upto: %s", new_access_tok.get("id"), expires_at_date)
         update_ci_var(ci_var_name, new_access_tok.get("token"))
     else:
         logger.info("Token ID: %s", tok_id)
