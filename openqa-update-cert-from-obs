@@ -1,0 +1,152 @@
+#!/usr/bin/env python3
+# Copyright SUSE LLC
+# ruff: noqa: D103, S404, S603, T201
+"""Update certificates from OBS."""
+
+import pathlib
+import shlex
+import subprocess
+import sys
+from typing import Annotated
+
+import typer
+
+app = typer.Typer(add_completion=False)
+
+
+def parse_config(config_path: pathlib.Path) -> dict[str, str]:
+    config_vars = {}
+    try:
+        with config_path.open("r", encoding="utf-8") as f:
+            lines = f.readlines()
+    except Exception as e:
+        print(f"Error reading config file {config_path}: {e}", file=sys.stderr)
+        raise typer.Exit(code=2) from e
+
+    for raw_line in lines:
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" in line:
+            key, value = line.split("=", 1)
+            config_vars[key.strip()] = value.strip().strip("'\"")
+
+    return config_vars
+
+
+@app.command(
+    help="""
+Update openQA SecureBoot certificates from OBS.
+
+Downloads the certificate of an OBS project. These certificates are used to run
+SecureBoot-enabled tests with images that are signed with them.
+
+The configuration file (e.g. config/obs-certs/factory-staging.conf) should define:
+* OBS_PROJECT: The OBS project name (required)
+* CRT_NAME: The output certificate filename (required)
+* OBS_API_URL: Custom OBS API URL (optional, defaults to https://api.opensuse.org)
+
+Prerequisites:
+* The user needs an osc configuration (`~/.config/osc/oscrc`) and write
+  permissions under the openQA assets directory.
+
+Systemd Setup (to run the updates regularly):
+1. Install systemd units/timers locally:
+   $ make install-systemd-local DESTDIR=/tmp/install
+   $ cp -vR /tmp/install/etc/systemd/user/ ~/.config/systemd/
+   $ systemctl --user daemon-reload
+
+2. Enable the timer units:
+   $ loginctl enable-linger
+   $ systemctl --user enable --now os-autoinst-scripts-update-factory-staging-cert.timer
+
+3. Start service units manually:
+   $ systemctl --user start os-autoinst-scripts-update-cert-from-obs@factory-staging.service
+   $ journalctl --user -u os-autoinst-scripts-update-cert-from-obs@factory-staging.service
+"""
+)
+def main(
+    config: Annotated[
+        pathlib.Path,
+        typer.Argument(
+            help="Path to configuration file.",
+            exists=True,
+            file_okay=True,
+            dir_okay=False,
+            readable=True,
+        ),
+    ],
+    openqa_basedir: Annotated[
+        pathlib.Path,
+        typer.Option(
+            envvar="OPENQA_BASEDIR",
+            help="Base directory for openQA assets.",
+        ),
+    ] = pathlib.Path("/var/lib"),
+    osc_program: Annotated[
+        str,
+        typer.Option(
+            envvar="OSC",
+            help="osc command or wrapper.",
+        ),
+    ] = "osc",
+) -> None:
+    config_vars = parse_config(config)
+
+    obs_project = config_vars.get("OBS_PROJECT")
+    if not obs_project:
+        print(f"Error: OBS_PROJECT needs to be set in {config}", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+    crt_name = config_vars.get("CRT_NAME")
+    if not crt_name:
+        print(f"Error: CRT_NAME needs to be set in {config}", file=sys.stderr)
+        raise typer.Exit(code=1)
+
+    obs_api_url = config_vars.get("OBS_API_URL", "https://api.opensuse.org")
+
+    dst_dir = openqa_basedir / "openqa" / "share" / "factory" / "other" / "fixed"
+    dst_file = dst_dir / crt_name
+    dst_file_tmp = dst_dir / f"{crt_name}.tmp"
+
+    try:
+        dst_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        print(f"Error creating directory {dst_dir}: {e}", file=sys.stderr)
+        raise typer.Exit(code=1) from e
+
+    cmd = [
+        *shlex.split(osc_program),
+        "--apiurl",
+        obs_api_url,
+        "signkey",
+        "--sslcert",
+        obs_project,
+    ]
+
+    try:
+        with dst_file_tmp.open("w", encoding="utf-8") as f_tmp:
+            subprocess.run(cmd, check=True, stdout=f_tmp, stderr=subprocess.PIPE, text=True)
+    except subprocess.CalledProcessError as e:
+        if dst_file_tmp.exists():
+            dst_file_tmp.unlink()
+        err_msg = e.stderr.strip() if e.stderr else str(e)
+        print(f"Error executing osc command: {err_msg}", file=sys.stderr)
+        raise typer.Exit(code=e.returncode) from e
+    except Exception as e:
+        if dst_file_tmp.exists():
+            dst_file_tmp.unlink()
+        print(f"Unexpected error running osc: {e}", file=sys.stderr)
+        raise typer.Exit(code=1) from e
+
+    try:
+        dst_file_tmp.replace(dst_file)
+    except Exception as e:
+        print(f"Error moving temporary file to {dst_file}: {e}", file=sys.stderr)
+        raise typer.Exit(code=1) from e
+
+    print(f"certificate written to {dst_file}")
+
+
+if __name__ == "__main__":  # pragma: no cover
+    app()

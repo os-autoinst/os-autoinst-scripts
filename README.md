@@ -196,6 +196,15 @@ environment variables:
 * `from_email` - The From address for notification emails
 * `force_result` - If set to `1` tickets in the [tracker openqa-force-result](https://progress.opensuse.org/projects/openqav3/issues?query_id=700) can override job results
 
+## Update certificates from OBS
+The script `openqa-update-cert-from-obs` allows downloading the certificate of
+an OBS project.
+
+For more details on how to use, configure, and install systemd units/timers for it, run:
+```bash
+./openqa-update-cert-from-obs --help
+```
+
 ## Contribute
 
 This project lives in https://github.com/os-autoinst/os-autoinst-scripts

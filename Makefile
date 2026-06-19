@@ -103,6 +103,17 @@ clean: ## Clean up generated files
 	$(RM) -r .pytest_cache/
 	find . -name __pycache__ | xargs -r $(RM) -r
 
+install-systemd-local: ## Install contained systemd units for local use (not meant for packaging)
+	install -d -m 755 "$(DESTDIR)"/etc/systemd/system
+	for i in systemd/*.{service,timer}; do \
+		install -m 644 $$i "$(DESTDIR)"/etc/systemd/system ;\
+	done
+	install -d -m 755 "$(DESTDIR)"/etc/systemd/user
+	for i in systemd/user/*.{service,timer}; do \
+		install -m 644 $$i "$(DESTDIR)"/etc/systemd/user ;\
+	done
+	find "$(DESTDIR)"/etc/systemd -name '*.service' -exec sed -i -e "s|/opt/os-autoinst-scripts|$(PWD)|g" {} \+
+
 #------------------------------------------------------------------------------
 # Internal targets
 #------------------------------------------------------------------------------

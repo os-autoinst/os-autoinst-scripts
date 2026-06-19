@@ -1,0 +1,10 @@
+[Unit]
+Description=Update the certificate of SUSE-internal builds needed for SecureBoot
+
+[Timer]
+OnCalendar=weekly
+Persistent=true
+Unit=os-autoinst-scripts-update-cert-from-obs@suse-unsupported.service
+
+[Install]
+WantedBy=timers.target
