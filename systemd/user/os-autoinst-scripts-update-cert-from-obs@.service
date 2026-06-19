@@ -1,0 +1,13 @@
+[Unit]
+Description=Update a certificate from OBS
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/bash /opt/os-autoinst-scripts/openqa-update-cert-from-obs /opt/os-autoinst-scripts/config/obs-certs/%i.conf
+Restart=on-failure
+RestartSec=10m
+
+[Install]
+WantedBy=default.target

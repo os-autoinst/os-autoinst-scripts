@@ -196,6 +196,39 @@ environment variables:
 * `from_email` - The From address for notification emails
 * `force_result` - If set to `1` tickets in the [tracker openqa-force-result](https://progress.opensuse.org/projects/openqav3/issues?query_id=700) can override job results
 
+## Update certificates from OBS
+The script `openqa-update-cert-from-obs` allows downloading the certificate of
+an OBS project. These certificates are so far used to run SecureBoot-enabled
+tests with images that are signed with them. The directory `config/obs-certs`
+contains configurations for this script.
+
+There are also systemd units/timers provided which can be installed locally. Run
+these commands with the user that should execute the updates regularly:
+
+```
+$ make install-systemd-local DESTDIR=/tmp/install
+$ cp -vR /tmp/install/etc/systemd/user/ ~/.config/systemd/
+$ systemctl --user daemon-reload
+```
+
+The user needs an osc configuration and write permissions under the openQA assets
+directory.
+
+The timer units can be enabled like that:
+```
+$ loginctl enable-linger
+$ systemctl --user enable --now os-autoinst-scripts-update-factory-staging-cert.timer
+```
+
+The service units can be started out of schedule like that:
+```
+$ systemctl --user start os-autoinst-scripts-update-cert-from-obs@factory-staging.service
+$ journalctl --user -u os-autoinst-scripts-update-cert-from-obs@factory-staging.service
+Starting Update a certificate from OBS...
+certificate from '…' written to '…/openqa/share/factory/other/fixed/openSUSE-Factory-Staging.crt'
+Finished Update a certificate from OBS.
+```
+
 ## Contribute
 
 This project lives in https://github.com/os-autoinst/os-autoinst-scripts

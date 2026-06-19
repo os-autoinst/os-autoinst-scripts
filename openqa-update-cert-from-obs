@@ -1,0 +1,16 @@
+#!/bin/bash
+set -e
+
+config=${1:?Path to config file needs to be specified as first argument}
+# shellcheck source=config/obs-certs/factory-staging.conf
+source "$config"
+
+src=${OBS_PROJECT:?OBS_PROJECT needs to be set in $config}
+dst=${OPENQA_BASEDIR:-/var/lib}/openqa/share/factory/other/fixed
+dst_file=$dst/${CRT_NAME:?CRT_NAME needs to be set in $config}
+dst_file_tmp=$dst_file.tmp
+
+mkdir -p "$dst"
+osc --apiurl "${OBS_API_URL:-https://api.opensuse.org}" signkey --sslcert "$src" > "$dst_file_tmp"
+mv "$dst_file_tmp" "$dst_file"
+echo "certificate from '$src' written to '$dst_file'"
