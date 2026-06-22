@@ -20,6 +20,7 @@ Command-line Arguments:
     -t, --token-name      : (Required) The name of the Project Access Token to monitor.
     -c, --ci-var-name    : (Optional) Overrides the default CI variable name (CI_PUSH_TOKEN)
 """
+
 import argparse
 import logging
 import os
@@ -47,8 +48,9 @@ def create_or_update_ci_pipeline(gl_proj: Project, token_expiry_date: date) -> N
     """Create a new or update existing scheduled CI pipeline for Token Rotation using newly generated token."""
     sched_exists = False
     # Keep CI Schedule to run two day before DAYS_UNTIL_TOKEN_ROTATION
-    rotation_date = datetime(token_expiry_date.year, token_expiry_date.month, token_expiry_date.day, 23, 55,
-                             0, 0, tzinfo=timezone.utc) - timedelta(days=(DAYS_UNTIL_TOKEN_ROTATION - 2))
+    rotation_date = datetime(
+        token_expiry_date.year, token_expiry_date.month, token_expiry_date.day, 23, 55, 0, 0, tzinfo=timezone.utc
+    ) - timedelta(days=(DAYS_UNTIL_TOKEN_ROTATION - 2))
     cron_sched = rotation_date.strftime("%M %H %d %m *")
     # List all schedules (use get_all=True to bypass default pagination)
     schedules = gl_proj.pipelineschedules.list(get_all=True)
@@ -73,7 +75,7 @@ def create_or_update_ci_pipeline(gl_proj: Project, token_expiry_date: date) -> N
             "description": CI_ROTATE_SCHED_DESC,
             "cron": cron_sched,
             "cron_timezone": "UTC",
-            "active": True
+            "active": True,
         })
         new_sched.save()
 
@@ -107,10 +109,12 @@ def fetch_tokenid_by_name(gl_proj: Project, tok_name: str) -> int:
 def main() -> None:
     """Run the main execution of the script."""
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=CustomFormatter)
-    parser.add_argument("-t", "--token-name", type=str, required=True, default=None,
-                        help="Project Access Token Name (default: None)")
-    parser.add_argument("-c", "--ci-var-name", type=str, default=CI_VAR_KEY,
-                        help="CI Variable Name holding Project Access Token Value")
+    parser.add_argument(
+        "-t", "--token-name", type=str, required=True, default=None, help="Project Access Token Name (default: None)"
+    )
+    parser.add_argument(
+        "-c", "--ci-var-name", type=str, default=CI_VAR_KEY, help="CI Variable Name holding Project Access Token Value"
+    )
     args = parser.parse_args()
 
     proj_access_tok_key = args.token_name
@@ -150,8 +154,9 @@ def main() -> None:
         # access_levels:
         # 10 (Guest), 15 (Planner), 20 (Reporter), 25 (Security Manager)
         # 30 (Developer), 40 (Maintainer), and 50 (Owner)
-        new_access_tok = access_token.rotate(self_rotate=True, access_level=40,
-                                             expires_at=expiry_date.strftime("%Y-%m-%d"))
+        new_access_tok = access_token.rotate(
+            self_rotate=True, access_level=40, expires_at=expiry_date.strftime("%Y-%m-%d")
+        )
         logger.info("New Token ID: %s valid upto: %s", new_access_tok.get("id"), expires_at_date)
         update_ci_var(ci_var_name, new_access_tok.get("token"))
     else:
