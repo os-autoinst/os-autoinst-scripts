@@ -163,7 +163,7 @@ def comment_on_failed_jobs(
     host_val: str,
 ) -> None:
     if not comment_on_obs or not obs_package_name:
-        raise typer.Exit(code=1)
+        return
 
     log.info("Posting comment with failed jobs to OBS")
     delete_old_comments(osc_cmd_str, obs_component, obs_package_name)
@@ -175,7 +175,6 @@ def comment_on_failed_jobs(
     comment_text += f"groupid={openqa_groupid_val}"
 
     post_comment(osc_cmd_str, obs_component, obs_package_name, comment_text)
-    raise typer.Exit(code=1)
 
 
 def monitor_single_job(
@@ -297,6 +296,7 @@ def main(
         openqa_groupid_val=openqa_groupid_val,
         host_val=host_val,
     )
+    raise typer.Exit(code=1)
 
 
 if __name__ == "__main__":  # pragma: no cover

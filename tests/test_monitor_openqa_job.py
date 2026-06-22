@@ -186,18 +186,13 @@ def test_main_flow(
 
 
 @pytest.mark.parametrize(
-    ("pkg", "comment_obs", "expected_exit"),
-    [
-        ("pkg", "", 1),
-        ("pkg", "1", 1),
-    ],
+    ("pkg", "comment_obs"),
+    [("pkg", ""), ("pkg", "1")],
 )
-def test_comment_on_failed_jobs(mocker: MockerFixture, pkg: str, comment_obs: str, expected_exit: int) -> None:
+def test_comment_on_failed_jobs(mocker: MockerFixture, pkg: str, comment_obs: str) -> None:
     mock_del = mocker.patch("monitor_job.delete_old_comments")
     mock_post = mocker.patch("monitor_job.post_comment")
-    with pytest.raises(typer.Exit) as exc:
-        monitor_job.comment_on_failed_jobs("osc", "package", pkg, comment_obs, [1], {"1": 1}, "24", "http://host")
-    assert exc.value.exit_code == expected_exit
+    monitor_job.comment_on_failed_jobs("osc", "package", pkg, comment_obs, [1], {"1": 1}, "24", "http://host")
     if comment_obs:
         mock_del.assert_called_once()
         mock_post.assert_called_once()
