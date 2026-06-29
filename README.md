@@ -229,6 +229,25 @@ certificate from '…' written to '…/openqa/share/factory/other/fixed/openSUSE
 Finished Update a certificate from OBS.
 ```
 
+In production you might want to use a distinct user, e.g.:
+```
+$ sudo useradd -mG users osc
+$ sudo usermod -a -G nogroup osc
+$ sudo chmod 775 /var/lib/openqa/factory/other/fixed
+$ sudo chown geekotest:nogroup /var/lib/openqa/factory/other/fixed
+```
+
+When adding a user that way, you need to call `loginctl`, `systemctl` and
+`journalctl` in a special way, e.g.:
+```
+$ sudo loginctl enable-linger osc
+$ sudo systemctl --machine=osc@.host --user daemon-reload
+$ sudo systemctl --machine=osc@.host --user enable --now os-autoinst-scripts-update-factory-staging-cert.timer
+$ sudo systemctl --machine=osc@.host --user status os-autoinst-scripts-update-factory-staging-cert.timer
+$ sudo systemctl --machine=osc@.host --user start os-autoinst-scripts-update-cert-from-obs@factory-staging.service
+$ sudo journalctl _UID="$(id -u osc)" _SYSTEMD_USER_UNIT=os-autoinst-scripts-update-cert-from-obs@factory-staging.service
+```
+
 ## Contribute
 
 This project lives in https://github.com/os-autoinst/os-autoinst-scripts
