@@ -20,6 +20,6 @@ jobs:
       OPENQA_API_KEY: ${{ secrets.OPENQA_API_KEY }}
       OPENQA_API_SECRET: ${{ secrets.OPENQA_API_SECRET }}
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
       - run: |
           ./trigger-pflash-test
