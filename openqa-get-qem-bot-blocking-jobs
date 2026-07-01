@@ -1,0 +1,155 @@
+#!/usr/bin/env python3
+# Copyright SUSE LLC
+# ruff: noqa: PLR0913, PLR0917, T201, S107
+"""Find blocking SLE maintenance jobs based on parsing gitlab CI job logs of qem-bot."""
+
+import logging
+import re
+import sys
+from pathlib import Path
+from typing import Annotated, Any
+
+import httpx
+import typer
+
+app = typer.Typer(add_completion=False)
+log = logging.getLogger(__name__)
+
+
+def setup_logging(verbose: int) -> None:
+    """Set up logging level based on verbosity count."""
+    verbose_to_level = {0: logging.WARNING, 1: logging.INFO}
+    level = verbose_to_level.get(verbose, logging.DEBUG)
+    logging.basicConfig(level=level, format="%(levelname)s: %(message)s", stream=sys.stderr, force=True)
+
+
+def get_gitlab_access_token(filename: str) -> str:
+    """Read the gitlab access token from the given filename."""
+    token_path = Path(filename).expanduser()
+    log.debug("Reading GitLab access token from %s", token_path)
+    try:
+        return token_path.read_text(encoding="utf-8").strip()
+    except Exception as e:
+        log.exception("Error reading gitlab access token file '%s'", filename)
+        raise typer.Exit(code=1) from e
+
+
+def get_gitlab_jobs(
+    client: httpx.Client, gitlab_url: str, project_id: int, headers: dict[str, str]
+) -> list[dict[str, Any]]:
+    """Fetch GitLab jobs for the project."""
+    jobs_url = f"{gitlab_url}/api/v4/projects/{project_id}/jobs"
+    log.info("Fetching GitLab jobs from project %d", project_id)
+    log.debug("GitLab jobs URL: %s", jobs_url)
+    response = client.get(jobs_url, headers=headers)
+    response.raise_for_status()
+    return response.json()
+
+
+def get_gitlab_job_raw(
+    client: httpx.Client, gitlab_url: str, project_id: int, job_id: int, headers: dict[str, str]
+) -> str:
+    """Fetch the raw trace log of a GitLab job via the API."""
+    job_raw_url = f"{gitlab_url}/api/v4/projects/{project_id}/jobs/{job_id}/trace"
+    log.info("Fetching raw log of GitLab job %d", job_id)
+    log.debug("GitLab job raw URL: %s", job_raw_url)
+    response = client.get(job_raw_url, headers=headers)
+    response.raise_for_status()
+    return response.text
+
+
+def extract_openqa_job_ids(raw_content: str) -> list[str]:
+    """Extract unique openQA job IDs from the GitLab job log."""
+    log.debug("Parsing GitLab job log for openQA job IDs")
+    openqa_job_ids = list(
+        dict.fromkeys(
+            parts[1].split()[0]
+            for line in raw_content.splitlines()
+            if "not-ignored job" in line and len(parts := line.split("/t")) > 1
+        )
+    )
+    log.info("Extracted openQA job IDs: %s", openqa_job_ids)
+    return openqa_job_ids
+
+
+def get_openqa_job_info(client: httpx.Client, openqa_url: str, job_id: str) -> dict[str, Any]:
+    """Fetch details of an openQA job."""
+    openqa_job_url = f"{openqa_url}/api/v1/jobs/{job_id}"
+    log.info("Fetching openQA job info for %s", job_id)
+    log.debug("openQA job URL: %s", openqa_job_url)
+    response = client.get(openqa_job_url)
+    response.raise_for_status()
+    return response.json()
+
+
+def process_openqa_job(client: httpx.Client, openqa_url: str, job_id: str, compiled_regex: re.Pattern[str]) -> None:
+    """Fetch openQA job, format output, and print if matched by regex."""
+    log.debug("Processing openQA job %s", job_id)
+    job_info = get_openqa_job_info(client, openqa_url, job_id).get("job", {})
+    output = f"{openqa_url}/t{job_info.get('id')}: {job_info.get('group')} / {job_info.get('parent_group')}"
+    if compiled_regex.search(output):
+        log.info("Job matched regex: %s", output)
+        print(output)
+    else:
+        log.debug("Job did not match regex: %s", output)
+
+
+def find_blocking_jobs(
+    client: httpx.Client,
+    project_id: int,
+    job_name: str,
+    gitlab_url: str,
+    openqa_url: str,
+    filter_regex: str,
+    headers: dict[str, str],
+) -> None:
+    """Find and print blocking SLE maintenance jobs from GitLab and openQA."""
+    log.info("Starting blocking jobs search")
+    log.debug("Filter regex pattern: %s", filter_regex)
+    jobs = get_gitlab_jobs(client, gitlab_url, project_id, headers)
+    filtered_job = next((job for job in jobs if job.get("name") == job_name), None)
+    if not filtered_job:
+        log.error("Job with name '%s' not found.", job_name)
+        raise typer.Exit(code=1)
+
+    raw_content = get_gitlab_job_raw(client, gitlab_url, project_id, filtered_job["id"], headers)
+    openqa_job_ids = extract_openqa_job_ids(raw_content)
+    compiled_regex = re.compile(filter_regex)
+
+    for job_id in openqa_job_ids:
+        process_openqa_job(client, openqa_url, job_id, compiled_regex)
+
+
+@app.command()
+def main(
+    project_id: Annotated[int, typer.Option(help="GitLab project ID")] = 6096,
+    job_name: Annotated[str, typer.Option(help="Name of the GitLab job to filter")] = "approve submissions",
+    gitlab_url: Annotated[str, typer.Option(help="GitLab API URL")] = "https://gitlab.suse.de",
+    openqa_url: Annotated[str, typer.Option(help="openQA API URL")] = "https://openqa.suse.de",
+    filter_regex: Annotated[
+        str, typer.Option(help="Regex to filter openQA job groups")
+    ] = r"(Container|Cloud|SLEM|Minimal.*VM)",
+    gitlab_access_token_file: Annotated[
+        str, typer.Option(help="Path to GitLab access token file")
+    ] = "~/.gitlab_access_token_suse_de",
+    verbose: Annotated[int, typer.Option("--verbose", "-v", count=True, help="Increase verbosity")] = 0,
+) -> None:
+    """Find blocking SLE maintenance jobs based on parsing gitlab CI job logs of qem-bot."""
+    setup_logging(verbose)
+    private_token = get_gitlab_access_token(gitlab_access_token_file)
+    headers = {"PRIVATE-TOKEN": private_token}
+
+    with httpx.Client() as client:
+        find_blocking_jobs(
+            client=client,
+            project_id=project_id,
+            job_name=job_name,
+            gitlab_url=gitlab_url,
+            openqa_url=openqa_url,
+            filter_regex=filter_regex,
+            headers=headers,
+        )
+
+
+if __name__ == "__main__":
+    app()
