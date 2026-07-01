@@ -122,6 +122,11 @@ create_devel_openqa_snapshot() {
     if [[ $staged_packages ]]; then
         echo "+++ NOTE+++ Only triggering tests from $src_project (not overriding $staging_project and doing a submission) because $staging_project still contains packages. You might need to do a manual cleanup if no other pipeline is running. Packages: $staged_packages" \
             | tee job_post_skip_submission
+        local staging_project_url="https://build.opensuse.org/project/show/$staging_project"
+        if curl -sL "$staging_project_url" | grep -q Days; then
+            echo "Stale packages have not been cleaned up in 1+ days. Check $staging_project_url"
+            return 1
+        fi
         staging_project=$src_project
         return
     elif [[ -e job_post_skip_submission ]]; then
