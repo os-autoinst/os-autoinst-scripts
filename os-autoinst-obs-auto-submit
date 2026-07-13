@@ -28,10 +28,12 @@ log = logging.getLogger(__name__)
 # Target-specific mappings
 git_branches = {
     "openSUSE:Leap:16.0": "leap-16.0",
+    "openSUSE:Leap:16.1": "leap-16.1",
 }
 
 throttle_variables = {
     "openSUSE:Leap:16.0": "throttle_days_leap_16",
+    "openSUSE:Leap:16.1": "throttle_days_leap_16",
 }
 
 
@@ -735,7 +737,7 @@ def main(
     git_user: Annotated[str, typer.Option(envvar="git_user")] = "os-autoinst-obs-workflow",
     submit_target_extra: Annotated[
         str, typer.Option(envvar="submit_target_extra")
-    ] = "openSUSE:Backports:SLE-15-SP7:Update,openSUSE:Leap:16.0",
+    ] = "openSUSE:Backports:SLE-15-SP7:Update,openSUSE:Leap:16.0,openSUSE:Leap:16.1",
 ) -> None:
     """Prepare and submit os-autoinst packages to target projects like openSUSE:Factory.
 
