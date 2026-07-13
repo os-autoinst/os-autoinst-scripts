@@ -33,7 +33,7 @@ item --key N nbxyz        (N)Netboot.xyz (x86_64 / aarch64)
 item --key c config       Configure settings
 item --key i shell        (i)Drop to iPXE shell
 item reboot               Reboot computer
-item
+item --gap --             --------------------------------------------------------------------------
 item --key x exit         Exit iPXE and continue BIOS boot 
 
 choose --timeout ${menu-timeout} --default exit selected || goto cancel
