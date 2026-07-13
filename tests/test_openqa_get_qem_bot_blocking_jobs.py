@@ -86,6 +86,29 @@ def test_extract_openqa_job_ids(raw_content: str, expected: list[str]) -> None:
     assert blocking_jobs.extract_openqa_job_ids(raw_content) == expected
 
 
+@pytest.mark.parametrize(
+    ("pattern", "expected"),
+    [
+        (r"git:", ["22778588"]),
+        (r"smelt:44345", ["22871672"]),
+        (r"non_existent", []),
+    ],
+    ids=[
+        "match_all_git_submissions",
+        "match_specific_smelt_submission",
+        "no_matching_submission_pattern",
+    ],
+)
+def test_extract_openqa_job_ids_with_submission_regex(pattern: str, expected: list[str]) -> None:
+    raw_content = (
+        "2026-06-17 INFO Found not-ok, not-ignored job https://o.de/t22778588 for submission git:5254\n"
+        "2026-06-17 INFO Found not-ok, not-ignored job https://o.de/t22871672 for submission smelt:44345\n"
+        "2026-06-17 INFO Found not-ok, not-ignored job https://o.de/t22871672 for submission smelt:44495"
+    )
+    regex = re.compile(pattern)
+    assert blocking_jobs.extract_openqa_job_ids(raw_content, regex) == expected
+
+
 def test_get_openqa_job_info(mock_client: MagicMock) -> None:
     mock_client.get.return_value.json.return_value = {"job": {"id": 12345, "group": "Container"}}
 
@@ -144,7 +167,29 @@ def test_find_blocking_jobs_success(mocker: MockerFixture, mock_client: MagicMoc
 
     mock_get_jobs.assert_called_once()
     mock_get_raw.assert_called_once_with(mock_client, "http://gitlab", 6096, 1, {})
-    mock_extract.assert_called_once_with("logs")
+    mock_extract.assert_called_once_with("logs", None)
+    mock_process.assert_called_once()
+
+
+def test_find_blocking_jobs_with_submission(mocker: MockerFixture, mock_client: MagicMock) -> None:
+    mock_get_jobs = mocker.patch(
+        "blocking_jobs.get_gitlab_jobs",
+        return_value=[{"id": 1, "name": "approve submissions"}],
+    )
+    mock_get_raw = mocker.patch("blocking_jobs.get_gitlab_job_raw", return_value="logs")
+    mock_extract = mocker.patch("blocking_jobs.extract_openqa_job_ids", return_value=["12345"])
+    mock_process = mocker.patch("blocking_jobs.process_openqa_job")
+
+    blocking_jobs.find_blocking_jobs(
+        mock_client, 6096, "approve submissions", "http://gitlab", "http://openqa", "Container", {}, "git:5254"
+    )
+
+    mock_get_jobs.assert_called_once()
+    mock_get_raw.assert_called_once_with(mock_client, "http://gitlab", 6096, 1, {})
+    mock_extract.assert_called_once()
+    called_args = mock_extract.call_args[0]
+    assert called_args[0] == "logs"
+    assert called_args[1].pattern == "git:5254"
     mock_process.assert_called_once()
 
 

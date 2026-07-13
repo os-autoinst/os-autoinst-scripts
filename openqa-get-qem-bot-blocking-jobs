@@ -8,6 +8,8 @@ the absolute source of truth for why qem-bot decides not to approve a submission
 which cannot be determined by simply querying the high-level dashboard.
 """
 
+from __future__ import annotations
+
 import logging
 import re
 import sys
@@ -63,14 +65,21 @@ def get_gitlab_job_raw(
     return response.text
 
 
-def extract_openqa_job_ids(raw_content: str) -> list[str]:
+def extract_openqa_job_ids(raw_content: str, submission_regex: re.Pattern[str] | None = None) -> list[str]:
     """Extract unique openQA job IDs from the GitLab job log."""
     log.debug("Parsing GitLab job log for openQA job IDs")
+
+    def matches_submission(line: str) -> bool:
+        if not submission_regex:
+            return True
+        parts = line.split("for submission ")
+        return len(parts) > 1 and bool(submission_regex.search(parts[1].strip()))
+
     openqa_job_ids = list(
         dict.fromkeys(
             parts[1].split()[0]
             for line in raw_content.splitlines()
-            if "not-ignored job" in line and len(parts := line.split("/t")) > 1
+            if "not-ignored job" in line and len(parts := line.split("/t")) > 1 and matches_submission(line)
         )
     )
     log.info("Extracted openQA job IDs: %s", openqa_job_ids)
@@ -107,6 +116,7 @@ def find_blocking_jobs(
     openqa_url: str,
     filter_regex: str,
     headers: dict[str, str],
+    submission: str | None = None,
 ) -> None:
     """Find and print blocking SLE maintenance jobs from GitLab and openQA."""
     log.info("Starting blocking jobs search")
@@ -118,7 +128,8 @@ def find_blocking_jobs(
         raise typer.Exit(code=1)
 
     raw_content = get_gitlab_job_raw(client, gitlab_url, project_id, filtered_job["id"], headers)
-    openqa_job_ids = extract_openqa_job_ids(raw_content)
+    submission_regex = re.compile(submission) if submission else None
+    openqa_job_ids = extract_openqa_job_ids(raw_content, submission_regex)
     compiled_regex = re.compile(filter_regex)
 
     for job_id in openqa_job_ids:
@@ -134,6 +145,7 @@ def main(
     filter_regex: Annotated[
         str, typer.Option(help="Regex to filter openQA job groups")
     ] = r"(Container|Cloud|SLEM|Minimal.*VM)",
+    submission: Annotated[str | None, typer.Option(help="Regex to filter by submission/request name or ID")] = None,
     gitlab_access_token_file: Annotated[
         str, typer.Option(help="Path to GitLab access token file")
     ] = "~/.gitlab_access_token_suse_de",
@@ -158,6 +170,7 @@ def main(
             openqa_url=openqa_url,
             filter_regex=filter_regex,
             headers=headers,
+            submission=submission,
         )
 
 
