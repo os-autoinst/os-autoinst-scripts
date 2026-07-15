@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright SUSE LLC
-# ruff: noqa: D103, S404, S603, T201, TRY400, S314, S405, FBT001, FBT002, BLE001, C901, E501, SIM112
+# ruff: noqa: D103, S404, S603, T201, TRY400, S314, S405, FBT001, FBT002, BLE001, C901, E501
 """Prepare and submit os-autoinst packages to target projects like openSUSE:Factory."""
 
 import datetime
@@ -725,7 +725,8 @@ class AutoSubmitter:
 
 def _get_packages_to_submit(dst_project: str, osc_cmd_str: str, dry_run: bool) -> list[str]:
     """Determine packages to submit."""
-    packages_env = os.environ.get("packages")
+    key_packages = "packages"
+    packages_env = os.environ.get("PACKAGES", os.environ.get(key_packages))
     if packages_env:
         return packages_env.split()
 
@@ -771,9 +772,12 @@ def _run_submissions(  # noqa: PLR0912, PLR0913, PLR0914, PLR0915, PLR0917
     if not osc_cmd_str:
         osc_cmd_str = f"{prefix} osc" if prefix else "osc"
 
-    git_cmd_str = os.environ.get("git", "git")
-    git_obs_cmd_str = os.environ.get("git_obs", "git-obs")
-    git_obs_no_retry_cmd_str = os.environ.get("git_obs_no_retry", "git-obs")
+    k_git = "git"
+    k_git_obs = "git_obs"
+    k_git_obs_no_retry = "git_obs_no_retry"
+    git_cmd_str = os.environ.get("GIT", os.environ.get(k_git, "git"))
+    git_obs_cmd_str = os.environ.get("GIT_OBS", os.environ.get(k_git_obs, "git-obs"))
+    git_obs_no_retry_cmd_str = os.environ.get("GIT_OBS_NO_RETRY", os.environ.get(k_git_obs_no_retry, "git-obs"))
 
     targets = [submit_target]
     if submit_target_extra and submit_target_extra != "none":
