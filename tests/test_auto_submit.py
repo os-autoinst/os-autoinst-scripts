@@ -111,9 +111,7 @@ def test_has_pending_submission(
     else:
         mock_run.return_value = subprocess.CompletedProcess(["osc"], 0, stdout=sr_stdout)
 
-    res = auto_submit.has_pending_submission(
-        package="openQA",
-        target=target,
+    submitter = auto_submit.AutoSubmitter(
         dst_project="proj",
         throttle_days=days,
         throttle_days_leap_16=days,
@@ -122,13 +120,22 @@ def test_has_pending_submission(
         git_obs_cmd_str="git-obs",
         dry_run=False,
     )
+    res = submitter.has_pending_submission(
+        package="openQA",
+        target=target,
+    )
     assert res is expected
 
 
 def test_make_obs_submit_request_success(mocker: MockerFixture) -> None:
     mocker.patch("auto_submit.get_obs_sr_id", return_value="23")
     mock_run = mocker.patch("auto_submit.run_osc_cmd")
-    res = auto_submit.make_obs_submit_request("pkg", "Factory", "3.14", "dst", "osc", False)
+    submitter = auto_submit.AutoSubmitter(
+        dst_project="dst",
+        osc_cmd_str="osc",
+        dry_run=False,
+    )
+    res = submitter.make_obs_submit_request("pkg", "Factory", "3.14")
     assert res is True
     mock_run.assert_called_once_with(
         ["osc", "sr", "-s", "23", "-m", "Update to 3.14", "Factory"], dry_run=False, mutating=True
@@ -138,7 +145,12 @@ def test_make_obs_submit_request_success(mocker: MockerFixture) -> None:
 def test_make_obs_submit_request_new(mocker: MockerFixture) -> None:
     mocker.patch("auto_submit.get_obs_sr_id", return_value="")
     mock_run = mocker.patch("auto_submit.run_osc_cmd")
-    res = auto_submit.make_obs_submit_request("pkg", "Factory", "3.14", "dst", "osc", False)
+    submitter = auto_submit.AutoSubmitter(
+        dst_project="dst",
+        osc_cmd_str="osc",
+        dry_run=False,
+    )
+    res = submitter.make_obs_submit_request("pkg", "Factory", "3.14")
     assert res is True
     mock_run.assert_called_once_with(["osc", "sr", "-m", "Update to 3.14", "Factory"], dry_run=False, mutating=True)
 
@@ -146,7 +158,12 @@ def test_make_obs_submit_request_new(mocker: MockerFixture) -> None:
 def test_make_obs_submit_request_failure(mocker: MockerFixture) -> None:
     mocker.patch("auto_submit.get_obs_sr_id", return_value="")
     mock_run = mocker.patch("auto_submit.run_osc_cmd", side_effect=subprocess.CalledProcessError(1, "sr"))
-    res = auto_submit.make_obs_submit_request("pkg", "Factory", "3.14", "dst", "osc", False)
+    submitter = auto_submit.AutoSubmitter(
+        dst_project="dst",
+        osc_cmd_str="osc",
+        dry_run=False,
+    )
+    res = submitter.make_obs_submit_request("pkg", "Factory", "3.14")
     assert res is False
 
 

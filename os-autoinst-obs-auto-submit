@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright SUSE LLC
-# ruff: noqa: D103, PLR0913, PLR0917, S404, S603, T201, TRY400, S314, S405, FBT001, FBT002, BLE001, C901, PLR0912, PLR0915, PLR0914, PLW0717, PLR1702, E501, SIM112, ARG001
+# ruff: noqa: D103, S404, S603, T201, TRY400, S314, S405, FBT001, FBT002, BLE001, C901, PLR0912, PLR0915, PLR0914, E501, SIM112
 """Prepare and submit os-autoinst packages to target projects like openSUSE:Factory."""
 
 import datetime
@@ -17,6 +17,7 @@ import tempfile
 import time
 import urllib.parse
 import xml.etree.ElementTree as ET
+from dataclasses import dataclass, field
 from typing import Annotated
 
 import httpx
@@ -101,224 +102,6 @@ def get_obs_sr_id(target: str, dst_project: str, package: str, osc_cmd_str: str,
     return ""
 
 
-def wait_for_package_build(
-    target: str,
-    dst_project: str,
-    package: str,
-    osc_poll_interval: int,
-    osc_build_start_poll_tries: int,
-    dry_run: bool,
-) -> bool:
-    log.info("wait_for_package_build %s", target)
-    if dry_run:
-        return True
-
-    target_escaped = target.replace(":", "_")
-    url = f"https://api.opensuse.org/public/build/{dst_project}/_result?repository={target_escaped}&package={package}"
-
-    wip_states = {"unknown", "blocked", "scheduled", "dispatching", "building", "signing", "finished"}
-    bad_states = {"failed", "unresolvable", "broken"}
-
-    attempts = osc_build_start_poll_tries
-    with httpx.Client() as client:
-        while True:
-            try:
-                response = client.get(url, timeout=30.0)
-                response.raise_for_status()
-                content = response.text
-                if any(state in content for state in wip_states):
-                    break
-            except Exception as e:
-                log.warning("Failed to fetch build status: %s", e)
-
-            if attempts <= 0:
-                log.warning("Re-build of %s has not been considered in time", package)
-                break
-
-            log.info("Waiting for re-build of %s to be considered (attempts left: %d)", package, attempts)
-            time.sleep(osc_poll_interval)
-            attempts -= 1
-
-        while True:
-            try:
-                response = client.get(url, timeout=30.0)
-                response.raise_for_status()
-                content = response.text
-                if not any(state in content for state in wip_states):
-                    break
-            except Exception as e:
-                log.warning("Failed to fetch build status: %s", e)
-
-            log.info("Waiting while %s is in progress", package)
-            time.sleep(osc_poll_interval)
-
-        try:
-            response = client.get(url, timeout=30.0)
-            response.raise_for_status()
-            content = response.text
-            if any(state in content for state in bad_states):
-                log.info("Building %s has failed, skipping submission", package)
-                return False
-        except Exception as e:
-            log.warning("Failed to fetch final build status: %s", e)
-
-    return True
-
-
-def make_obs_submit_request(
-    package: str,
-    target: str,
-    version: str,
-    dst_project: str,
-    osc_cmd_str: str,
-    dry_run: bool,
-) -> bool:
-    req = get_obs_sr_id(target, dst_project, package, osc_cmd_str, dry_run)
-    cmd = [*shlex.split(osc_cmd_str), "sr"]
-    if req:
-        cmd.extend(["-s", req])
-    cmd.extend(["-m", f"Update to {version}", target])
-
-    try:
-        run_osc_cmd(cmd, dry_run=dry_run, mutating=True)
-    except subprocess.CalledProcessError as e:
-        log.error("make_obs_submit_request failed: %s", e)
-        return False
-    else:
-        return True
-
-
-def make_git_submit_request(
-    package: str,
-    target: str,
-    version: str,
-    branch: str,
-    git_cmd_str: str,
-    git_obs_cmd_str: str,
-    git_obs_no_retry_cmd_str: str,
-    dry_run: bool,
-) -> bool:
-    title = f"Update to {version}"
-    description = "Automatic submission via https://github.com/os-autoinst/os-autoinst-scripts/blob/master/os-autoinst-obs-auto-submit"
-
-    git_dir = pathlib.Path("../git-repos").resolve()
-    if not dry_run:
-        git_dir.mkdir(parents=True, exist_ok=True)
-
-    git_cmd = shlex.split(git_cmd_str)
-    git_obs_cmd = shlex.split(git_obs_cmd_str)
-    git_obs_no_retry_cmd = shlex.split(git_obs_no_retry_cmd_str)
-
-    fork_cmd = [*git_obs_cmd, "repo", "fork", f"pool/{package}"]
-    if dry_run:
-        log.info("[dry-run] Would execute: %s", " ".join(fork_cmd))
-        forked_repo = f"pool/{package}"
-    else:
-        try:
-            res = subprocess.run(fork_cmd, capture_output=True, text=True, check=True)
-            match = re.search(r"Fork .*: (.*)", res.stderr + "\n" + res.stdout)
-            forked_repo = match.group(1).strip() if match else ""
-        except subprocess.CalledProcessError as e:
-            log.error("Unable to create fork: %s", e.stderr)
-            return False
-
-    if not forked_repo:
-        log.error("Forked repository name not found in fork command output.")
-        return False
-
-    clone_cmd = [*git_obs_cmd, "repo", "clone", "--no-ssh-strict-host-key-checking", forked_repo]
-    if dry_run:
-        log.info("[dry-run] Would execute: %s", " ".join(clone_cmd))
-    else:
-        try:
-            subprocess.run(clone_cmd, check=True)
-        except subprocess.CalledProcessError as e:
-            log.error("Clone failed: %s", e)
-            return False
-
-    original_dir = pathlib.Path.cwd()
-    if not dry_run:
-        os.chdir(package)
-
-    try:
-        switch_cmd = [*git_cmd, "switch", branch]
-        fetch_cmd = [*git_cmd, "fetch", "parent"]
-        reset_cmd = [*git_cmd, "reset", "--hard", f"parent/{branch}"]
-
-        if dry_run:
-            log.info("[dry-run] Would execute: %s", " ".join(switch_cmd))
-            log.info("[dry-run] Would execute: %s", " ".join(fetch_cmd))
-            log.info("[dry-run] Would execute: %s", " ".join(reset_cmd))
-            log.info("[dry-run] Would replace files in clone with files from ../../%s/*", package)
-        else:
-            subprocess.run(switch_cmd, check=True)
-            subprocess.run(fetch_cmd, check=True)
-            subprocess.run(reset_cmd, check=True)
-
-            for item in pathlib.Path().iterdir():
-                if item.name == ".git":
-                    continue
-                if item.is_dir():
-                    shutil.rmtree(item)
-                else:
-                    item.unlink()
-
-            source_dir = original_dir / ".." / ".." / package
-            for item in source_dir.iterdir():
-                if item.is_file():
-                    shutil.copy2(item, ".")
-                elif item.is_dir() and item.name != ".osc":
-                    shutil.copytree(item, item.name)
-
-        add_cmd = [*git_cmd, "add", "--all"]
-        commit_cmd = [*git_cmd, "commit", "--message", title]
-        push_cmd = [*git_cmd, "push", "-f"]
-
-        if dry_run:
-            log.info("[dry-run] Would execute: %s", " ".join(add_cmd))
-            log.info("[dry-run] Would execute: %s", " ".join(commit_cmd))
-            log.info("[dry-run] Would execute: %s", " ".join(push_cmd))
-        else:
-            subprocess.run(add_cmd, check=True)
-            subprocess.run(commit_cmd, check=True)
-            subprocess.run(push_cmd, check=True)
-
-        pr_cmd = [
-            *git_obs_no_retry_cmd,
-            "pr",
-            "create",
-            "--title",
-            title,
-            "--description",
-            description,
-            f"--target-branch={branch}",
-        ]
-        if dry_run:
-            log.info("[dry-run] Would execute: %s", " ".join(pr_cmd))
-        else:
-            sleep_time = 3
-            remaining_attempts = 4
-            while True:
-                res = subprocess.run(pr_cmd, capture_output=True, text=True, check=False)
-                if res.returncode == 0:
-                    break
-                pr_out = res.stderr + "\n" + res.stdout
-                print(pr_out)
-                if "pull request already exists" in pr_out:
-                    break
-                remaining_attempts -= 1
-                if remaining_attempts < 1:
-                    log.error("Failed to create PR after multiple attempts.")
-                    return False
-                log.info("Retrying up to %d more times after sleeping %d s ...", remaining_attempts, sleep_time)
-                time.sleep(sleep_time)
-                sleep_time *= 2
-    finally:
-        os.chdir(original_dir)
-
-    return True
-
-
 def last_revision(project: str, package: str, submit_target: str, osc_cmd_str: str) -> str:
     log.debug("last_revision %s %s", project, package)
     filename = f"{package}.changes"
@@ -347,17 +130,18 @@ def get_spec_changes_in_requirements(package: str, project_dir: str) -> str:
     try:
         lines1 = factory_spec.read_text(encoding="utf-8", errors="ignore").splitlines()
         lines2 = project_spec.read_text(encoding="utf-8", errors="ignore").splitlines()
-        diff = difflib.unified_diff(lines1, lines2, lineterm="")
-        requires_lines = []
-        for line in diff:
-            if line.startswith(("+", "-")) and not line.startswith("+++") and not line.startswith("---"):
-                content = line[1:].strip()
-                if content.startswith("Requires"):
-                    requires_lines.append(line)
-        return "\n".join(requires_lines)
     except Exception as e:
         log.warning("Failed to compute spec diff: %s", e)
-    return ""
+        return ""
+
+    diff = difflib.unified_diff(lines1, lines2, lineterm="")
+    requires_lines = []
+    for line in diff:
+        if line.startswith(("+", "-")) and not line.startswith("+++") and not line.startswith("---"):
+            content = line[1:].strip()
+            if content.startswith("Requires"):
+                requires_lines.append(line)
+    return "\n".join(requires_lines)
 
 
 def generate_changelog(dir_path: str, package: str, submit_target: str, osc_cmd_str: str) -> None:
@@ -391,38 +175,270 @@ def generate_changelog(dir_path: str, package: str, submit_target: str, osc_cmd_
     dest_path.write_text(changelog_content, encoding="utf-8")
 
 
-def has_pending_submission(
-    package: str,
-    target: str,
-    dst_project: str,
-    throttle_days: int,
-    throttle_days_leap_16: int,
-    git_user: str,
-    osc_cmd_str: str,
-    git_obs_cmd_str: str,
-    dry_run: bool,
-) -> bool:
-    git_branch = git_branches.get(target)
-    throttle_var = throttle_variables.get(target, "throttle_days")
-    throttle_days_value = throttle_days_leap_16 if throttle_var == "throttle_days_leap_16" else throttle_days
-    if throttle_days_value == 0:
+@dataclass
+class AutoSubmitter:
+    """Automate the preparation and submission of packages."""
+
+    src_project: str = "devel:openQA"
+    dst_project: str = ""
+    staging_project: str = ""
+    submit_target: str = "openSUSE:Factory"
+    dry_run: bool = False
+    osc_poll_interval: int = 2
+    osc_build_start_poll_tries: int = 90
+    throttle_days: int = 2
+    throttle_days_leap_16: int = 7
+    git_user: str = "os-autoinst-obs-workflow"
+    osc_cmd_str: str = "osc"
+    git_cmd_str: str = "git"
+    git_obs_cmd_str: str = "git-obs"
+    git_obs_no_retry_cmd_str: str = "git-obs"
+    targets: list[str] = field(default_factory=list)
+    failed_packages: list[str] = field(default_factory=list)
+
+    def wait_for_package_build(
+        self,
+        target: str,
+        package: str,
+    ) -> bool:
+        """Wait for the package build to complete on OBS."""
+        log.info("wait_for_package_build %s", target)
+        if self.dry_run:
+            return True
+
+        target_escaped = target.replace(":", "_")
+        url = f"https://api.opensuse.org/public/build/{self.dst_project}/_result?repository={target_escaped}&package={package}"
+
+        wip_states = {"unknown", "blocked", "scheduled", "dispatching", "building", "signing", "finished"}
+        bad_states = {"failed", "unresolvable", "broken"}
+
+        attempts = self.osc_build_start_poll_tries
+        with httpx.Client() as client:
+            while True:
+                try:
+                    response = client.get(url, timeout=30.0)
+                    response.raise_for_status()
+                    content = response.text
+                    if any(state in content for state in wip_states):
+                        break
+                except Exception as e:
+                    log.warning("Failed to fetch build status: %s", e)
+
+                if attempts <= 0:
+                    log.warning("Re-build of %s has not been considered in time", package)
+                    break
+
+                log.info("Waiting for re-build of %s to be considered (attempts left: %d)", package, attempts)
+                time.sleep(self.osc_poll_interval)
+                attempts -= 1
+
+            while True:
+                try:
+                    response = client.get(url, timeout=30.0)
+                    response.raise_for_status()
+                    content = response.text
+                    if not any(state in content for state in wip_states):
+                        break
+                except Exception as e:
+                    log.warning("Failed to fetch build status: %s", e)
+
+                log.info("Waiting while %s is in progress", package)
+                time.sleep(self.osc_poll_interval)
+
+            try:
+                response = client.get(url, timeout=30.0)
+                response.raise_for_status()
+                content = response.text
+                if any(state in content for state in bad_states):
+                    log.info("Building %s has failed, skipping submission", package)
+                    return False
+            except Exception as e:
+                log.warning("Failed to fetch final build status: %s", e)
+
         return True
 
-    log.info("has_pending_submission(%s, %s)", package, target)
+    def make_obs_submit_request(
+        self,
+        package: str,
+        target: str,
+        version: str,
+    ) -> bool:
+        """Create an OBS submit request."""
+        req = get_obs_sr_id(target, self.dst_project, package, self.osc_cmd_str, self.dry_run)
+        cmd = [*shlex.split(self.osc_cmd_str), "sr"]
+        if req:
+            cmd.extend(["-s", req])
+        cmd.extend(["-m", f"Update to {version}", target])
 
-    if git_branch:
-        cmd = [
-            *shlex.split(git_obs_cmd_str),
-            "-q",
-            "api",
-            f"repos/pool/{package}/pulls?state=open&sort=recentupdate",
-        ]
         try:
-            res = run_osc_cmd(cmd, dry_run=dry_run, mutating=False)
+            run_osc_cmd(cmd, dry_run=self.dry_run, mutating=True)
+        except subprocess.CalledProcessError as e:
+            log.error("make_obs_submit_request failed: %s", e)
+            return False
+        else:
+            return True
+
+    def make_git_submit_request(
+        self,
+        package: str,
+        _target: str,
+        version: str,
+        branch: str,
+    ) -> bool:
+        """Create a Gitea pull request."""
+        title = f"Update to {version}"
+        description = "Automatic submission via https://github.com/os-autoinst/os-autoinst-scripts/blob/master/os-autoinst-obs-auto-submit"
+
+        git_dir = pathlib.Path("../git-repos").resolve()
+        if not self.dry_run:
+            git_dir.mkdir(parents=True, exist_ok=True)
+
+        git_cmd = shlex.split(self.git_cmd_str)
+        git_obs_cmd = shlex.split(self.git_obs_cmd_str)
+        git_obs_no_retry_cmd = shlex.split(self.git_obs_no_retry_cmd_str)
+
+        fork_cmd = [*git_obs_cmd, "repo", "fork", f"pool/{package}"]
+        if self.dry_run:
+            log.info("[dry-run] Would execute: %s", " ".join(fork_cmd))
+            forked_repo = f"pool/{package}"
+        else:
+            try:
+                res = subprocess.run(fork_cmd, capture_output=True, text=True, check=True)
+                match = re.search(r"Fork .*: (.*)", res.stderr + "\n" + res.stdout)
+                forked_repo = match.group(1).strip() if match else ""
+            except subprocess.CalledProcessError as e:
+                log.error("Unable to create fork: %s", e.stderr)
+                return False
+
+        if not forked_repo:
+            log.error("Forked repository name not found in fork command output.")
+            return False
+
+        clone_cmd = [*git_obs_cmd, "repo", "clone", "--no-ssh-strict-host-key-checking", forked_repo]
+        if self.dry_run:
+            log.info("[dry-run] Would execute: %s", " ".join(clone_cmd))
+        else:
+            try:
+                subprocess.run(clone_cmd, check=True)
+            except subprocess.CalledProcessError as e:
+                log.error("Clone failed: %s", e)
+                return False
+
+        original_dir = pathlib.Path.cwd()
+        if not self.dry_run:
+            os.chdir(package)
+
+        try:
+            switch_cmd = [*git_cmd, "switch", branch]
+            fetch_cmd = [*git_cmd, "fetch", "parent"]
+            reset_cmd = [*git_cmd, "reset", "--hard", f"parent/{branch}"]
+
+            if self.dry_run:
+                log.info("[dry-run] Would execute: %s", " ".join(switch_cmd))
+                log.info("[dry-run] Would execute: %s", " ".join(fetch_cmd))
+                log.info("[dry-run] Would execute: %s", " ".join(reset_cmd))
+                log.info("[dry-run] Would replace files in clone with files from ../../%s/*", package)
+            else:
+                subprocess.run(switch_cmd, check=True)
+                subprocess.run(fetch_cmd, check=True)
+                subprocess.run(reset_cmd, check=True)
+
+                for item in pathlib.Path().iterdir():
+                    if item.name == ".git":
+                        continue
+                    if item.is_dir():
+                        shutil.rmtree(item)
+                    else:
+                        item.unlink()
+
+                source_dir = original_dir / ".." / ".." / package
+                for item in source_dir.iterdir():
+                    if item.is_file():
+                        shutil.copy2(item, ".")
+                    elif item.is_dir() and item.name != ".osc":
+                        shutil.copytree(item, item.name)
+
+            add_cmd = [*git_cmd, "add", "--all"]
+            commit_cmd = [*git_cmd, "commit", "--message", title]
+            push_cmd = [*git_cmd, "push", "-f"]
+
+            if self.dry_run:
+                log.info("[dry-run] Would execute: %s", " ".join(add_cmd))
+                log.info("[dry-run] Would execute: %s", " ".join(commit_cmd))
+                log.info("[dry-run] Would execute: %s", " ".join(push_cmd))
+            else:
+                subprocess.run(add_cmd, check=True)
+                subprocess.run(commit_cmd, check=True)
+                subprocess.run(push_cmd, check=True)
+
+            pr_cmd = [
+                *git_obs_no_retry_cmd,
+                "pr",
+                "create",
+                "--title",
+                title,
+                "--description",
+                description,
+                f"--target-branch={branch}",
+            ]
+            if self.dry_run:
+                log.info("[dry-run] Would execute: %s", " ".join(pr_cmd))
+            else:
+                sleep_time = 3
+                remaining_attempts = 4
+                while True:
+                    res = subprocess.run(pr_cmd, capture_output=True, text=True, check=False)
+                    if res.returncode == 0:
+                        break
+                    pr_out = res.stderr + "\n" + res.stdout
+                    print(pr_out)
+                    if "pull request already exists" in pr_out:
+                        break
+                    remaining_attempts -= 1
+                    if remaining_attempts < 1:
+                        log.error("Failed to create PR after multiple attempts.")
+                        return False
+                    log.info("Retrying up to %d more times after sleeping %d s ...", remaining_attempts, sleep_time)
+                    time.sleep(sleep_time)
+                    sleep_time *= 2
+        finally:
+            os.chdir(original_dir)
+
+        return True
+
+    def has_pending_submission(
+        self,
+        package: str,
+        target: str,
+    ) -> bool:
+        """Check if there is a pending submission on Gitea or OBS."""
+        git_branch = git_branches.get(target)
+        throttle_var = throttle_variables.get(target, "throttle_days")
+        throttle_days_value = (
+            self.throttle_days_leap_16 if throttle_var == "throttle_days_leap_16" else self.throttle_days
+        )
+        if throttle_days_value == 0:
+            return True
+
+        log.info("has_pending_submission(%s, %s)", package, target)
+
+        if git_branch:
+            cmd = [
+                *shlex.split(self.git_obs_cmd_str),
+                "-q",
+                "api",
+                f"repos/pool/{package}/pulls?state=open&sort=recentupdate",
+            ]
+            try:
+                res = run_osc_cmd(cmd, dry_run=self.dry_run, mutating=False)
+            except Exception as e:
+                log.warning("Gitea PR check failed: %s", e)
+                return True
+
             if res.stdout:
                 pulls = json.loads(res.stdout)
                 for pr in pulls:
-                    if pr.get("base", {}).get("ref") == git_branch and pr.get("user", {}).get("login") == git_user:
+                    if pr.get("base", {}).get("ref") == git_branch and pr.get("user", {}).get("login") == self.git_user:
                         updated_at_str = pr.get("updated_at", "")
                         dt_str = updated_at_str.replace("Z", "+00:00")
                         dt = datetime.datetime.fromisoformat(dt_str)
@@ -432,31 +448,33 @@ def has_pending_submission(
                             log.info(
                                 "Skipping submission, there is the still pending PR '%s' by %s targeting %s younger than %d days.",
                                 pr.get("html_url"),
-                                git_user,
+                                self.git_user,
                                 git_branch,
                                 throttle_days_value,
                             )
                             return False
-        except Exception as e:
-            log.warning("Gitea PR check failed: %s", e)
-    else:
-        cmd = [
-            *shlex.split(osc_cmd_str),
-            "request",
-            "list",
-            "--project",
-            dst_project,
-            "--package",
-            package,
-            "--type",
-            "submit,maintenance_incident",
-            "--state",
-            "new,review",
-            "--days",
-            str(throttle_days_value),
-        ]
-        try:
-            res = run_osc_cmd(cmd, dry_run=dry_run, mutating=False)
+        else:
+            cmd = [
+                *shlex.split(self.osc_cmd_str),
+                "request",
+                "list",
+                "--project",
+                self.dst_project,
+                "--package",
+                package,
+                "--type",
+                "submit,maintenance_incident",
+                "--state",
+                "new,review",
+                "--days",
+                str(throttle_days_value),
+            ]
+            try:
+                res = run_osc_cmd(cmd, dry_run=self.dry_run, mutating=False)
+            except Exception as e:
+                log.warning("OBS SR check failed: %s", e)
+                return True
+
             if target in res.stdout:
                 log.info(
                     "Skipping submission, there is still a pending SR for package %s in project %s younger than %d days.",
@@ -466,265 +484,212 @@ def has_pending_submission(
                 )
                 print(res.stdout)
                 return False
-        except Exception as e:
-            log.warning("OBS SR check failed: %s", e)
 
-    return True
+        return True
 
+    def update_package(
+        self,
+        package: str,
+    ) -> bool:
+        """Update package, trigger builds, and submit to targets."""
+        log.info("update_package %s", package)
 
-def update_package(
-    package: str,
-    dst_project: str,
-    submit_target: str,
-    osc_poll_interval: int,
-    osc_build_start_poll_tries: int,
-    targets: list[str],
-    osc_cmd_str: str,
-    git_cmd_str: str,
-    git_obs_cmd_str: str,
-    git_obs_no_retry_cmd_str: str,
-    throttle_days: int,
-    throttle_days_leap_16: int,
-    git_user: str,
-    dry_run: bool,
-    failed_packages: list[str],
-) -> bool:
-    log.info("update_package %s", package)
+        if pathlib.Path("_service").exists():
+            try:
+                tree = ET.parse("_service")
+            except Exception as e:
+                log.warning("Failed to parse _service file: %s", e)
+                tree = None
 
-    if pathlib.Path("_service").exists():
-        try:
-            tree = ET.parse("_service")
-            root = tree.getroot()
-            for service in root.findall(".//service"):
-                current_mode = service.get("mode")
-                if current_mode != "buildtime":
-                    service.set("mode", "disabled")
-            tree.write("_service", encoding="utf-8", xml_declaration=True)
-        except Exception as e:
-            log.warning("Failed to update _service file: %s", e)
+            if tree is not None:
+                root = tree.getroot()
+                for service in root.findall(".//service"):
+                    current_mode = service.get("mode")
+                    if current_mode != "buildtime":
+                        service.set("mode", "disabled")
+                try:
+                    tree.write("_service", encoding="utf-8", xml_declaration=True)
+                except Exception as e:
+                    log.warning("Failed to write updated _service file: %s", e)
 
-    for f in pathlib.Path().glob("_service:*-test.changes"):
-        f.unlink()
+        for f in pathlib.Path().glob("_service:*-test.changes"):
+            f.unlink()
 
-    osc_dir = pathlib.Path(".osc")
-    if osc_dir.is_dir():
-        for f in osc_dir.glob("*-test.changes"):
-            shutil.copy2(f, ".")
+        osc_dir = pathlib.Path(".osc")
+        if osc_dir.is_dir():
+            for f in osc_dir.glob("*-test.changes"):
+                shutil.copy2(f, ".")
 
-    for f in pathlib.Path().glob("_service:*"):
-        new_name = f.name.split(":")[-1]
-        f.rename(new_name)
+        for f in pathlib.Path().glob("_service:*"):
+            new_name = f.name.split(":")[-1]
+            f.rename(new_name)
 
-    version = ""
-    for spec_file in pathlib.Path().glob("*.spec"):
-        content = spec_file.read_text(encoding="utf-8", errors="ignore")
-        match = re.search(r"^Version:\s*(\S+)", content, re.MULTILINE | re.IGNORECASE)
-        if match:
-            version = match.group(1)
-            break
-    if not version:
-        for obs_file in pathlib.Path().glob("*.obsinfo"):
-            content = obs_file.read_text(encoding="utf-8", errors="ignore")
-            match = re.search(r"^version:\s*(\S+)", content, re.MULTILINE | re.IGNORECASE)
+        version = ""
+        for spec_file in pathlib.Path().glob("*.spec"):
+            content = spec_file.read_text(encoding="utf-8", errors="ignore")
+            match = re.search(r"^Version:\s*(\S+)", content, re.MULTILINE | re.IGNORECASE)
             if match:
                 version = match.group(1)
                 break
+        if not version:
+            for obs_file in pathlib.Path().glob("*.obsinfo"):
+                content = obs_file.read_text(encoding="utf-8", errors="ignore")
+                match = re.search(r"^version:\s*(\S+)", content, re.MULTILINE | re.IGNORECASE)
+                if match:
+                    version = match.group(1)
+                    break
 
-    for f in pathlib.Path().glob("*rpmlintrc"):
-        f.unlink(missing_ok=True)
-    for name in ["_servicedata", "node_modules.sums", "package-lock.json"]:
-        pathlib.Path(name).unlink(missing_ok=True)
+        for f in pathlib.Path().glob("*rpmlintrc"):
+            f.unlink(missing_ok=True)
+        for name in ["_servicedata", "node_modules.sums", "package-lock.json"]:
+            pathlib.Path(name).unlink(missing_ok=True)
 
-    run_osc_cmd([*shlex.split(osc_cmd_str), "addremove"], dry_run=dry_run, mutating=True)
+        run_osc_cmd([*shlex.split(self.osc_cmd_str), "addremove"], dry_run=self.dry_run, mutating=True)
 
-    for spec_file in pathlib.Path().glob("*.spec"):
-        content = spec_file.read_text(encoding="utf-8", errors="ignore")
-        lines = [line for line in content.splitlines() if "rpmlintrc" not in line]
-        spec_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        for spec_file in pathlib.Path().glob("*.spec"):
+            content = spec_file.read_text(encoding="utf-8", errors="ignore")
+            lines = [line for line in content.splitlines() if "rpmlintrc" not in line]
+            spec_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
-    ci_args = []
-    if package == "os-autoinst-distri-opensuse-deps" or "container" in package:
-        ci_args.append("--noservice")
+        ci_args = []
+        if package == "os-autoinst-distri-opensuse-deps" or "container" in package:
+            ci_args.append("--noservice")
 
-    for changes_file in pathlib.Path().glob("*.changes"):
-        content = changes_file.read_text(encoding="utf-8", errors="ignore")
-        content = re.sub(r"^  \* $", "  * Update to latest openQA version", content, flags=re.MULTILINE)
-        changes_file.write_text(content, encoding="utf-8")
+        for changes_file in pathlib.Path().glob("*.changes"):
+            content = changes_file.read_text(encoding="utf-8", errors="ignore")
+            content = re.sub(r"^  \* $", "  * Update to latest openQA version", content, flags=re.MULTILINE)
+            changes_file.write_text(content, encoding="utf-8")
 
-    res_status = run_osc_cmd([*shlex.split(osc_cmd_str), "status"], dry_run=dry_run, mutating=False)
-    relevant_changes = 0
-    if not dry_run:
-        for line in res_status.stdout.splitlines():
-            if line.strip() and not line.strip().endswith(".changes"):
-                relevant_changes += 1
-    else:
-        relevant_changes = 1
-
-    if relevant_changes < 1:
-        log.info("## Not updating package '%s/%s' as only changelogs were modified", dst_project, package)
-        return True
-
-    ci_cmd = [*shlex.split(osc_cmd_str), "ci", "-m", f"Offline generation of {version}", *ci_args]
-    run_osc_cmd(ci_cmd, dry_run=dry_run, mutating=True)
-
-    if not wait_for_package_build(
-        submit_target, dst_project, package, osc_poll_interval, osc_build_start_poll_tries, dry_run
-    ):
-        return False
-
-    success = True
-    for target in targets:
-        if target == "none" or not target:
-            continue
-        if not has_pending_submission(
-            package,
-            target,
-            dst_project,
-            throttle_days,
-            throttle_days_leap_16,
-            git_user,
-            osc_cmd_str,
-            git_obs_cmd_str,
-            dry_run,
-        ):
-            continue
-
-        log.info("## Ready to submit %s to %s ##", package, target)
-        git_branch = git_branches.get(target)
-        if git_branch:
-            res_submit = make_git_submit_request(
-                package=package,
-                target=target,
-                version=version,
-                branch=git_branch,
-                git_cmd_str=git_cmd_str,
-                git_obs_cmd_str=git_obs_cmd_str,
-                git_obs_no_retry_cmd_str=git_obs_no_retry_cmd_str,
-                dry_run=dry_run,
-            )
+        res_status = run_osc_cmd([*shlex.split(self.osc_cmd_str), "status"], dry_run=self.dry_run, mutating=False)
+        relevant_changes = 0
+        if not self.dry_run:
+            for line in res_status.stdout.splitlines():
+                if line.strip() and not line.strip().endswith(".changes"):
+                    relevant_changes += 1
         else:
-            res_submit = make_obs_submit_request(
-                package=package,
-                target=target,
-                version=version,
-                dst_project=dst_project,
-                osc_cmd_str=osc_cmd_str,
-                dry_run=dry_run,
-            )
+            relevant_changes = 1
 
-        if not res_submit:
-            success = False
-            failed_packages.append(package)
-
-    return success
-
-
-def handle_auto_submit(
-    package: str,
-    src_project: str,
-    dst_project: str,
-    submit_target: str,
-    osc_poll_interval: int,
-    osc_build_start_poll_tries: int,
-    targets: list[str],
-    osc_cmd_str: str,
-    git_cmd_str: str,
-    git_obs_cmd_str: str,
-    git_obs_no_retry_cmd_str: str,
-    throttle_days: int,
-    throttle_days_leap_16: int,
-    git_user: str,
-    dry_run: bool,
-    failed_packages: list[str],
-) -> bool:
-    log.info("handle_auto_submit %s", package)
-
-    run_osc_cmd(
-        [*shlex.split(osc_cmd_str), "service", "wait", src_project, package],
-        dry_run=dry_run,
-        mutating=False,
-    )
-    run_osc_cmd(
-        [*shlex.split(osc_cmd_str), "co", "--server-side-source-service-files", f"{src_project}/{package}"],
-        dry_run=dry_run,
-        mutating=False,
-    )
-
-    if package == "os-autoinst-distri-opensuse-deps":
-        cmd = [*shlex.split(osc_cmd_str), "cat", submit_target, package, f"{package}.spec"]
-        try:
-            res = run_osc_cmd(cmd)
-            pathlib.Path(f"{package}-factory.spec").write_text(res.stdout, encoding="utf-8")
-        except Exception as e:
-            log.warning("Failed to cat spec: %s", e)
-
-        diff_text = get_spec_changes_in_requirements(package, src_project)
-        if diff_text:
-            generate_changelog(src_project, package, submit_target, osc_cmd_str)
-        else:
-            log.info("No dependency changes for %s", package)
-            return True
-    else:
-        target_rev = last_revision(submit_target, package, submit_target, osc_cmd_str)
-        src_rev = last_revision(src_project, package, submit_target, osc_cmd_str)
-        if target_rev == src_rev and target_rev:
-            log.info("Latest revision already in %s", submit_target)
+        if relevant_changes < 1:
+            log.info("## Not updating package '%s/%s' as only changelogs were modified", self.dst_project, package)
             return True
 
-    run_osc_cmd(
-        [*shlex.split(osc_cmd_str), "service", "wait", dst_project, package],
-        dry_run=dry_run,
-        mutating=False,
-    )
-    run_osc_cmd(
-        [*shlex.split(osc_cmd_str), "co", dst_project, package],
-        dry_run=dry_run,
-        mutating=False,
-    )
+        ci_cmd = [*shlex.split(self.osc_cmd_str), "ci", "-m", f"Offline generation of {version}", *ci_args]
+        run_osc_cmd(ci_cmd, dry_run=self.dry_run, mutating=True)
 
-    dst_dir = pathlib.Path(dst_project) / package
-    src_dir = pathlib.Path(src_project) / package
-    if not dry_run:
-        if dst_dir.is_dir():
-            for item in dst_dir.iterdir():
-                if item.is_file():
-                    item.unlink()
-        dst_dir.mkdir(parents=True, exist_ok=True)
-        if src_dir.is_dir():
-            for item in src_dir.iterdir():
-                if item.is_file():
-                    shutil.copy2(item, dst_dir)
+        if not self.wait_for_package_build(self.submit_target, package):
+            return False
 
-    original_dir = pathlib.Path.cwd()
-    try:
-        if not dry_run:
-            os.chdir(dst_dir)
-        return update_package(
-            package=package,
-            dst_project=dst_project,
-            submit_target=submit_target,
-            osc_poll_interval=osc_poll_interval,
-            osc_build_start_poll_tries=osc_build_start_poll_tries,
-            targets=targets,
-            osc_cmd_str=osc_cmd_str,
-            git_cmd_str=git_cmd_str,
-            git_obs_cmd_str=git_obs_cmd_str,
-            git_obs_no_retry_cmd_str=git_obs_no_retry_cmd_str,
-            throttle_days=throttle_days,
-            throttle_days_leap_16=throttle_days_leap_16,
-            git_user=git_user,
-            dry_run=dry_run,
-            failed_packages=failed_packages,
+        success = True
+        for target in self.targets:
+            if target == "none" or not target:
+                continue
+            if not self.has_pending_submission(package, target):
+                continue
+
+            log.info("## Ready to submit %s to %s ##", package, target)
+            git_branch = git_branches.get(target)
+            if git_branch:
+                res_submit = self.make_git_submit_request(
+                    package=package,
+                    target=target,
+                    version=version,
+                    branch=git_branch,
+                )
+            else:
+                res_submit = self.make_obs_submit_request(
+                    package=package,
+                    target=target,
+                    version=version,
+                )
+
+            if not res_submit:
+                success = False
+                self.failed_packages.append(package)
+
+        return success
+
+    def handle_auto_submit(
+        self,
+        package: str,
+    ) -> bool:
+        """Handle checkout, tracking, and updating of package for auto submission."""
+        log.info("handle_auto_submit %s", package)
+
+        run_osc_cmd(
+            [*shlex.split(self.osc_cmd_str), "service", "wait", self.src_project, package],
+            dry_run=self.dry_run,
+            mutating=False,
         )
-    finally:
-        os.chdir(original_dir)
+        run_osc_cmd(
+            [
+                *shlex.split(self.osc_cmd_str),
+                "co",
+                "--server-side-source-service-files",
+                f"{self.src_project}/{package}",
+            ],
+            dry_run=self.dry_run,
+            mutating=False,
+        )
+
+        if package == "os-autoinst-distri-opensuse-deps":
+            cmd = [*shlex.split(self.osc_cmd_str), "cat", self.submit_target, package, f"{package}.spec"]
+            try:
+                res = run_osc_cmd(cmd)
+                pathlib.Path(f"{package}-factory.spec").write_text(res.stdout, encoding="utf-8")
+            except Exception as e:
+                log.warning("Failed to cat spec: %s", e)
+
+            diff_text = get_spec_changes_in_requirements(package, self.src_project)
+            if diff_text:
+                generate_changelog(self.src_project, package, self.submit_target, self.osc_cmd_str)
+            else:
+                log.info("No dependency changes for %s", package)
+                return True
+        else:
+            target_rev = last_revision(self.submit_target, package, self.submit_target, self.osc_cmd_str)
+            src_rev = last_revision(self.src_project, package, self.submit_target, self.osc_cmd_str)
+            if target_rev == src_rev and target_rev:
+                log.info("Latest revision already in %s", self.submit_target)
+                return True
+
+        run_osc_cmd(
+            [*shlex.split(self.osc_cmd_str), "service", "wait", self.dst_project, package],
+            dry_run=self.dry_run,
+            mutating=False,
+        )
+        run_osc_cmd(
+            [*shlex.split(self.osc_cmd_str), "co", self.dst_project, package],
+            dry_run=self.dry_run,
+            mutating=False,
+        )
+
+        dst_dir = pathlib.Path(self.dst_project) / package
+        src_dir = pathlib.Path(self.src_project) / package
+        if not self.dry_run:
+            if dst_dir.is_dir():
+                for item in dst_dir.iterdir():
+                    if item.is_file():
+                        item.unlink()
+            dst_dir.mkdir(parents=True, exist_ok=True)
+            if src_dir.is_dir():
+                for item in src_dir.iterdir():
+                    if item.is_file():
+                        shutil.copy2(item, dst_dir)
+
+        original_dir = pathlib.Path.cwd()
+        try:
+            if not self.dry_run:
+                os.chdir(dst_dir)
+            return self.update_package(package=package)
+        finally:
+            os.chdir(original_dir)
 
 
 app = typer.Typer(add_completion=False)
 
 
 @app.command()
-def main(
+def main(  # noqa: PLR0913, PLR0917
     src_project: Annotated[str, typer.Option(envvar="src_project")] = "devel:openQA",
     dst_project: Annotated[str, typer.Option(envvar="dst_project")] = "",
     staging_project: Annotated[str, typer.Option(envvar="staging_project")] = "",
@@ -797,30 +762,30 @@ def main(
         actual_src_project = staging_project
         must_cleanup_staging = True
 
-    failed_packages: list[str] = []
+    submitter = AutoSubmitter(
+        src_project=actual_src_project,
+        dst_project=dst_project,
+        staging_project=staging_project,
+        submit_target=submit_target,
+        dry_run=dry_run,
+        osc_poll_interval=osc_poll_interval,
+        osc_build_start_poll_tries=osc_build_start_poll_tries,
+        throttle_days=throttle_days,
+        throttle_days_leap_16=throttle_days_leap_16,
+        git_user=git_user,
+        osc_cmd_str=osc_cmd_str,
+        git_cmd_str=git_cmd_str,
+        git_obs_cmd_str=git_obs_cmd_str,
+        git_obs_no_retry_cmd_str=git_obs_no_retry_cmd_str,
+        targets=targets,
+    )
+
     with tempfile.TemporaryDirectory(prefix="os-autoinst-obs-auto-submit-", dir=tmpdir_base) as tmpdir_path:
         os.chdir(tmpdir_path)
         try:
             rc = 0
             for package in auto_submit_packages:
-                success = handle_auto_submit(
-                    package=package,
-                    src_project=actual_src_project,
-                    dst_project=dst_project,
-                    submit_target=submit_target,
-                    osc_poll_interval=osc_poll_interval,
-                    osc_build_start_poll_tries=osc_build_start_poll_tries,
-                    targets=targets,
-                    osc_cmd_str=osc_cmd_str,
-                    git_cmd_str=git_cmd_str,
-                    git_obs_cmd_str=git_obs_cmd_str,
-                    git_obs_no_retry_cmd_str=git_obs_no_retry_cmd_str,
-                    throttle_days=throttle_days,
-                    throttle_days_leap_16=throttle_days_leap_16,
-                    git_user=git_user,
-                    dry_run=dry_run,
-                    failed_packages=failed_packages,
-                )
+                success = submitter.handle_auto_submit(package=package)
                 if not success:
                     rc = 1
 
@@ -835,9 +800,9 @@ def main(
                     ]
                     run_osc_cmd(del_cmd, dry_run=dry_run, mutating=True)
 
-            if failed_packages:
+            if submitter.failed_packages:
                 log.warning("Failed packages:")
-                for pkg in failed_packages:
+                for pkg in submitter.failed_packages:
                     log.warning("- %s", pkg)
 
             if rc != 0:
