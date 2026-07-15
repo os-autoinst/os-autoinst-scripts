@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright SUSE LLC
-# ruff: noqa: D103, S404, S603, T201, S314, S405, FBT001, FBT002, BLE001, C901, E501
+# ruff: noqa: D103, S404, S603, T201, S314, S405, FBT001, FBT002, BLE001, C901
 """Prepare and submit os-autoinst packages to target projects like openSUSE:Factory."""
 
 import datetime
@@ -87,7 +87,10 @@ def get_obs_sr_id(target: str, dst_project: str, package: str, osc_cmd_str: str,
     if "Backports" in target:
         target = "openSUSE:Maintenance"
     states = "state/@name='declined' or state/@name='new' or state/@name='review'"
-    actions = f"action/target/@project='{target}' and action/source/@project='{dst_project}' and action/source/@package='{package}'"
+    actions = (
+        f"action/target/@project='{target}' and action/source/@project='{dst_project}' "
+        f"and action/source/@package='{package}'"
+    )
     query = f"/search/request/id?match=({urllib.parse.quote(states)})%20and%20({urllib.parse.quote(actions)})"
     cmd = [*shlex.split(osc_cmd_str), "api", query]
     try:
@@ -459,7 +462,8 @@ class AutoSubmitter:
                         diff = now - dt
                         if diff.total_seconds() < throttle_days_value * 86400:
                             log.info(
-                                "Skipping submission, there is the still pending PR '%s' by %s targeting %s younger than %d days.",
+                                "Skipping submission, there is the still pending PR '%s' by %s targeting %s "
+                                "younger than %d days.",
                                 pr.get("html_url"),
                                 self.git_user,
                                 git_branch,
@@ -490,7 +494,8 @@ class AutoSubmitter:
 
             if target in res.stdout:
                 log.info(
-                    "Skipping submission, there is still a pending SR for package %s in project %s younger than %d days.",
+                    "Skipping submission, there is still a pending SR for package %s in project %s "
+                    "younger than %d days.",
                     package,
                     target,
                     throttle_days_value,
