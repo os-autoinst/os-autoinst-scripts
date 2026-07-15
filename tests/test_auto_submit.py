@@ -1,5 +1,5 @@
 # Copyright SUSE LLC
-# ruff: noqa: S404, FBT001, FBT003, PLC1901, F841
+# ruff: noqa: S404, FBT001, PLC1901, F841
 """Unit tests for os-autoinst-obs-auto-submit."""
 
 from __future__ import annotations
@@ -45,14 +45,14 @@ def test_get_obs_sr_id(mocker: MockerFixture) -> None:
     mock_run.return_value = subprocess.CompletedProcess(
         ["osc"], 0, stdout='<collection><request id="42"/></collection>'
     )
-    res = auto_submit.get_obs_sr_id("openSUSE:Factory", "proj", "pkg", "osc", False)
+    res = auto_submit.get_obs_sr_id("openSUSE:Factory", "proj", "pkg", "osc", dry_run=False)
     assert res == "42"
 
 
 def test_get_obs_sr_id_empty(mocker: MockerFixture) -> None:
     mock_run = mocker.patch("auto_submit.run_osc_cmd")
     mock_run.return_value = subprocess.CompletedProcess(["osc"], 0, stdout="<collection></collection>")
-    res = auto_submit.get_obs_sr_id("openSUSE:Factory", "proj", "pkg", "osc", False)
+    res = auto_submit.get_obs_sr_id("openSUSE:Factory", "proj", "pkg", "osc", dry_run=False)
     assert res == ""
 
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright SUSE LLC
-# ruff: noqa: S404, S603, S314, S405, FBT001, FBT002, BLE001, C901
+# ruff: noqa: S404, S603, S314, S405, BLE001, C901
 """Prepare and submit os-autoinst packages to target projects like openSUSE:Factory."""
 
 import datetime
@@ -59,7 +59,7 @@ def is_transient_osc_error(exc: BaseException) -> bool:
     return False
 
 
-def run_osc_cmd(cmd: list[str], dry_run: bool = False, mutating: bool = False) -> subprocess.CompletedProcess[str]:
+def run_osc_cmd(cmd: list[str], *, dry_run: bool = False, mutating: bool = False) -> subprocess.CompletedProcess[str]:
     """Run an osc command with retry logic."""
     if dry_run and mutating:
         log.info("[dry-run] Would execute: %s", " ".join(cmd))
@@ -86,7 +86,7 @@ def run_osc_cmd(cmd: list[str], dry_run: bool = False, mutating: bool = False) -
     return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")  # pragma: no cover
 
 
-def get_obs_sr_id(target: str, dst_project: str, package: str, osc_cmd_str: str, dry_run: bool) -> str:
+def get_obs_sr_id(target: str, dst_project: str, package: str, osc_cmd_str: str, *, dry_run: bool) -> str:
     """Get the OBS submit request ID."""
     if "Backports" in target:
         target = "openSUSE:Maintenance"
@@ -735,7 +735,7 @@ class AutoSubmitter:
             os.chdir(original_dir)
 
 
-def _get_packages_to_submit(dst_project: str, osc_cmd_str: str, dry_run: bool) -> list[str]:
+def _get_packages_to_submit(dst_project: str, osc_cmd_str: str, *, dry_run: bool) -> list[str]:
     """Determine packages to submit."""
     key_packages = "packages"
     packages_env = os.environ.get("PACKAGES", os.environ.get(key_packages))
@@ -760,11 +760,12 @@ def _get_packages_to_submit(dst_project: str, osc_cmd_str: str, dry_run: bool) -
 app = typer.Typer(add_completion=False)
 
 
-def _run_submissions(  # noqa: PLR0912, PLR0913, PLR0914, PLR0915, PLR0917
+def _run_submissions(  # noqa: PLR0912, PLR0913, PLR0914, PLR0915
     src_project: str,
     dst_project: str,
     staging_project: str,
     submit_target: str,
+    *,
     dry_run: bool,
     osc_poll_interval: int,
     osc_build_start_poll_tries: int,
@@ -879,7 +880,7 @@ def main(  # noqa: PLR0913, PLR0917
     dst_project: Annotated[str, typer.Option(envvar="dst_project")] = "",
     staging_project: Annotated[str, typer.Option(envvar="staging_project")] = "",
     submit_target: Annotated[str, typer.Option(envvar="submit_target")] = "openSUSE:Factory",
-    dry_run: Annotated[bool, typer.Option(envvar="dry_run")] = False,
+    dry_run: Annotated[bool, typer.Option(envvar="dry_run")] = False,  # noqa: FBT002
     osc_poll_interval: Annotated[int, typer.Option(envvar="osc_poll_interval")] = 2,
     osc_build_start_poll_tries: Annotated[int, typer.Option(envvar="osc_build_start_poll_tries")] = 90,
     throttle_days: Annotated[int, typer.Option(envvar="throttle_days")] = 2,
