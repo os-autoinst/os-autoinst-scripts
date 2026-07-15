@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright SUSE LLC
-# ruff: noqa: S404, S603, S314, S405, BLE001, C901
+# ruff: noqa: S404, S603, S314, S405, C901
 """Prepare and submit os-autoinst packages to target projects like openSUSE:Factory."""
 
 import datetime
@@ -104,7 +104,7 @@ def get_obs_sr_id(target: str, dst_project: str, package: str, osc_cmd_str: str,
         root = ET.fromstring(res.stdout)
         request_ids = [req.get("id", "") for req in root.findall(".//request")]
         return request_ids[0] if request_ids else ""
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         log.warning("get_obs_sr_id failed: %s", e)
     return ""
 
@@ -139,7 +139,7 @@ def get_spec_changes_in_requirements(package: str, project_dir: str) -> str:
     try:
         lines1 = factory_spec.read_text(encoding="utf-8", errors="ignore").splitlines()
         lines2 = project_spec.read_text(encoding="utf-8", errors="ignore").splitlines()
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         log.warning("Failed to compute spec diff: %s", e)
         return ""
 
@@ -160,7 +160,7 @@ def generate_changelog(dir_path: str, package: str, submit_target: str, osc_cmd_
     try:
         res = run_osc_cmd(cmd)
         factory_changes = res.stdout
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         log.warning("Failed to cat factory changes: %s", e)
 
     diff_text = get_spec_changes_in_requirements(package, dir_path)
@@ -231,7 +231,7 @@ class AutoSubmitter:
                     content = response.text
                     if any(state in content for state in wip_states):
                         break
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001
                     log.warning("Failed to fetch build status: %s", e)
 
                 if attempts <= 0:
@@ -249,7 +249,7 @@ class AutoSubmitter:
                     content = response.text
                     if not any(state in content for state in wip_states):
                         break
-                except Exception as e:
+                except Exception as e:  # noqa: BLE001
                     log.warning("Failed to fetch build status: %s", e)
 
                 log.info("Waiting while %s is in progress", package)
@@ -262,7 +262,7 @@ class AutoSubmitter:
                 if any(state in content for state in bad_states):
                     log.info("Building %s has failed, skipping submission", package)
                     return False
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 log.warning("Failed to fetch final build status: %s", e)
 
         return True
@@ -454,7 +454,7 @@ class AutoSubmitter:
             ]
             try:
                 res = run_osc_cmd(cmd, dry_run=self.dry_run, mutating=False)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 log.warning("Gitea PR check failed: %s", e)
                 return True
 
@@ -495,7 +495,7 @@ class AutoSubmitter:
             ]
             try:
                 res = run_osc_cmd(cmd, dry_run=self.dry_run, mutating=False)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 log.warning("OBS SR check failed: %s", e)
                 return True
 
@@ -593,7 +593,7 @@ class AutoSubmitter:
 
         try:
             tree = ET.parse("_service")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             log.warning("Failed to parse _service file: %s", e)
             return
 
@@ -604,7 +604,7 @@ class AutoSubmitter:
                 service.set("mode", "disabled")
         try:
             tree.write("_service", encoding="utf-8", xml_declaration=True)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             log.warning("Failed to write updated _service file: %s", e)
 
     def update_package(
@@ -658,7 +658,7 @@ class AutoSubmitter:
             try:
                 res = run_osc_cmd(cmd)
                 pathlib.Path(f"{package}-factory.spec").write_text(res.stdout, encoding="utf-8")
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 log.warning("Failed to cat spec: %s", e)
 
             diff_text = get_spec_changes_in_requirements(package, self.src_project)
@@ -750,7 +750,7 @@ def _get_packages_to_submit(dst_project: str, osc_cmd_str: str, *, dry_run: bool
             pkg = line.strip()
             if pkg and not pkg.endswith("-test"):
                 auto_submit_packages.append(pkg)
-    except Exception as e:
+    except Exception as e:  # noqa: BLE001
         log.warning("Failed to list packages from %s: %s", dst_project, e)
         return []
     else:
@@ -870,7 +870,7 @@ def _run_submissions(  # noqa: PLR0912, PLR0913, PLR0914, PLR0915
         else:
             try:
                 subprocess.run(cleanup_cmd, check=True)
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 log.warning("cleanup-obs-project failed: %s", e)
 
 
