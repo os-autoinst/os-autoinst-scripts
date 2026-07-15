@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright SUSE LLC
-# ruff: noqa: D103, S404, S603, S314, S405, FBT001, FBT002, BLE001, C901
+# ruff: noqa: S404, S603, S314, S405, FBT001, FBT002, BLE001, C901
 """Prepare and submit os-autoinst packages to target projects like openSUSE:Factory."""
 
 import datetime
@@ -39,10 +39,12 @@ throttle_variables = {
 
 
 def get_err_msg(e: subprocess.CalledProcessError) -> str:
+    """Get error message from CalledProcessError."""
     return e.stderr.strip() if e.stderr else str(e)
 
 
 def is_transient_osc_error(exc: BaseException) -> bool:
+    """Check if the exception is a transient OSC error."""
     if isinstance(exc, subprocess.CalledProcessError):
         err = get_err_msg(exc)
         transient_markers = [
@@ -58,6 +60,7 @@ def is_transient_osc_error(exc: BaseException) -> bool:
 
 
 def run_osc_cmd(cmd: list[str], dry_run: bool = False, mutating: bool = False) -> subprocess.CompletedProcess[str]:
+    """Run an osc command with retry logic."""
     if dry_run and mutating:
         log.info("[dry-run] Would execute: %s", " ".join(cmd))
         return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
@@ -84,6 +87,7 @@ def run_osc_cmd(cmd: list[str], dry_run: bool = False, mutating: bool = False) -
 
 
 def get_obs_sr_id(target: str, dst_project: str, package: str, osc_cmd_str: str, dry_run: bool) -> str:
+    """Get the OBS submit request ID."""
     if "Backports" in target:
         target = "openSUSE:Maintenance"
     states = "state/@name='declined' or state/@name='new' or state/@name='review'"
@@ -106,6 +110,7 @@ def get_obs_sr_id(target: str, dst_project: str, package: str, osc_cmd_str: str,
 
 
 def last_revision(project: str, package: str, submit_target: str, osc_cmd_str: str) -> str:
+    """Get the last revision from changelog."""
     log.debug("last_revision %s %s", project, package)
     filename = f"{package}.changes"
     if project != submit_target:
@@ -125,6 +130,7 @@ def last_revision(project: str, package: str, submit_target: str, osc_cmd_str: s
 
 
 def get_spec_changes_in_requirements(package: str, project_dir: str) -> str:
+    """Extract spec file requirement changes."""
     factory_spec = pathlib.Path(f"{package}-factory.spec")
     project_spec = pathlib.Path(project_dir) / package / f"_service:obs_scm:{package}.spec"
     if not factory_spec.exists() or not project_spec.exists():
@@ -148,6 +154,7 @@ def get_spec_changes_in_requirements(package: str, project_dir: str) -> str:
 
 
 def generate_changelog(dir_path: str, package: str, submit_target: str, osc_cmd_str: str) -> None:
+    """Generate a new changelog file entry."""
     cmd = [*shlex.split(osc_cmd_str), "cat", submit_target, package, f"{package}.changes"]
     factory_changes = ""
     try:
