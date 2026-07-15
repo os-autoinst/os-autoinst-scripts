@@ -676,6 +676,23 @@ class AutoSubmitter:
             return True
         return False
 
+    def _osc_co(self, project: str, package: str, *, server_side: bool = False) -> None:
+        """Wait for osc service and checkout package."""
+        run_osc_cmd(
+            [*shlex.split(self.osc_cmd_str), "service", "wait", project, package],
+            dry_run=self.dry_run,
+            mutating=False,
+        )
+        co_args = ["co"]
+        if server_side:
+            co_args.append("--server-side-source-service-files")
+        co_args.append(f"{project}/{package}")
+        run_osc_cmd(
+            [*shlex.split(self.osc_cmd_str), *co_args],
+            dry_run=self.dry_run,
+            mutating=False,
+        )
+
     def handle_auto_submit(
         self,
         package: str,
@@ -683,35 +700,12 @@ class AutoSubmitter:
         """Handle checkout, tracking, and updating of package for auto submission."""
         log.info("handle_auto_submit %s", package)
 
-        run_osc_cmd(
-            [*shlex.split(self.osc_cmd_str), "service", "wait", self.src_project, package],
-            dry_run=self.dry_run,
-            mutating=False,
-        )
-        run_osc_cmd(
-            [
-                *shlex.split(self.osc_cmd_str),
-                "co",
-                "--server-side-source-service-files",
-                f"{self.src_project}/{package}",
-            ],
-            dry_run=self.dry_run,
-            mutating=False,
-        )
+        self._osc_co(self.src_project, package, server_side=True)
 
         if self._is_package_up_to_date(package):
             return True
 
-        run_osc_cmd(
-            [*shlex.split(self.osc_cmd_str), "service", "wait", self.dst_project, package],
-            dry_run=self.dry_run,
-            mutating=False,
-        )
-        run_osc_cmd(
-            [*shlex.split(self.osc_cmd_str), "co", self.dst_project, package],
-            dry_run=self.dry_run,
-            mutating=False,
-        )
+        self._osc_co(self.dst_project, package)
 
         dst_dir = pathlib.Path(self.dst_project) / package
         src_dir = pathlib.Path(self.src_project) / package
