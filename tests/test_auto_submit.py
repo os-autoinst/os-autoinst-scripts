@@ -181,3 +181,19 @@ def test_last_revision_none(mocker: MockerFixture) -> None:
     mock_run.return_value = subprocess.CompletedProcess(["osc"], 0, stdout="")
     res = auto_submit.last_revision("proj", "pkg", "Factory", "osc")
     assert res == ""
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ("", "unknown"),
+        ("   \n  ", "unknown"),
+        ("Package pkg is not yet ready for release\nscheduled", "Package pkg is not yet ready for release\nscheduled"),
+        ('{"failed_jobs": [123, 456]}', "failed openQA jobs: 123, 456"),
+        ('{"failed_jobs": []}', '{"failed_jobs": []}'),
+        ('{"other": 1}', '{"other": 1}'),
+        ("not json { at all", "not json { at all"),
+    ],
+)
+def test_format_skip_reason(content: str, expected: str) -> None:
+    assert auto_submit._format_skip_reason(content) == expected  # noqa: SLF001
