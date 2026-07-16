@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # Copyright SUSE LLC
-# ruff: noqa: S404, S603, S314, S405, C901
+
+
 """Prepare and submit os-autoinst packages to target projects like openSUSE:Factory."""
 
 import datetime
@@ -12,11 +13,11 @@ import pathlib
 import re
 import shlex
 import shutil
-import subprocess
+import subprocess  # noqa: S404
 import tempfile
 import time
 import urllib.parse
-import xml.etree.ElementTree as ET
+import xml.etree.ElementTree as ET  # noqa: S405
 from dataclasses import dataclass, field
 from typing import Annotated
 
@@ -74,7 +75,7 @@ def run_osc_cmd(cmd: list[str], *, dry_run: bool = False, mutating: bool = False
     ):
         with attempt:
             try:
-                res = subprocess.run(cmd, check=True, capture_output=True, text=True)
+                res = subprocess.run(cmd, check=True, capture_output=True, text=True)  # noqa: S603
                 log.debug("Command '%s' output:\n%s", " ".join(cmd), res.stdout)
             except Exception as e:
                 if dry_run:
@@ -101,7 +102,7 @@ def get_obs_sr_id(target: str, dst_project: str, package: str, osc_cmd_str: str,
         res = run_osc_cmd(cmd, dry_run=dry_run, mutating=False)
         if not res.stdout:
             return ""
-        root = ET.fromstring(res.stdout)
+        root = ET.fromstring(res.stdout)  # noqa: S314
         request_ids = [req.get("id", "") for req in root.findall(".//request")]
         return request_ids[0] if request_ids else ""
     except Exception as e:  # noqa: BLE001
@@ -206,7 +207,7 @@ class AutoSubmitter:
     targets: list[str] = field(default_factory=list)
     failed_packages: list[str] = field(default_factory=list)
 
-    def wait_for_package_build(
+    def wait_for_package_build(  # noqa: C901
         self,
         target: str,
         package: str,
@@ -297,7 +298,7 @@ class AutoSubmitter:
             forked_repo = f"pool/{package}"
         else:
             try:
-                res = subprocess.run(fork_cmd, capture_output=True, text=True, check=True)
+                res = subprocess.run(fork_cmd, capture_output=True, text=True, check=True)  # noqa: S603
                 match = re.search(r"Fork .*: (.*)", res.stderr + "\n" + res.stdout)
                 forked_repo = match.group(1).strip() if match else ""
             except subprocess.CalledProcessError as e:
@@ -313,7 +314,7 @@ class AutoSubmitter:
             log.info("[dry-run] Would execute: %s", " ".join(clone_cmd))
         else:
             try:
-                subprocess.run(clone_cmd, check=True)
+                subprocess.run(clone_cmd, check=True)  # noqa: S603
             except subprocess.CalledProcessError:
                 log.exception("Clone failed")
                 return ""
@@ -332,9 +333,9 @@ class AutoSubmitter:
             log.info("[dry-run] Would execute: %s", " ".join(reset_cmd))
             log.info("[dry-run] Would replace files in clone with files from ../../%s/*", package)
         else:
-            subprocess.run(switch_cmd, check=True)
-            subprocess.run(fetch_cmd, check=True)
-            subprocess.run(reset_cmd, check=True)
+            subprocess.run(switch_cmd, check=True)  # noqa: S603
+            subprocess.run(fetch_cmd, check=True)  # noqa: S603
+            subprocess.run(reset_cmd, check=True)  # noqa: S603
 
             for item in pathlib.Path().iterdir():
                 if item.name == ".git":
@@ -363,9 +364,9 @@ class AutoSubmitter:
             log.info("[dry-run] Would execute: %s", " ".join(commit_cmd))
             log.info("[dry-run] Would execute: %s", " ".join(push_cmd))
         else:
-            subprocess.run(add_cmd, check=True)
-            subprocess.run(commit_cmd, check=True)
-            subprocess.run(push_cmd, check=True)
+            subprocess.run(add_cmd, check=True)  # noqa: S603
+            subprocess.run(commit_cmd, check=True)  # noqa: S603
+            subprocess.run(push_cmd, check=True)  # noqa: S603
 
     def _create_pull_request(self, title: str, description: str, branch: str) -> bool:
         """Create pull request with retry logic."""
@@ -387,7 +388,7 @@ class AutoSubmitter:
         sleep_time = 3
         remaining_attempts = 4
         while True:
-            res = subprocess.run(pr_cmd, capture_output=True, text=True, check=False)
+            res = subprocess.run(pr_cmd, capture_output=True, text=True, check=False)  # noqa: S603
             if res.returncode == 0:
                 break
             pr_out = res.stderr + "\n" + res.stdout
@@ -429,7 +430,7 @@ class AutoSubmitter:
         finally:
             os.chdir(original_dir)
 
-    def has_pending_submission(
+    def has_pending_submission(  # noqa: C901
         self,
         package: str,
         target: str,
@@ -592,7 +593,7 @@ class AutoSubmitter:
             return
 
         try:
-            tree = ET.parse("_service")
+            tree = ET.parse("_service")  # noqa: S314
         except Exception as e:  # noqa: BLE001
             log.warning("Failed to parse _service file: %s", e)
             return
@@ -693,7 +694,7 @@ class AutoSubmitter:
             mutating=False,
         )
 
-    def handle_auto_submit(
+    def handle_auto_submit(  # noqa: C901
         self,
         package: str,
     ) -> bool:
@@ -754,7 +755,7 @@ def _get_packages_to_submit(dst_project: str, osc_cmd_str: str, *, dry_run: bool
 app = typer.Typer(add_completion=False)
 
 
-def _run_submissions(  # noqa: PLR0912, PLR0913, PLR0914, PLR0915
+def _run_submissions(  # noqa: C901,  PLR0912, PLR0913, PLR0914, PLR0915
     src_project: str,
     dst_project: str,
     staging_project: str,
@@ -863,7 +864,7 @@ def _run_submissions(  # noqa: PLR0912, PLR0913, PLR0914, PLR0915
             log.info("[dry-run] Would execute: %s", " ".join(cleanup_cmd))
         else:
             try:
-                subprocess.run(cleanup_cmd, check=True)
+                subprocess.run(cleanup_cmd, check=True)  # noqa: S603
             except Exception as e:  # noqa: BLE001
                 log.warning("cleanup-obs-project failed: %s", e)
 
