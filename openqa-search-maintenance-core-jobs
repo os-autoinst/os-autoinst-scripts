@@ -22,17 +22,14 @@ EOF
 
 # Maintenance: Single Incidents / Core Incidents
 declare -A dict_group=(
-    ["15-SP1"]=233
-    ["15-SP2"]=306
-    ["15-SP3"]=367
+    ["11-SP4"]=485
+    ["12-SP3-TERADATA"]=106
+    ["12-SP5"]=282
     ["15-SP4"]=439
+    ["15-SP4-TERADATA"]=521
     ["15-SP5"]=490
     ["15-SP6"]=546
     ["15-SP7"]=644
-    ["12-SP3"]=106
-    ["12-SP5"]=282
-    ["15-SP4-TERADATA"]=521
-    ["12-SP3-TERADATA"]=191
     ["16.0"]=656
 )
 
@@ -178,8 +175,8 @@ search_build_checks() {
     if [[ -n $logs ]]; then
         echo "Build checks url: $index"
         for log in $logs; do
-            echo "curl -sLk '$index/$log' | grep -E --text ' \+ exit | failed| passed| skipped|Result: | test result: '"
-            curl -sLk "$index/$log" | grep -E --text ' \+ exit | failed| passed| skipped|Result: | test result: ' || true
+            echo "curl -sLk '$index/$log' | grep -P --text ' \+ exit | failed| passed|Result: | test result: | [Ee]rrors? \d*| TESTDONE: | successful'"
+            curl -sLk "$index/$log" | grep -P --text ' \+ exit | failed| passed|Result: | test result: | [Ee]rrors? \d*| TESTDONE: | successful' || true
             echo ""
         done
     fi
