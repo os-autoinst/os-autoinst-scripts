@@ -749,6 +749,15 @@ def _format_skip_reason(content: str) -> str:
     return content
 
 
+def _log_skip_reason(reason: str) -> None:
+    """Log a skip reason, rendering multi-line reasons as an indented block."""
+    if "\n" in reason:
+        indented = "\n".join(f"  {line}" for line in reason.splitlines())
+        log.info("Skipping submission, reason:\n%s", indented)
+    else:
+        log.info("Skipping submission, reason: %s", reason)
+
+
 def _get_packages_to_submit(dst_project: str, osc_cmd_str: str, *, dry_run: bool) -> list[str]:
     """Determine packages to submit."""
     key_packages = "packages"
@@ -812,7 +821,7 @@ def _run_submissions(  # noqa: C901,  PLR0912, PLR0913, PLR0914, PLR0915
 
     skip_file = pathlib.Path("job_post_skip_submission")
     if skip_file.exists():
-        log.info("Skipping submission, reason: %s", _format_skip_reason(skip_file.read_text(encoding="utf-8")))
+        _log_skip_reason(_format_skip_reason(skip_file.read_text(encoding="utf-8")))
         raise typer.Exit(code=0)
 
     tmpdir_base = os.environ.get("TMPDIR")
