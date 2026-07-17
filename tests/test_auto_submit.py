@@ -127,6 +127,26 @@ def test_has_pending_submission(
     assert res is expected
 
 
+def test_prepare_local_clone_fetches_before_switch(mocker: MockerFixture) -> None:
+    """Fetch parent before creating the branch so a fork lacking it still works."""
+    mock_run = mocker.patch("auto_submit.subprocess.run")
+    mocker.patch("auto_submit.pathlib.Path.iterdir", return_value=[])
+    submitter = auto_submit.AutoSubmitter(dst_project="dst", git_cmd_str="git", dry_run=False)
+    submitter._prepare_local_clone("openQA", "leap-16.0")  # noqa: SLF001
+    git_calls = [call.args[0] for call in mock_run.call_args_list]
+    assert git_calls[0] == ["git", "fetch", "parent"]
+    assert git_calls[1] == ["git", "switch", "-C", "leap-16.0", "parent/leap-16.0"]
+
+
+def test_prepare_local_clone_dry_run_logs_fetch_first(caplog: pytest.LogCaptureFixture) -> None:
+    submitter = auto_submit.AutoSubmitter(dst_project="dst", git_cmd_str="git", dry_run=True)
+    with caplog.at_level("INFO"):
+        submitter._prepare_local_clone("openQA", "leap-16.0")  # noqa: SLF001
+    messages = [r.getMessage() for r in caplog.records]
+    assert messages[0] == "[dry-run] Would execute: git fetch parent"
+    assert messages[1] == "[dry-run] Would execute: git switch -C leap-16.0 parent/leap-16.0"
+
+
 def test_make_obs_submit_request_success(mocker: MockerFixture) -> None:
     mocker.patch("auto_submit.get_obs_sr_id", return_value="23")
     mock_run = mocker.patch("auto_submit.run_osc_cmd")

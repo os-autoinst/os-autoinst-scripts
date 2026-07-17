@@ -323,19 +323,18 @@ class AutoSubmitter:
     def _prepare_local_clone(self, package: str, branch: str) -> None:
         """Prepare local clone with files from original directory."""
         git_cmd = shlex.split(self.git_cmd_str)
-        switch_cmd = [*git_cmd, "switch", branch]
+        # "parent" remote is added by git-obs; fetch before switch because the
+        # fork may lack the branch (switch-first fails "invalid reference").
         fetch_cmd = [*git_cmd, "fetch", "parent"]
-        reset_cmd = [*git_cmd, "reset", "--hard", f"parent/{branch}"]
+        switch_cmd = [*git_cmd, "switch", "-C", branch, f"parent/{branch}"]
 
         if self.dry_run:
-            log.info("[dry-run] Would execute: %s", " ".join(switch_cmd))
             log.info("[dry-run] Would execute: %s", " ".join(fetch_cmd))
-            log.info("[dry-run] Would execute: %s", " ".join(reset_cmd))
+            log.info("[dry-run] Would execute: %s", " ".join(switch_cmd))
             log.info("[dry-run] Would replace files in clone with files from ../../%s/*", package)
         else:
-            subprocess.run(switch_cmd, check=True)  # noqa: S603
             subprocess.run(fetch_cmd, check=True)  # noqa: S603
-            subprocess.run(reset_cmd, check=True)  # noqa: S603
+            subprocess.run(switch_cmd, check=True)  # noqa: S603
 
             for item in pathlib.Path().iterdir():
                 if item.name == ".git":
