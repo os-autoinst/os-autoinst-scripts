@@ -353,8 +353,13 @@ get-dependencies-ajax() {
 }
 
 list_packages() {
-    local obs_project=$1
-    $osc ls "$obs_project" | grep -v '\-test$'
+    local obs_project=$1 output
+    # Capture osc output separately so a failed 'osc ls' (e.g. HTTP 5xx, where
+    # osc prints "Request:/Headers:" error details to stdout) is not mistaken
+    # for a package list. Only emit real package names on success.
+    output=$($osc ls "$obs_project") || return $?
+    [[ -n $output ]] || return 0
+    printf '%s\n' "$output" | grep -v '\-test$'
 }
 
 delete_packages_from_obs_project() {

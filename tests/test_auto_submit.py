@@ -1,5 +1,5 @@
 # Copyright SUSE LLC
-# ruff: noqa: S404, FBT001, FBT003, PLC1901, F841
+# ruff: noqa: S404, FBT001, PLC1901, F841
 """Unit tests for os-autoinst-obs-auto-submit."""
 
 from __future__ import annotations
@@ -45,14 +45,14 @@ def test_get_obs_sr_id(mocker: MockerFixture) -> None:
     mock_run.return_value = subprocess.CompletedProcess(
         ["osc"], 0, stdout='<collection><request id="42"/></collection>'
     )
-    res = auto_submit.get_obs_sr_id("openSUSE:Factory", "proj", "pkg", "osc", False)
+    res = auto_submit.get_obs_sr_id("openSUSE:Factory", "proj", "pkg", "osc", dry_run=False)
     assert res == "42"
 
 
 def test_get_obs_sr_id_empty(mocker: MockerFixture) -> None:
     mock_run = mocker.patch("auto_submit.run_osc_cmd")
     mock_run.return_value = subprocess.CompletedProcess(["osc"], 0, stdout="<collection></collection>")
-    res = auto_submit.get_obs_sr_id("openSUSE:Factory", "proj", "pkg", "osc", False)
+    res = auto_submit.get_obs_sr_id("openSUSE:Factory", "proj", "pkg", "osc", dry_run=False)
     assert res == ""
 
 
@@ -111,9 +111,7 @@ def test_has_pending_submission(
     else:
         mock_run.return_value = subprocess.CompletedProcess(["osc"], 0, stdout=sr_stdout)
 
-    res = auto_submit.has_pending_submission(
-        package="openQA",
-        target=target,
+    submitter = auto_submit.AutoSubmitter(
         dst_project="proj",
         throttle_days=days,
         throttle_days_leap_16=days,
@@ -122,13 +120,42 @@ def test_has_pending_submission(
         git_obs_cmd_str="git-obs",
         dry_run=False,
     )
+    res = submitter.has_pending_submission(
+        package="openQA",
+        target=target,
+    )
     assert res is expected
+
+
+def test_prepare_local_clone_fetches_before_switch(mocker: MockerFixture) -> None:
+    """Fetch parent before creating the branch so a fork lacking it still works."""
+    mock_run = mocker.patch("auto_submit.subprocess.run")
+    mocker.patch("auto_submit.pathlib.Path.iterdir", return_value=[])
+    submitter = auto_submit.AutoSubmitter(dst_project="dst", git_cmd_str="git", dry_run=False)
+    submitter._prepare_local_clone("openQA", "leap-16.0")  # noqa: SLF001
+    git_calls = [call.args[0] for call in mock_run.call_args_list]
+    assert git_calls[0] == ["git", "fetch", "parent"]
+    assert git_calls[1] == ["git", "switch", "-C", "leap-16.0", "parent/leap-16.0"]
+
+
+def test_prepare_local_clone_dry_run_logs_fetch_first(caplog: pytest.LogCaptureFixture) -> None:
+    submitter = auto_submit.AutoSubmitter(dst_project="dst", git_cmd_str="git", dry_run=True)
+    with caplog.at_level("INFO"):
+        submitter._prepare_local_clone("openQA", "leap-16.0")  # noqa: SLF001
+    messages = [r.getMessage() for r in caplog.records]
+    assert messages[0] == "[dry-run] Would execute: git fetch parent"
+    assert messages[1] == "[dry-run] Would execute: git switch -C leap-16.0 parent/leap-16.0"
 
 
 def test_make_obs_submit_request_success(mocker: MockerFixture) -> None:
     mocker.patch("auto_submit.get_obs_sr_id", return_value="23")
     mock_run = mocker.patch("auto_submit.run_osc_cmd")
-    res = auto_submit.make_obs_submit_request("pkg", "Factory", "3.14", "dst", "osc", False)
+    submitter = auto_submit.AutoSubmitter(
+        dst_project="dst",
+        osc_cmd_str="osc",
+        dry_run=False,
+    )
+    res = submitter.make_obs_submit_request("pkg", "Factory", "3.14")
     assert res is True
     mock_run.assert_called_once_with(
         ["osc", "sr", "-s", "23", "-m", "Update to 3.14", "Factory"], dry_run=False, mutating=True
@@ -138,7 +165,12 @@ def test_make_obs_submit_request_success(mocker: MockerFixture) -> None:
 def test_make_obs_submit_request_new(mocker: MockerFixture) -> None:
     mocker.patch("auto_submit.get_obs_sr_id", return_value="")
     mock_run = mocker.patch("auto_submit.run_osc_cmd")
-    res = auto_submit.make_obs_submit_request("pkg", "Factory", "3.14", "dst", "osc", False)
+    submitter = auto_submit.AutoSubmitter(
+        dst_project="dst",
+        osc_cmd_str="osc",
+        dry_run=False,
+    )
+    res = submitter.make_obs_submit_request("pkg", "Factory", "3.14")
     assert res is True
     mock_run.assert_called_once_with(["osc", "sr", "-m", "Update to 3.14", "Factory"], dry_run=False, mutating=True)
 
@@ -146,7 +178,12 @@ def test_make_obs_submit_request_new(mocker: MockerFixture) -> None:
 def test_make_obs_submit_request_failure(mocker: MockerFixture) -> None:
     mocker.patch("auto_submit.get_obs_sr_id", return_value="")
     mock_run = mocker.patch("auto_submit.run_osc_cmd", side_effect=subprocess.CalledProcessError(1, "sr"))
-    res = auto_submit.make_obs_submit_request("pkg", "Factory", "3.14", "dst", "osc", False)
+    submitter = auto_submit.AutoSubmitter(
+        dst_project="dst",
+        osc_cmd_str="osc",
+        dry_run=False,
+    )
+    res = submitter.make_obs_submit_request("pkg", "Factory", "3.14")
     assert res is False
 
 
@@ -164,3 +201,32 @@ def test_last_revision_none(mocker: MockerFixture) -> None:
     mock_run.return_value = subprocess.CompletedProcess(["osc"], 0, stdout="")
     res = auto_submit.last_revision("proj", "pkg", "Factory", "osc")
     assert res == ""
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ("", "unknown"),
+        ("   \n  ", "unknown"),
+        ("Package pkg is not yet ready for release\nscheduled", "Package pkg is not yet ready for release\nscheduled"),
+        ('{"failed_jobs": [123, 456]}', "failed openQA jobs: 123, 456"),
+        ('{"failed_jobs": []}', '{"failed_jobs": []}'),
+        ('{"other": 1}', '{"other": 1}'),
+        ("not json { at all", "not json { at all"),
+    ],
+)
+def test_format_skip_reason(content: str, expected: str) -> None:
+    assert auto_submit._format_skip_reason(content) == expected  # noqa: SLF001
+
+
+@pytest.mark.parametrize(
+    ("reason", "expected"),
+    [
+        ("single line", "Skipping submission, reason: single line"),
+        ("note\npkg1\npkg2", "Skipping submission, reason:\n  note\n  pkg1\n  pkg2"),
+    ],
+)
+def test_log_skip_reason(reason: str, expected: str, caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level("INFO"):
+        auto_submit._log_skip_reason(reason)  # noqa: SLF001
+    assert caplog.records[0].getMessage() == expected
