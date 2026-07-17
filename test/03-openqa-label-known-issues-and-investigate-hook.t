@@ -42,13 +42,13 @@ openqa-trigger-bisect-jobs() {
 }
 openqa-api-get() {
     local path=$1
-    if [[ "$path" == "jobs/123" ]]; then
+    if [[ $path == "jobs/123" ]]; then
         echo '{"job":{"state":"done", "result":"failed", "test":"foo"}}'
-    elif [[ "$path" == "jobs/124" ]]; then
+    elif [[ $path == "jobs/124" ]]; then
         echo '{"job":{"state":"done", "result":"passed", "test":"foo"}}'
-    elif [[ "$path" == "jobs/125" ]]; then
+    elif [[ $path == "jobs/125" ]]; then
         echo '{"job":{"state":"done", "result":"failed", "test":"foo:investigate:retry:x"}}'
-    elif [[ "$path" == "jobs/126" ]]; then
+    elif [[ $path == "jobs/126" ]]; then
         echo '{"job":{"state":"done", "result":"failed", "test":"foo:investigate:abc:x"}}'
     fi
 }

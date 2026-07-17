@@ -32,7 +32,7 @@ clone() {
     name_suffix=${3+":$3"}
     refspec=${4+$4}
     local clone_job_data
-    if [[ "$origin" == "$id" ]]; then
+    if [[ $origin == "$id" ]]; then
         clone_job_data=$job_data
     else
         clone_job_data=$(client-get-job "$id")
@@ -79,7 +79,7 @@ clone() {
     clone_settings+=($(echo "$clone_job_data" | runjq -r '.job.settings | keys[] | select (startswith("PUBLISH_")) | . + "=none"')) || return $?
     clone_settings+=("OPENQA_INVESTIGATE_ORIGIN=$host_url/t$origin")
     out=$($clone_call "$host_url/tests/$id" "${clone_settings[@]}") || return $?
-    if [[ $dry_run = 1 ]]; then
+    if [[ $dry_run == 1 ]]; then
         echo "$out"
         out="{ \"$origin\": 42}"
     fi
@@ -106,7 +106,7 @@ trigger_jobs() {
     job_url="$host_url/tests/$id"
     investigation=$(runcurl "${curl_args[@]}" -sS "$job_url"/investigation_ajax) || return $?
     last_good_exists=$(echo "$investigation" | runjq -r '.last_good') || return $?
-    if [[ "$last_good_exists" = "null" || "$last_good_exists" = "not found" ]]; then
+    if [[ $last_good_exists == "null" || $last_good_exists == "not found" ]]; then
         echo "No last good recorded, skipping regression investigation jobs" && return 0
     fi
     last_good=$(echo "$investigation" | runjq -r '.last_good.text') || return $?
@@ -177,7 +177,7 @@ query_dependency_data_or_postpone() {
 sync_via_investigation_comment() {
     local id=$1 first_cluster_job_id=$2
 
-    [[ $dry_run = 1 ]] && return 255
+    [[ $dry_run == 1 ]] && return 255
     comment_id=$(client-post-job-comment "$first_cluster_job_id" "Starting investigation for job $id" | runjq -r '.id') || return $?
     first_comment_id=$(client-get-job-comments "$first_cluster_job_id" | runjq -r '[.[] | select(.text | contains("investigation"))] | min_by(.id) | .id') || return $?
 
@@ -217,7 +217,7 @@ fetch-investigation-results() {
     local origin_job_id=$1
     local state job investigate_type other_id result investigate_comment output comment_lines
 
-    [[ $dry_run = 1 ]] && return 0
+    [[ $dry_run == 1 ]] && return 0
     investigate_comment=$(client-get-job-comments "$origin_job_id" | runjq -r '[.[] | select(.text | contains("Automatic investigation jobs for job") and contains(":investigate:retry*:"))] | min_by(.id)') || return $?
     [[ $investigate_comment == 'null' ]] && return
     output=$(echo "$investigate_comment" | runjq -r '.text') || return $?
@@ -275,11 +275,11 @@ identify-issue-type() {
             fi
         fi
     done
-    if ([[ -z "$pass_lgtb" ]] || "$pass_lgtb") && ([[ -z "$pass_lgt" ]] || ! "$pass_lgt") && [[ -n "$pass_lgb" ]] && "$pass_lgb"; then
+    if ([[ -z $pass_lgtb ]] || "$pass_lgtb") && ([[ -z $pass_lgt ]] || ! "$pass_lgt") && [[ -n $pass_lgb ]] && "$pass_lgb"; then
         product_issue=true
-    elif ([[ -z "$pass_lgtb" ]] || "$pass_lgtb") && [[ -n "$pass_lgt" ]] && "$pass_lgt" && ([[ -z "$pass_lgb" ]] || ! "$pass_lgb"); then
+    elif ([[ -z $pass_lgtb ]] || "$pass_lgtb") && [[ -n $pass_lgt ]] && "$pass_lgt" && ([[ -z $pass_lgb ]] || ! "$pass_lgb"); then
         test_issue=true
-    elif ([[ -n "$pass_lgtb" ]] && ! "$pass_lgtb") && ([[ -n "$pass_lgt" ]] && ! "$pass_lgt") && ([[ -n "$pass_lgb" ]] && ! "$pass_lgb"); then
+    elif ([[ -n $pass_lgtb ]] && ! "$pass_lgtb") && ([[ -n $pass_lgt ]] && ! "$pass_lgt") && ([[ -n $pass_lgb ]] && ! "$pass_lgb"); then
         infra_issue=true
     fi
 }
@@ -287,7 +287,7 @@ identify-issue-type() {
 post-investigate() {
     local id=$1 retry_name=$2
     local rc=0 status
-    [[ ! "$retry_name" =~ investigate:retry$ ]] && echo "Job is ':investigate:' already, skipping investigation" && return 0
+    [[ ! $retry_name =~ investigate:retry$ ]] && echo "Job is ':investigate:' already, skipping investigation" && return 0
     # We are in the investigate:retry job now. From here we will check the
     # results of the other investigation jobs, if necessary
     retry_result="$(echo "$job_data" | runjq -r '.job.result')" || return $?
@@ -335,9 +335,9 @@ post-investigate() {
     # meanwhile the original job might have been deleted already, handle
     # gracefully
     out=$(client-post-job-comment "$origin_job_id" "$comment" 2>&1) || rc=$?
-    if [[ "$rc" -ne 0 ]]; then
+    if [[ $rc -ne 0 ]]; then
         status=$(echo "$out" | runjq .error_status 2> /dev/null || echo "unknown")
-        if [[ "$status" != "404" ]]; then
+        if [[ $status != "404" ]]; then
             echoerr "Unexpected error encountered when posting comments on job $origin_job_id after investigation job $id failed: '$out'"
             return 2
         fi
@@ -359,12 +359,12 @@ investigate() {
     # shellcheck disable=SC2181
     [[ $? != 0 ]] && echoerr "unable to query job data for $id: $job_data" && return 1
     old_name="$(echo "$job_data" | runjq -r '.job.test')" || return $?
-    if [[ "$old_name" =~ ":investigate:" ]]; then
+    if [[ $old_name =~ ":investigate:" ]]; then
         post-investigate "$id" "$old_name" || return $?
         return 0
     fi
     clone="$(echo "$job_data" | runjq -r '.job.clone_id')" || return $?
-    if ! "$force" && [[ "$clone" != "null" ]]; then
+    if ! "$force" && [[ $clone != "null" ]]; then
         echoerr "Job $id already has a clone, skipping investigation. Use the env variable 'force=true' to trigger investigation jobs"
         return 0
     fi
@@ -376,11 +376,11 @@ investigate() {
     # determine the job in the cluster with the lowest ID to use that for commenting/synchronization
     first_cluster_job_id=$(echo "$dependency_data" | runjq -r "[$id, [.cluster[] | select(contains([$id]))]] | flatten | min") || return $?
 
-    [[ "$old_name" =~ $exclude_name_regex ]] && echo "Job name '$old_name' matches \$exclude_name_regex '$exclude_name_regex', skipping investigation" && return 0
+    [[ $old_name =~ $exclude_name_regex ]] && echo "Job name '$old_name' matches \$exclude_name_regex '$exclude_name_regex', skipping investigation" && return 0
     group="$(echo "$job_data" | runjq -r '.job.parent_group + " / " + .job.group')" || return $?
-    [[ "$group" = " / " ]] && [[ "$exclude_no_group" = "true" ]] && echo "Job w/o job group, \$exclude_no_group is set, skipping investigation" && return 0
-    [[ "$group" =~ $exclude_group_regex ]] && echo "Job group '$group' matches \$exclude_group_regex '$exclude_group_regex', skipping investigation" && return 0
-    user_unset="$(echo "$job_data" | runjq -r '.job.settings.NO_INVESTIGATION')" && [[ ! "$user_unset" =~ "null" ]] && [[ $user_unset -eq 1 ]] && echo "NO_INVESTIGATION=1 detected, skipping" && return 0
+    [[ $group == " / " ]] && [[ $exclude_no_group == "true" ]] && echo 'Job w/o job group, $exclude_no_group is set, skipping investigation' && return 0
+    [[ $group =~ $exclude_group_regex ]] && echo "Job group '$group' matches \$exclude_group_regex '$exclude_group_regex', skipping investigation" && return 0
+    user_unset="$(echo "$job_data" | runjq -r '.job.settings.NO_INVESTIGATION')" && [[ ! $user_unset =~ "null" ]] && [[ $user_unset -eq 1 ]] && echo "NO_INVESTIGATION=1 detected, skipping" && return 0
 
     # Optionally we can find "first failed", could extend openQA investigation
     # method instead for we are just working based on supplied job which can
@@ -415,7 +415,7 @@ main() {
     client_prefix=''
     [ "$dry_run" = "1" ] && client_prefix="echo"
     set +u
-    if [[ -z "${client_call[*]}" ]]; then
+    if [[ -z ${client_call[*]} ]]; then
         client_call=(openqa-cli "${client_args[@]}")
         client_prefix="${client_prefix:-runcli}"
         client_call=("$client_prefix" "${client_call[@]}")

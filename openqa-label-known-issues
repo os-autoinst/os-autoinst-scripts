@@ -153,7 +153,7 @@ investigate_issue() {
     state="$(echo "$job_data" | runjq -r '.job.state')"
     result="$(echo "$job_data" | runjq -r '.job.result')"
     # Skip all unfinished or passed jobs for now
-    if [[ "$state" != 'done' || "$result" == passed ]]; then
+    if [[ $state != 'done' || $result == passed ]]; then
         return
     fi
     reason=$(echo "$job_data" | runjq -r '.job.reason')
@@ -163,13 +163,13 @@ investigate_issue() {
     # against even in case when autoinst-log.txt is missing the details, e.g.
     # see https://progress.opensuse.org/issues/69178
     echo "$reason" >> "$out"
-    if [[ "$curl_output" != "200" ]] && [[ "$curl_output" != "301" ]]; then
+    if [[ $curl_output != "200" ]] && [[ $curl_output != "301" ]]; then
         # if we can not even access the page it is something more critical
         handle_unreachable "$testurl" "$out" || return 0
 
         [[ $curl_output != 404 ]] && return
         # not unreachable, no log, no reason, not too old
-        if [[ -z $reason ]] || [[ $reason = null ]]; then
+        if [[ -z $reason ]] || [[ $reason == null ]]; then
             echoerr "'$testurl' does not have autoinst-log.txt or reason, cannot label"
             return
         fi
@@ -208,10 +208,10 @@ label_issue() {
     done
 
     local testurl="${1:?"Need 'testurl'"}"
-    [[ "$dry_run" = "1" ]] && client_prefix="echo"
-    if [[ -z "$client_call" ]]; then
+    [[ $dry_run == "1" ]] && client_prefix="echo"
+    if [[ -z $client_call ]]; then
         client_call=(openqa-cli "${client_args[@]}")
-        if [[ -n "$client_prefix" ]]; then
+        if [[ -n $client_prefix ]]; then
             client_call=("$client_prefix" "${client_call[@]}")
         fi
     fi

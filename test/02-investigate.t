@@ -289,7 +289,7 @@ try clone 10021 10030 last_good_tests_and_build:123 refspec
 has "$got" 'unidentified worker class in vars.json' "info shown in the name is WORKER_CLASS is empty"
 
 curl() {
-    if [[ "$@" =~ investigation_ajax ]]; then
+    if [[ $@ =~ investigation_ajax ]]; then
         echo -n '{ }'$'\n'200
     else
         echo -n 200

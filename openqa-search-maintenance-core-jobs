@@ -74,7 +74,7 @@ search_maintenance_single_incidents() {
 
     for version in $versions $versions_teradata; do
         local groupid=${dict_group[$version]}
-        [[ -z "$groupid" ]] && continue
+        [[ -z $groupid ]] && continue
 
         local count_url="${url_openqa}/api/v1/jobs/overview?distri=sle&version=${version%%-TERADATA}&build=${build}&groupid=${groupid}"
         local count
@@ -117,7 +117,7 @@ search_maintenance_aggregated() {
     versions=$(curl -sk -X GET "${url_dashboard_qam}/api/incident_settings/$ID" | jq -r '.[].settings.VERSION' | sort | uniq)
 
     for version in $versions; do
-        [[ -z "${dict_group[$version]}" ]] && continue
+        [[ -z ${dict_group[$version]} ]] && continue
 
         for day in $(seq 0 "$days"); do
             local build
@@ -128,7 +128,7 @@ search_maintenance_aggregated() {
             local id
             id=$(curl -sk -X GET "$URL" | jq -r '.[0].id | select( . != null)')
 
-            [[ -z "$id" ]] && continue
+            [[ -z $id ]] && continue
 
             local json
             json=$(curl -sk -X GET "${url_openqa}/api/v1/jobs/${id}")
@@ -194,7 +194,7 @@ while getopts :a:d: name; do
     esac
 done
 
-if [[ -z "$review_request_id" ]]; then
+if [[ -z $review_request_id ]]; then
     usage
     exit 1
 fi

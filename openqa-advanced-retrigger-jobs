@@ -73,7 +73,7 @@ main() {
 
     for job_id in $job_ids; do
         query_params+=("jobs=$job_id")
-        [[ ${#query_params[@]} -ge "$max_jobs_per_request" ]] && restart-jobs
+        [[ ${#query_params[@]} -ge $max_jobs_per_request ]] && restart-jobs
     done
     restart-jobs
 }

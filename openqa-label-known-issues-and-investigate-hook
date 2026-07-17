@@ -16,7 +16,7 @@ host_url="$scheme://$host"
 investigate-and-bisect() {
     local rc=0 test
     read -r test || rc=$?
-    [[ -n "$test" ]] || return 0
+    [[ -n $test ]] || return 0
     rc=0
 
     # Call the new LLM investigation script first, which acts as a gatekeeper
@@ -27,10 +27,10 @@ investigate-and-bisect() {
         investigate_target="$test"
     fi
 
-    [[ -z "$investigate_target" ]] && return 0
+    [[ -z $investigate_target ]] && return 0
 
     openqa-investigate "$investigate_target" || rc=$?
-    [[ "$rc" -eq 142 ]] && return "$rc"
+    [[ $rc -eq 142 ]] && return "$rc"
     openqa-trigger-bisect-jobs -v --url "$investigate_target" || rc=$?
     return "$rc"
 }
@@ -63,7 +63,7 @@ hook() {
     name="$(echo "$job_data" | runjq -r '.job.test')" || return $?
     state="$(echo "$job_data" | runjq -r '.job.state')" || return $?
     result="$(echo "$job_data" | runjq -r '.job.result')" || return $?
-    [[ "$state" != "done" ]] && return
+    [[ $state != "done" ]] && return
     if [[ $result != passed && ! $name =~ ":investigate:" ]]; then
         testsuite="$(echo "$job_data" | runjq -r '.job.settings.TEST')"
         # Remove optional "container_host_" prefix

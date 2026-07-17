@@ -29,7 +29,7 @@ openqa-cli() {
     cat "$dir/data/$id.json"
 }
 curl() {
-    if [[ "$7" =~ /(404|414|101|102)/file/autoinst-log.txt ]]; then
+    if [[ $7 =~ /(404|414|101|102)/file/autoinst-log.txt ]]; then
         echo -n "404"
     else
         echo -n "200"

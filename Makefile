@@ -53,11 +53,11 @@ test-online: ## Run tests that require online connection
 checkstyle: test-shellcheck test-yaml checkstyle-python check-code-health test-gitlint ## Run all style checks
 
 shfmt: ## Format shell scripts
-	shfmt -w ${SH_FILES}
+	shfmt -w --simplify ${SH_FILES}
 
 test-shellcheck: ## Run shell script checks
 	@which shfmt >/dev/null 2>&1 || echo "Command 'shfmt' not found, can not execute shell script formating checks"
-	shfmt -d ${SH_FILES}
+	shfmt -d --simplify ${SH_FILES}
 	@which shellcheck >/dev/null 2>&1 || echo "Command 'shellcheck' not found, can not execute shell script checks"
 	if [ -n "${SH_SHELLCHECK_FILES}" ]; then shellcheck -x ${SH_SHELLCHECK_FILES}; fi
 

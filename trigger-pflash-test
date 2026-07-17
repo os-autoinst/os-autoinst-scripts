@@ -16,10 +16,10 @@ OPENQA_API_KEY=${OPENQA_API_KEY:-}
 OPENQA_API_SECRET=${OPENQA_API_SECRET:-}
 CLI_ARGS=()
 TRIGGERED_BY=${TRIGGERED_BY:$0}
-if [[ -n "$GITHUB_SERVER_URL" ]]; then
+if [[ -n $GITHUB_SERVER_URL ]]; then
     TRIGGERED_BY="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/blob/$GITHUB_REF_NAME/$0"
 fi
-if [[ -n "$TRIGGERED_BY" ]]; then
+if [[ -n $TRIGGERED_BY ]]; then
     CLI_ARGS+=("TRIGGERED_BY=$TRIGGERED_BY")
 fi
 
@@ -40,7 +40,7 @@ main() {
     done
 
     local image
-    [[ "$dry_run" = 1 ]] && client_prefix="echo"
+    [[ $dry_run == 1 ]] && client_prefix="echo"
     image=$(find_latest_published_tumbleweed_image "$tw_group_id" "$arch" "$machine" iso)
 
     ${client_prefix} "${openqa_cli}" \

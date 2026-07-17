@@ -28,7 +28,7 @@ error-handler() {
     # shellcheck disable=SC2207
     local c=($(caller))
     warn "${c[1]}: ERROR: line $line"
-    [[ -n "$errorlog" ]] && rm -f "$errorlog"
+    [[ -n $errorlog ]] && rm -f "$errorlog"
 }
 
 # From openqa-cli JSON output filter and return the id/ids of jobs,
@@ -49,12 +49,12 @@ runcli() {
     output=$("${args[@]}" 2> "$errorlog")
     rc=$?
     set -e
-    if [[ -s "$errorlog" ]]; then
+    if [[ -s $errorlog ]]; then
         read -r errstr < "$errorlog"
         warn "$1 ($(caller)): (${args[*]}) stderr: >>>$errstr<<<"
     fi
     rm "$errorlog"
-    [[ "$rc" == 0 ]] && echo "$output" && return
+    [[ $rc == 0 ]] && echo "$output" && return
     warn "$1 ($(caller)): (${args[*]}) rc: $rc >>>$output<<<"
     return $rc
 }
@@ -69,7 +69,7 @@ runjq() {
     output=$(echo "$input" | jq "$@" 2>&1)
     rc=$?
     set -e
-    [[ "$rc" == 0 ]] && echo "$output" && return
+    [[ $rc == 0 ]] && echo "$output" && return
     output=$(echo "$output" | head -"$jq_output_limit")
     warn "jq ($(caller)): $output (rc: $rc Input: >>>$input<<<)"
     return $rc
@@ -78,7 +78,7 @@ runjq() {
 exp_retry() {
     local stop_exponent=$1
     local exponent=$2
-    if [[ "$exponent" == "$stop_exponent" ]]; then
+    if [[ $exponent == "$stop_exponent" ]]; then
         warn "$stop_exponent (re)tries exceeded"
         return 1
     fi
@@ -93,7 +93,7 @@ shorten_string() {
     local max_str_len=${max_str_len:-"120"}
     local max_str_len_half=$((max_str_len / 2))
     if [[ ${#sstring} -gt $max_str_len ]]; then
-        sstring=${sstring:0:$max_str_len_half}…${sstring: -$max_str_len_half}
+        sstring=${sstring:0:max_str_len_half}…${sstring: -$max_str_len_half}
     fi
     echo "$sstring"
 }
@@ -111,14 +111,14 @@ runcurl() {
         response=$(curl -w "\n%{http_code}\n" "$@" 2>&1)
         rc=$?
         set -e
-        if [[ "$rc" != 0 ]]; then
+        if [[ $rc != 0 ]]; then
             response=$(shorten_string "$response")
             warn "curl ($(caller)): Error fetching ($*): $response"
             # shellcheck disable=SC2015
             exp_retry "$exp_retries" "$retry_exponent" && continue || break
         fi
         status_code=$(echo "$response" | tail -1)
-        if [[ "$status_code" != 200 ]]; then
+        if [[ $status_code != 200 ]]; then
             warn "curl ($(caller)): Error fetching url ($*): Got Status $status_code"
             # shellcheck disable=SC2015
             exp_retry "$exp_retries" "$retry_exponent" && continue || break
@@ -162,12 +162,12 @@ search_log() {
     local grep_opts="${grep_opts:-"-qPzo"}"
     # shellcheck disable=SC2086
     grep_output=$(timeout "$grep_timeout" grep $grep_opts "$search_term" "$out" 2>&1) || rc=$?
-    if [[ "$rc" == 1 ]]; then
+    if [[ $rc == 1 ]]; then
         return 1
-    elif [[ "$rc" == 124 ]]; then
+    elif [[ $rc == 124 ]]; then
         warn "grep was killed, possibly timed out: cmd=>grep $grep_opts '$search_term' '$out'< output='$grep_output'"
         return $rc
-    elif [[ "$rc" != 0 ]]; then
+    elif [[ $rc != 0 ]]; then
         # unexpected error, e.g. "exceeded PCRE's backtracking limit"
         warn "grep failed: cmd=>grep $grep_opts '$search_term' '$out'< output='$grep_output'"
         return $rc
@@ -199,14 +199,14 @@ handle_unreviewed() {
     echo "$header"
     echo "$excerpt"
 
-    if "$email_unreviewed" && [[ "$group_id" != 'null' ]]; then
+    if "$email_unreviewed" && [[ $group_id != 'null' ]]; then
         group_data=$(openqa-cli "${client_args[@]}" "job_groups/$group_id")
         group_description=$(echo "$group_data" | runjq -r '.[0].description') || true
         group_mailto=$(echo "$group_description" | perl -n -wE'm/.*MAILTO: (\S+).*/ and say $1' | head -1)
         group_mailto=${group_mailto:-$notification_address}
         # Avoid sending notifications for jobs that were restarted
         clone_id="$(echo "$job_data" | runjq -r '.job.clone_id')"
-        if [[ -n "$group_mailto" && "$clone_id" == 'null' ]]; then
+        if [[ -n $group_mailto && $clone_id == 'null' ]]; then
             group_name=$(echo "$group_data" | runjq -r '.[0].name')
             job_name=$(echo "$job_data" | runjq -r '.job.name')
             job_result=$(echo "$job_data" | runjq -r '.job.result')
@@ -289,12 +289,12 @@ find_latest_published_tumbleweed_image() {
     local latest_builds build image=null assetname
     local tw_group_id=$1 arch=$2 machine=$3 type=$4
     read -r -d '' -a latest_builds <<< "$(latest_published_tw_builds "$tw_group_id")"
-    if [[ "${#latest_builds[@]}" -eq 0 ]]; then
+    if [[ ${#latest_builds[@]} -eq 0 ]]; then
         warn "Unable to find latest published Tumbleweed builds."
         exit 1
     fi
     for build in "${latest_builds[@]}"; do
-        if [[ "$type" = iso ]]; then
+        if [[ $type == iso ]]; then
             assetname="Tumbleweed-NET-$arch-Snapshot$build-Media.iso$"
         else
             assetname="Tumbleweed-$arch-$build-minimalx\\\\@$machine.qcow"
@@ -303,12 +303,12 @@ find_latest_published_tumbleweed_image() {
 
         [[ $image == "" ]] && image=null # the result can be empty for other reasons
         # This published build has an image available
-        [[ "$image" != null ]] && break
+        [[ $image != null ]] && break
         # Published but no image available, we'll try and continue
         warn "Unable to determine $type image for Tumbleweed build '$build' (for architecture '$arch' and machine '$machine')."
     done
     # No published image available
-    if [[ "$image" = null ]]; then
+    if [[ $image == null ]]; then
         exit 2
     fi
     echo "$image"
@@ -407,7 +407,7 @@ colorize() {
     local msg=$3
     local fn=1
     [[ $fh == 'err' ]] && fn=2
-    if [[ -t "$fn" && $color == "auto" || $color == "always" ]]; then
+    if [[ -t $fn && $color == "auto" || $color == "always" ]]; then
         msg="${!msgcolor}$msg${_NO_COLOR}"
     fi
     if [[ $fh == 'err' ]]; then

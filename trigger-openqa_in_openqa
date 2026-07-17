@@ -149,7 +149,7 @@ trigger() {
     # prevent host access problem when running within o3 infrastructure
     # where o3 is not reachable over https
     declare -a ARGS
-    [[ $target_host = "openqa.opensuse.org" ]] && ARGS+=("OPENQA_HOST=http://openqa.opensuse.org")
+    [[ $target_host == "openqa.opensuse.org" ]] && ARGS+=("OPENQA_HOST=http://openqa.opensuse.org")
     # shellcheck disable=SC2206
     [[ $full_run_args ]] && ARGS+=($full_run_args)
 
