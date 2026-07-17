@@ -75,7 +75,7 @@ def get_running_jobs(hypervisor_host: str, *, verbose: bool = False) -> list[int
 def trigger_actions(host: str, jobs: list[int], *, dry_run: bool, verbose: bool) -> None:
     """Trigger kdump (which reboots the machine) and job re-triggering."""
     # Echoing 'c' to sysrq-trigger panics the kernel, dumping core and rebooting
-    reboot_cmd = f'ssh {host} sudo bash -c "echo c > /proc/sysrq-trigger"'
+    reboot_cmd = f"ssh {host} \"sudo bash -c 'echo c > /proc/sysrq-trigger'\""
     if dry_run:
         print(f"[DRY-RUN] Would execute: {reboot_cmd}")
         for job_id in jobs:
