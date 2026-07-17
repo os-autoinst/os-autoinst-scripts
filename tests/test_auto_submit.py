@@ -197,3 +197,16 @@ def test_last_revision_none(mocker: MockerFixture) -> None:
 )
 def test_format_skip_reason(content: str, expected: str) -> None:
     assert auto_submit._format_skip_reason(content) == expected  # noqa: SLF001
+
+
+@pytest.mark.parametrize(
+    ("reason", "expected"),
+    [
+        ("single line", "Skipping submission, reason: single line"),
+        ("note\npkg1\npkg2", "Skipping submission, reason:\n  note\n  pkg1\n  pkg2"),
+    ],
+)
+def test_log_skip_reason(reason: str, expected: str, caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level("INFO"):
+        auto_submit._log_skip_reason(reason)  # noqa: SLF001
+    assert caplog.records[0].getMessage() == expected
