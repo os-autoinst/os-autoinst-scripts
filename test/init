@@ -5,3 +5,13 @@ export BPAN_ROOT=$PWD/.bpan
 source "$BPAN_ROOT/test/init"
 
 dir=$PWD/test
+
+# Mock commands that may be missing in testing environments
+command() {
+    if [[ "$1" == "-v" ]]; then
+        if [[ "$2" == "retry" || "$2" == "osc" || "$2" == "openqa-cli" ]]; then
+            return 0
+        fi
+    fi
+    builtin command "$@"
+}

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
+source test/init
 echo 1..1
 
 color=always
-source _common
+source ./_common
 
 echo "ok 1"
-[[ $ENABLE_VISUAL_TESTS ]] || exit 0
+[[ ${ENABLE_VISUAL_TESTS:-} ]] || exit 0
 
 log-warn "Demo warning"
 log-info "Demo info" >&2

@@ -10,6 +10,13 @@ submit_target=${submit_target:-openSUSE:Factory}
 
 warn() { printf '%s\n' "$@" >&2; }
 
+for cmd in jq retry osc openqa-cli; do
+    if ! command -v "$cmd" > /dev/null 2>&1; then
+        warn "ERROR: '$cmd' command not found. Please install $cmd."
+        exit 1
+    fi
+done
+
 enable_force_result=${enable_force_result:-false}
 
 client_call=()

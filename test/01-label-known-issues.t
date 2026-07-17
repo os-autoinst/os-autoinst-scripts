@@ -4,7 +4,7 @@ source test/init
 
 plan tests 27
 
-source _common
+source ./_common
 
 client_output=''
 mock-client() {

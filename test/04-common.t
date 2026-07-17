@@ -2,9 +2,9 @@
 
 source test/init
 
-plan tests 13
+plan tests 21
 
-source _common
+source ./_common
 
 success() {
     echo "SUCCESS $@"
@@ -64,3 +64,19 @@ somecommand() {
 
 try runcli somecommand
 like "$got" "somecommand.*>>>STDERR<<<.*STDOUT" "somecommand stdout and stderr"
+
+try "bash -c 'command() { if [[ \"\$1\" == \"-v\" && \"\$2\" == \"jq\" ]]; then return 1; fi; if [[ \"\$1\" == \"-v\" && ( \"\$2\" == \"retry\" || \"\$2\" == \"osc\" || \"\$2\" == \"openqa-cli\" ) ]]; then return 0; fi; builtin command \"\$@\"; }; export -f command; source ./_common'"
+is "$rc" 1 "exits with 1 when jq is missing"
+like "$got" "ERROR: 'jq' command not found" "prints correct error message when jq is missing"
+
+try "bash -c 'command() { if [[ \"\$1\" == \"-v\" && \"\$2\" == \"retry\" ]]; then return 1; fi; if [[ \"\$1\" == \"-v\" && ( \"\$2\" == \"jq\" || \"\$2\" == \"osc\" || \"\$2\" == \"openqa-cli\" ) ]]; then return 0; fi; builtin command \"\$@\"; }; export -f command; source ./_common'"
+is "$rc" 1 "exits with 1 when retry is missing"
+like "$got" "ERROR: 'retry' command not found" "prints correct error message when retry is missing"
+
+try "bash -c 'command() { if [[ \"\$1\" == \"-v\" && \"\$2\" == \"osc\" ]]; then return 1; fi; if [[ \"\$1\" == \"-v\" && ( \"\$2\" == \"jq\" || \"\$2\" == \"retry\" || \"\$2\" == \"openqa-cli\" ) ]]; then return 0; fi; builtin command \"\$@\"; }; export -f command; source ./_common'"
+is "$rc" 1 "exits with 1 when osc is missing"
+like "$got" "ERROR: 'osc' command not found" "prints correct error message when osc is missing"
+
+try "bash -c 'command() { if [[ \"\$1\" == \"-v\" && \"\$2\" == \"openqa-cli\" ]]; then return 1; fi; if [[ \"\$1\" == \"-v\" && ( \"\$2\" == \"jq\" || \"\$2\" == \"retry\" || \"\$2\" == \"osc\" ) ]]; then return 0; fi; builtin command \"\$@\"; }; export -f command; source ./_common'"
+is "$rc" 1 "exits with 1 when openqa-cli is missing"
+like "$got" "ERROR: 'openqa-cli' command not found" "prints correct error message when openqa-cli is missing"
