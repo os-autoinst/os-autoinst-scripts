@@ -161,45 +161,40 @@ def test_extract_excerpt(tmp_path: pathlib.Path) -> None:
 
 
 def test_comment_on_job(mocker: MockerFixture) -> None:
+    client = openqa_label_known_issues.OpenQAClient("http://localhost")
     # 1. Success without force_result
-    mock_run = mocker.patch("subprocess.run")
-    openqa_label_known_issues.comment_on_job("123", "my comment", "", ["openqa-cli"])
-    mock_run.assert_called_once_with(
-        ["openqa-cli", "-X", "POST", "jobs/123/comments", "text=my comment"], check=True, capture_output=True, text=True
-    )
+    mock_run = mocker.patch.object(client, "run_cmd")
+    openqa_label_known_issues.comment_on_job("123", "my comment", "", client)
+    mock_run.assert_called_once_with(["-X", "POST", "jobs/123/comments", "text=my comment"])
 
     # 2. Success with force_result and enable_force_result
     mock_run.reset_mock()
     mocker.patch.dict("os.environ", {"enable_force_result": "true"})
-    openqa_label_known_issues.comment_on_job("123", "my comment", "softfailed", ["openqa-cli"])
+    openqa_label_known_issues.comment_on_job("123", "my comment", "softfailed", client)
     mock_run.assert_called_once_with(
-        ["openqa-cli", "-X", "POST", "jobs/123/comments", "text=label:force_result:softfailed:my comment"],
-        check=True,
-        capture_output=True,
-        text=True,
+        ["-X", "POST", "jobs/123/comments", "text=label:force_result:softfailed:my comment"]
     )
 
     # 3. Failed subprocess
     mock_run.reset_mock()
     mock_run.side_effect = subprocess.CalledProcessError(1, "cmd", stderr="error string")
     with patch("builtins.print") as mock_print:
-        openqa_label_known_issues.comment_on_job("123", "comment", "", ["openqa-cli"])
+        openqa_label_known_issues.comment_on_job("123", "comment", "", client)
         mock_print.assert_called_once_with("Failed to comment on job 123: error string", file=sys.stderr)
 
 
 def test_restart_job(mocker: MockerFixture) -> None:
+    client = openqa_label_known_issues.OpenQAClient("http://localhost")
     # Success
-    mock_run = mocker.patch("subprocess.run")
-    openqa_label_known_issues.restart_job("123", ["openqa-cli"])
-    mock_run.assert_called_once_with(
-        ["openqa-cli", "-X", "POST", "jobs/123/restart"], check=True, capture_output=True, text=True
-    )
+    mock_run = mocker.patch.object(client, "run_cmd")
+    openqa_label_known_issues.restart_job("123", client)
+    mock_run.assert_called_once_with(["-X", "POST", "jobs/123/restart"])
 
     # Failure
     mock_run.reset_mock()
     mock_run.side_effect = subprocess.CalledProcessError(1, "cmd", stderr="restart error")
     with patch("builtins.print") as mock_print:
-        openqa_label_known_issues.restart_job("123", ["openqa-cli"])
+        openqa_label_known_issues.restart_job("123", client)
         mock_print.assert_called_once_with("Failed to restart job 123: restart error", file=sys.stderr)
 
 
@@ -222,6 +217,7 @@ def test_search_log(tmp_path: pathlib.Path) -> None:
 
 
 def test_label_on_issue(mocker: MockerFixture) -> None:
+    client = openqa_label_known_issues.OpenQAClient("http://localhost")
     # No match
     mocker.patch("openqa_label_known_issues.search_log", return_value=False)
     mock_comment = mocker.patch("openqa_label_known_issues.comment_on_job")
@@ -232,20 +228,21 @@ def test_label_on_issue(mocker: MockerFixture) -> None:
     mocker.patch("openqa_label_known_issues.search_log", return_value=True)
     mock_comment.reset_mock()
     mock_restart = mocker.patch("openqa_label_known_issues.restart_job")
-    assert openqa_label_known_issues.label_on_issue("123", "patt", "lbl", "file", "", "force", ["api"]) is True
-    mock_comment.assert_called_once_with("123", "lbl", "force", ["api"])
+    assert openqa_label_known_issues.label_on_issue("123", "patt", "lbl", "file", "", "force", client) is True
+    mock_comment.assert_called_once_with("123", "lbl", "force", client)
     mock_restart.assert_not_called()
 
     # Match with restart
     mock_comment.reset_mock()
-    assert openqa_label_known_issues.label_on_issue("123", "patt", "lbl", "file", "1", "force", ["api"]) is True
-    mock_comment.assert_called_once_with("123", "lbl", "force", ["api"])
-    mock_restart.assert_called_once_with("123", ["api"])
+    assert openqa_label_known_issues.label_on_issue("123", "patt", "lbl", "file", "1", "force", client) is True
+    mock_comment.assert_called_once_with("123", "lbl", "force", client)
+    mock_restart.assert_called_once_with("123", client)
 
 
 def test_label_on_issues_from_issue_tracker(mocker: MockerFixture) -> None:
     # Minimal setup
     mocker.patch.dict("os.environ", {"min_search_term": "5"})
+    client = openqa_label_known_issues.OpenQAClient("http://localhost")
     issues_list = [
         {
             "id": "1",
@@ -254,7 +251,7 @@ def test_label_on_issues_from_issue_tracker(mocker: MockerFixture) -> None:
         }
     ]
     mock_lbl = mocker.patch("openqa_label_known_issues.label_on_issue", return_value=True)
-    assert openqa_label_known_issues.label_on_issues_from_issue_tracker("123", issues_list, "file", ["api"]) is True
+    assert openqa_label_known_issues.label_on_issues_from_issue_tracker("123", issues_list, "file", client) is True
     mock_lbl.assert_called_once_with(
         "123",
         "match_me",
@@ -262,7 +259,7 @@ def test_label_on_issues_from_issue_tracker(mocker: MockerFixture) -> None:
         "file",
         "1",
         "softfailed",
-        ["api"],
+        client,
     )
 
     # match_force is False and restart is False (covers branches 213->221, restart=False, and 223->195 loop continue when label_on_issue returns False)
@@ -282,7 +279,7 @@ def test_label_on_issues_from_issue_tracker(mocker: MockerFixture) -> None:
     mock_lbl.side_effect = [False, True]
     assert (
         openqa_label_known_issues.label_on_issues_from_issue_tracker(
-            "123", issues_list_no_force_no_retry, "file", ["api"]
+            "123", issues_list_no_force_no_retry, "file", client
         )
         is True
     )
@@ -299,7 +296,7 @@ def test_label_on_issues_from_issue_tracker(mocker: MockerFixture) -> None:
     mock_lbl.reset_mock()
     mock_lbl.side_effect = None
     assert (
-        openqa_label_known_issues.label_on_issues_from_issue_tracker("123", issues_list_one_quote, "file", ["api"])
+        openqa_label_known_issues.label_on_issues_from_issue_tracker("123", issues_list_one_quote, "file", client)
         is False
     )
     mock_lbl.assert_not_called()
@@ -314,7 +311,7 @@ def test_label_on_issues_from_issue_tracker(mocker: MockerFixture) -> None:
     ]
     mock_lbl.reset_mock()
     mock_lbl.return_value = True
-    assert openqa_label_known_issues.label_on_issues_from_issue_tracker("123", issues_list2, "file", ["api"]) is True
+    assert openqa_label_known_issues.label_on_issues_from_issue_tracker("123", issues_list2, "file", client) is True
     mock_lbl.assert_called_once_with(
         "123",
         "match_me",
@@ -322,7 +319,7 @@ def test_label_on_issues_from_issue_tracker(mocker: MockerFixture) -> None:
         "file",
         "",
         "",
-        ["api"],
+        client,
     )
 
     # short search term
@@ -334,7 +331,7 @@ def test_label_on_issues_from_issue_tracker(mocker: MockerFixture) -> None:
         }
     ]
     mock_lbl.reset_mock()
-    assert openqa_label_known_issues.label_on_issues_from_issue_tracker("123", issues_list3, "file", ["api"]) is False
+    assert openqa_label_known_issues.label_on_issues_from_issue_tracker("123", issues_list3, "file", client) is False
     mock_lbl.assert_not_called()
 
     # no quotes
@@ -346,7 +343,7 @@ def test_label_on_issues_from_issue_tracker(mocker: MockerFixture) -> None:
         }
     ]
     mock_lbl.reset_mock()
-    assert openqa_label_known_issues.label_on_issues_from_issue_tracker("123", issues_list4, "file", ["api"]) is False
+    assert openqa_label_known_issues.label_on_issues_from_issue_tracker("123", issues_list4, "file", client) is False
     mock_lbl.assert_not_called()
 
 
@@ -367,22 +364,21 @@ def test_get_default_retry_limit(mocker: MockerFixture) -> None:
 def test_count_restarts(mocker: MockerFixture) -> None:
     # No clone_id/cloned_from
     job = {"id": 123}
-    assert openqa_label_known_issues.count_restarts(job, ["api"]) == 0
+    client = openqa_label_known_issues.OpenQAClient("http://localhost")
+    assert openqa_label_known_issues.count_restarts(job, client) == 0
 
     # With nested clone structure (restarts = 2)
     job_with_parent = {"id": 123, "cloned_from": 122}
 
-    # Mock subprocess.run for parent call
-    mock_run = mocker.patch("subprocess.run")
-    # First parent call returns a job that is cloned from 121
-    # Second parent call returns a job that has no cloned_from
+    # Mock openqa_label_known_issues.OpenQAClient.run_cmd instead of subprocess.run
+    mock_run = mocker.patch.object(openqa_label_known_issues.OpenQAClient, "run_cmd")
     res1 = mocker.MagicMock()
     res1.stdout = json.dumps({"job": {"id": 122, "cloned_from": 121}})
     res2 = mocker.MagicMock()
     res2.stdout = json.dumps({"job": {"id": 121}})
     mock_run.side_effect = [res1, res2]
 
-    assert openqa_label_known_issues.count_restarts(job_with_parent, ["api"]) == 2
+    assert openqa_label_known_issues.count_restarts(job_with_parent, client) == 2
     assert mock_run.call_count == 2
 
 
@@ -390,7 +386,7 @@ def test_count_restarts(mocker: MockerFixture) -> None:
     ("restarts_count", "expected_restart"),
     [
         (1, "1"),  # Under the limit, should restart
-        (3, ""),   # Over/equal the limit, should not restart
+        (3, ""),  # Over/equal the limit, should not restart
     ],
 )
 def test_label_on_issues_from_issue_tracker_retry_limit(
@@ -408,9 +404,13 @@ def test_label_on_issues_from_issue_tracker_retry_limit(
     mock_lbl = mocker.patch("openqa_label_known_issues.label_on_issue", return_value=True)
     mocker.patch("openqa_label_known_issues.count_restarts", return_value=restarts_count)
 
-    assert openqa_label_known_issues.label_on_issues_from_issue_tracker(
-        "123", issues_list, "file", ["api"], job={"id": 123}
-    ) is True
+    client = openqa_label_known_issues.OpenQAClient("http://localhost")
+    assert (
+        openqa_label_known_issues.label_on_issues_from_issue_tracker(
+            "123", issues_list, "file", client, job={"id": 123}
+        )
+        is True
+    )
 
     mock_lbl.assert_called_once_with(
         "123",
@@ -419,18 +419,19 @@ def test_label_on_issues_from_issue_tracker_retry_limit(
         "file",
         expected_restart,
         "",
-        ["api"],
+        client,
     )
 
 
 def test_label_on_issues_without_tickets(mocker: MockerFixture) -> None:
+    client = openqa_label_known_issues.OpenQAClient("http://localhost")
     mock_lbl = mocker.patch("openqa_label_known_issues.label_on_issue", return_value=False)
-    assert openqa_label_known_issues.label_on_issues_without_tickets("123", "file", ["api"]) is False
+    assert openqa_label_known_issues.label_on_issues_without_tickets("123", "file", client) is False
     assert mock_lbl.call_count == 9
 
     mock_lbl.reset_mock()
     mock_lbl.side_effect = [False, True]
-    assert openqa_label_known_issues.label_on_issues_without_tickets("123", "file", ["api"]) is True
+    assert openqa_label_known_issues.label_on_issues_without_tickets("123", "file", client) is True
     assert mock_lbl.call_count == 2
 
 
@@ -486,6 +487,7 @@ def test_handle_unreachable(mocker: MockerFixture) -> None:
     mock_resp_get = Mock(status_code=200, text="Gru job failed connection error Inactivity timeout")
     mock_client.get.side_effect = None
     mock_client.get.return_value = mock_resp_get
+    client_obj = openqa_label_known_issues.OpenQAClient("http://host")
     mock_comment = mocker.patch("openqa_label_known_issues.comment_on_job")
     mock_restart = mocker.patch("openqa_label_known_issues.restart_job")
 
@@ -541,64 +543,63 @@ def test_handle_unreviewed(mocker: MockerFixture, tmp_path: pathlib.Path) -> Non
     mocker.patch("openqa_label_known_issues.extract_excerpt", return_value="my excerpt")
     mocker.patch("openqa_label_known_issues.multipart_from_markdown", return_value="multipart-email")
     mock_send = mocker.patch("openqa_label_known_issues.send_email")
+    
+    client_obj = openqa_label_known_issues.OpenQAClient("http://host", dry_run=False)
+    client_obj_dry = openqa_label_known_issues.OpenQAClient("http://host", dry_run=True)
 
     # 1. email_unreviewed is false
     with patch("builtins.print") as mock_print:
         openqa_label_known_issues.handle_unreviewed(
-            "http://testurl", str(f), "my reason", "24", False, "from@ex.com", "notif@ex.com", {}, True, []
+            "http://testurl", str(f), "my reason", "24", False, "from@ex.com", "notif@ex.com", {}, client_obj
         )
         mock_print.assert_any_call(
             "[http://testurl](http://testurl): Unknown test issue, to be reviewed\n-> [autoinst-log.txt](http://testurl/file/autoinst-log.txt)\n",
             file=sys.stderr,
         )
-    mock_send.assert_not_called()
+        mock_send.assert_not_called()
 
-    # 2. email_unreviewed is true, group_id is null
+    # 2. group_id is null
     mock_send.reset_mock()
     openqa_label_known_issues.handle_unreviewed(
-        "http://testurl", str(f), "my reason", "null", True, "from@ex.com", "notif@ex.com", {}, True, []
+        "http://testurl", str(f), "my reason", "null", True, "from@ex.com", "notif@ex.com", {}, client_obj
     )
     mock_send.assert_not_called()
 
-    # 3. email_unreviewed true, group_id valid, clone_id is not null
-    mock_send.reset_mock()
-    job_data = {"job": {"clone_id": "12345"}}
-    openqa_label_known_issues.handle_unreviewed(
-        "http://testurl", str(f), "my reason", "24", True, "from@ex.com", "notif@ex.com", job_data, True, []
-    )
-    mock_send.assert_not_called()
+    # 3. Valid group, but api fetch fails
+    mock_run = mocker.patch.object(client_obj, "run_cmd")
+    mock_run.side_effect = Exception("api error")
+    with patch("builtins.print") as mock_print:
+        openqa_label_known_issues.handle_unreviewed(
+            "http://testurl", str(f), "my reason", "24", True, "from@ex.com", "notif@ex.com", {}, client_obj
+        )
+        mock_print.assert_any_call("Failed to load job group data for 24: api error", file=sys.stderr)
+        mock_send.assert_called_once_with("notif@ex.com", "multipart-email", False)
 
-    # 4. email_unreviewed true, group_id valid, group data fetch success, MAILTO found, clone_id is null
+    # 4. Valid group, fetching group data, MAILTO present
+    mock_res = Mock(stdout='[{"description": "MAILTO: test@test.com", "name": "groupname"}]')
+    mock_run.side_effect = None
+    mock_run.return_value = mock_res
     mock_send.reset_mock()
-    job_data_null = {"job": {"clone_id": "null", "name": "myjob", "result": "failed"}}
-    mock_sub = mocker.patch("subprocess.run")
-    mock_sub.return_value = Mock(stdout='[{"name": "Lala", "description": "MAILTO: dest@ex.com"}]')
+    
+    mock_run_dry = mocker.patch.object(client_obj_dry, "run_cmd", return_value=mock_res)
     openqa_label_known_issues.handle_unreviewed(
-        "http://testurl", str(f), "my reason", "24", True, "from@ex.com", "notif@ex.com", job_data_null, True, []
+        "http://testurl", str(f), "my reason", "24", True, "from@ex.com", "", {}, client_obj_dry
     )
-    mock_send.assert_called_once_with("dest@ex.com", "multipart-email", True)
+    mock_send.assert_called_once_with("test@test.com", "multipart-email", True)
+    mock_run_dry.assert_called_once_with(["job_groups/24"], force_no_dry=True)
 
-    # 5. group data fetch fails, fallback to notification address
-    mock_send.reset_mock()
-    mock_sub.side_effect = Exception("err")
-    openqa_label_known_issues.handle_unreviewed(
-        "http://testurl", str(f), "my reason", "24", True, "from@ex.com", "notif@ex.com", job_data_null, True, []
-    )
-    mock_send.assert_called_once_with("notif@ex.com", "multipart-email", True)
-
-    # 6. group data fetch succeeds but MAILTO not found, fallback to notification address
-    mock_send.reset_mock()
-    mock_sub.side_effect = None
-    mock_sub.return_value = Mock(stdout='[{"name": "Lala", "description": "no mailto info here"}]')
-    openqa_label_known_issues.handle_unreviewed(
-        "http://testurl", str(f), "my reason", "24", True, "from@ex.com", "notif@ex.com", job_data_null, True, []
-    )
-    mock_send.assert_called_once_with("notif@ex.com", "multipart-email", True)
-
-    # 7. group data succeeds, MAILTO not found, no notification address (should not send)
+    # 5. Clone detected (no email should be sent)
     mock_send.reset_mock()
     openqa_label_known_issues.handle_unreviewed(
-        "http://testurl", str(f), "my reason", "24", True, "from@ex.com", "", job_data_null, True, []
+        "http://testurl",
+        str(f),
+        "my reason",
+        "24",
+        True,
+        "from@ex.com",
+        "",
+        {"job": {"clone_id": 12345}},
+        client_obj_dry,
     )
     mock_send.assert_not_called()
 
@@ -635,21 +636,21 @@ def test_investigate_issue(mocker: MockerFixture, tmp_path: pathlib.Path) -> Non
 
     # 1. Invalid job ID
     with patch("builtins.print") as mock_print:
-        openqa_label_known_issues.investigate_issue("http://host/tests/abc", mock_client, [], [], "http://host")
+        openqa_label_known_issues.investigate_issue("http://host/tests/abc", mock_client, openqa_label_known_issues.OpenQAClient("http://host"), [], "http://host")
         mock_print.assert_called_once_with("Invalid job ID extracted from http://host/tests/abc", file=sys.stderr)
 
     # 2. job_data fetch fails
     mock_sub = mocker.patch("subprocess.run")
     mock_sub.side_effect = Exception("err")
     with patch("builtins.print") as mock_print:
-        openqa_label_known_issues.investigate_issue("http://host/tests/123", mock_client, [], [], "http://host")
+        openqa_label_known_issues.investigate_issue("http://host/tests/123", mock_client, openqa_label_known_issues.OpenQAClient("http://host"), [], "http://host")
         mock_print.assert_any_call("Failed to load job data for 123: err", file=sys.stderr)
 
     # 3. job state not done / passed (should return early)
     mock_sub.side_effect = None
     mock_sub.return_value = Mock(stdout='{"job": {"state": "running", "result": "none"}}')
     mock_client_get = mocker.patch.object(mock_client, "get")
-    openqa_label_known_issues.investigate_issue("http://host/tests/123", mock_client, [], [], "http://host")
+    openqa_label_known_issues.investigate_issue("http://host/tests/123", mock_client, openqa_label_known_issues.OpenQAClient("http://host"), [], "http://host")
     mock_client_get.assert_not_called()
 
     # 4. log fetch returns 200, handles issues tracker matched
@@ -658,7 +659,7 @@ def test_investigate_issue(mocker: MockerFixture, tmp_path: pathlib.Path) -> Non
     mock_client.get.return_value = mock_resp_log
 
     mock_tracker = mocker.patch("openqa_label_known_issues.label_on_issues_from_issue_tracker", return_value=True)
-    openqa_label_known_issues.investigate_issue("http://host/tests/123", mock_client, [], [], "http://host")
+    openqa_label_known_issues.investigate_issue("http://host/tests/123", mock_client, openqa_label_known_issues.OpenQAClient("http://host"), [], "http://host")
     mock_tracker.assert_called_once()
 
     # 5. log fetch 404, reason null, unreachable fails
@@ -669,14 +670,14 @@ def test_investigate_issue(mocker: MockerFixture, tmp_path: pathlib.Path) -> Non
     mock_client.get.return_value = mock_resp_log
 
     mock_unreachable = mocker.patch("openqa_label_known_issues.handle_unreachable", return_value=1)
-    openqa_label_known_issues.investigate_issue("http://host/tests/123", mock_client, [], [], "http://host")
+    openqa_label_known_issues.investigate_issue("http://host/tests/123", mock_client, openqa_label_known_issues.OpenQAClient("http://host"), [], "http://host")
     mock_unreachable.assert_called_once()
 
     # 6. log fetch 404, reason null, unreachable returns 0 (should print cannot label)
     mock_unreachable.reset_mock()
     mock_unreachable.return_value = 0
     with patch("builtins.print") as mock_print:
-        openqa_label_known_issues.investigate_issue("http://host/tests/123", mock_client, [], [], "http://host")
+        openqa_label_known_issues.investigate_issue("http://host/tests/123", mock_client, openqa_label_known_issues.OpenQAClient("http://host"), [], "http://host")
         mock_print.assert_any_call(
             "'http://host/tests/123' does not have autoinst-log.txt or reason, cannot label", file=sys.stderr
         )
@@ -688,7 +689,7 @@ def test_investigate_issue(mocker: MockerFixture, tmp_path: pathlib.Path) -> Non
     mock_sub.return_value = Mock(
         stdout='{"job": {"state": "done", "result": "failed", "reason": null, "group_id": null}}'
     )
-    openqa_label_known_issues.investigate_issue("http://host/tests/123", mock_client, [], [], "http://host")
+    openqa_label_known_issues.investigate_issue("http://host/tests/123", mock_client, openqa_label_known_issues.OpenQAClient("http://host"), [], "http://host")
     # unreachable matched and returns early
 
     # 8. REPORT_FILE, KEEP_REPORT_FILE set
@@ -696,13 +697,13 @@ def test_investigate_issue(mocker: MockerFixture, tmp_path: pathlib.Path) -> Non
     mocker.patch.dict("os.environ", {"REPORT_FILE": str(tmp_path / "custom_report"), "KEEP_REPORT_FILE": "1"})
     mock_resp_log.status_code = 200
     mock_resp_log.text = "some text"
-    openqa_label_known_issues.investigate_issue("http://host/tests/123", mock_client, [], [], "http://host")
+    openqa_label_known_issues.investigate_issue("http://host/tests/123", mock_client, openqa_label_known_issues.OpenQAClient("http://host"), [], "http://host")
     assert (tmp_path / "custom_report").exists()
 
     # 9. Exception during report file unlink (covers lines 544-545 finally cleanup branch)
     mocker.patch.dict("os.environ", {"REPORT_FILE": "", "KEEP_REPORT_FILE": "0"}, clear=True)
     mocker.patch("pathlib.Path.unlink", side_effect=Exception("unlink err"))
-    openqa_label_known_issues.investigate_issue("http://host/tests/123", mock_client, [], [], "http://host")
+    openqa_label_known_issues.investigate_issue("http://host/tests/123", mock_client, openqa_label_known_issues.OpenQAClient("http://host"), [], "http://host")
 
     # 10. label_on_issues_without_tickets returns True (covers line 519 return)
     mocker.patch("pathlib.Path.unlink", side_effect=None)
@@ -712,7 +713,7 @@ def test_investigate_issue(mocker: MockerFixture, tmp_path: pathlib.Path) -> Non
     mock_resp_log.text = "Compilation failed in require at isotovideo line 28."
     mock_client.get.return_value = mock_resp_log
     mocker.patch("openqa_label_known_issues.label_on_issues_without_tickets", return_value=True)
-    openqa_label_known_issues.investigate_issue("http://host/tests/123", mock_client, [], [], "http://host")
+    openqa_label_known_issues.investigate_issue("http://host/tests/123", mock_client, openqa_label_known_issues.OpenQAClient("http://host"), [], "http://host")
 
 
 def test_main(mocker: MockerFixture) -> None:
