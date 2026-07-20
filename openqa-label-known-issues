@@ -1,223 +1,614 @@
-#!/bin/bash -e
+#!/usr/bin/env python3
+# Copyright SUSE LLC
+# ruff: noqa: BLE001, C901, D103, D401, E501, FBT001, FBT003, PLR0911, PLR0912, PLR0913, PLR0914, PLR0915, PLR0917, PLR2004, S110, S404, S603, SIM105, SIM112, T201, TRY300, PERF203, PERF401
+"""Takes an openQA job URL, looks for matching "known issues" and labels/restarts."""
 
-set -o pipefail -o errtrace
+from __future__ import annotations
 
-# shellcheck source=/dev/null
-. "$(dirname "${BASH_SOURCE[0]}")"/_common
+import json
+import logging
+import os
+import pathlib
+import re
+import subprocess
+import sys
+import tempfile
+from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
+from typing import Annotated, Any
 
-host="${host:-"openqa.opensuse.org"}"
-scheme="${scheme:-"https"}"
-host_url="$scheme://$host"
-dry_run="${dry_run:-"0"}"
-min_search_term="${min_search_term:-"16"}"
-issue_marker="${issue_marker:-"auto_review%3A"}"
-issue_query="${issue_query:-"https://progress.opensuse.org/projects/openqav3/issues.json?limit=200&subproject_id=*&subject=~${issue_marker}"}"
-force_result_tracker="${force_result_tracker:-"openqa-force-result"}"
-reason_min_length="${reason_min_length:-"8"}"
-grep_timeout="${grep_timeout:-5}"
-email_unreviewed=${email_unreviewed:-false}
-notification_address=${notification_address:-}
-from_email=${from_email:-openqa-label-known-issues@open.qa}
-curl_args=(-L --user-agent "openqa-label-known-issues")
-retries="${retries:-"3"}"
-OPENQA_CLI_RETRY_SLEEP_TIME_S=${OPENQA_CLI_RETRY_SLEEP_TIME_S:-120}
-MOJO_CONNECT_TIMEOUT=${MOJO_CONNECT_TIMEOUT:-30}
-client_args=(api --header 'User-Agent: openqa-label-known-issues (https://github.com/os-autoinst/os-autoinst-scripts)' --host "$host_url" --retries="$retries")
+import httpx
+import typer
 
-usage() {
-    cat << EOF
-Usage: $0 [OPTIONS] OPENQA_JOB_URL
+app = typer.Typer(add_completion=False)
+log = logging.getLogger(__name__)
 
-Takes an openQA job URL, looks for matching "known issues", for example from
-progress.opensuse.org, labels the job and retriggers if specified in the issue
-(see the source code for details how to mark tickets).
 
-Options:
- -h, --help         display this help
- -H, --host=HOST    openQA host to contact. Defaults to '$host'.
- -n, --dry          conduct dry-run without any labelling or restarting of openQA
-                    jobs
-EOF
-    exit "$1"
-}
+def setup_logging(verbose: int) -> None:
+    level_map = {
+        0: logging.WARNING,
+        1: logging.INFO,
+        2: logging.DEBUG,
+    }
+    level = level_map.get(min(verbose, 2), logging.WARNING)
+    logging.basicConfig(level=level, format="%(levelname)s: %(message)s", stream=sys.stderr, force=True)
 
-out="${REPORT_FILE:-$(mktemp -t openqa-label-known-issues--output-XXXX)}"
-trap 'error-handler "$LINENO"' ERR
-trap '_cleanup' EXIT
 
-_cleanup() {
-    test "$KEEP_REPORT_FILE" == "1" || rm "$out"
-    test "$KEEP_JOB_HTML_FILE" == "1" || rm -f "$html_out"
-}
+def extract_timeago(html_content: str) -> str | None:
+    match1 = re.search(r'class="[^"]*timeago[^"]*"[^>]*title="([^"]+)"', html_content)
+    if match1:
+        return match1.group(1)
+    match2 = re.search(r'title="([^"]+)"[^>]*class="[^"]*timeago[^"]*"', html_content)
+    if match2:
+        return match2.group(1)
+    return None
 
-echoerr() { echo "$@" >&2; }
 
-handle_unreachable() {
-    local testurl=$1
-    local timeago
-    html_out=${JOB_HTML_FILE:-$(mktemp -t openqa-label-known-issues--job-details-XXXX)}
-    if ! curl "${curl_args[@]}" -s --head "$testurl" -o /dev/null; then
-        # the page might be gone, try the scheme+host we configured (might be different one though)
-        if ! grep -q "$host_url" <<< "$testurl"; then
-            echoerr "'$testurl' is not reachable and 'host_url' parameter does not match '$testurl', can not check further, continuing with next"
+def is_older_than_14_days(timeago_str: str) -> bool:
+    try:
+        t_str = timeago_str.replace("Z", "+00:00")
+        dt = datetime.fromisoformat(t_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        limit = datetime.now(timezone.utc) - timedelta(days=14)
+        return dt < limit
+    except Exception as e:
+        print(f"Error comparing date {timeago_str}: {e}", file=sys.stderr)
+        return False
+
+
+def get_markdown_html(plain_text: str) -> str:
+    for cmd in ["Markdown.pl", "markdown"]:
+        try:
+            res = subprocess.run([cmd], input=plain_text, capture_output=True, text=True, check=True)
+            return res.stdout
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            continue
+    print("+++ (Markdown.pl|markdown) not found, please install Text::Markdown +++", file=sys.stderr)
+    return plain_text
+
+
+def multipart_from_markdown(plain: str, to_email: str, from_email: str, subject: str) -> str:
+    md = get_markdown_html(plain)
+    msg = EmailMessage()
+    msg["To"] = to_email
+    msg["From"] = from_email
+    msg["Subject"] = subject
+    msg.set_content(plain, charset="utf-8")
+    msg.add_alternative(f"<html><body>\n{md}</body></html>", subtype="html", charset="utf-8")
+    return msg.as_string()
+
+
+def send_email(mailto: str, email_content: str, dry_run: bool) -> None:
+    if dry_run:
+        print(f"Would send email to '{mailto}':\n{email_content}")
+        return
+    try:
+        subprocess.run(["/usr/sbin/sendmail", "-t", mailto], input=email_content, text=True, check=True)
+    except Exception as e:
+        print(f"Failed to send email: {e}", file=sys.stderr)
+
+
+def extract_excerpt(filepath: str) -> str:
+    try:
+        lines = pathlib.Path(filepath).read_text(encoding="utf-8", errors="ignore").splitlines()
+    except Exception:
+        return "    # (No log excerpt found)"
+
+    matched_lines: list[str] = []
+
+    backend_patt = "Backend process died, backend errors are reported below in the following lines"
+    idx = next((i for i, line in enumerate(lines) if backend_patt in line), -1)
+    if idx != -1:
+        matched_lines = lines[idx : idx + 13]
+    else:
+        idx = next((i for i, line in enumerate(lines) if "sending magic and exit" in line), -1)
+        if idx != -1:
+            matched_lines = lines[max(0, idx - 10) : idx + 1]
+        else:
+            patt3 = re.compile(r"killing command server.*because test execution ended through exception")
+            idx = next((i for i, line in enumerate(lines) if patt3.search(line)), -1)
+            if idx != -1:
+                matched_lines = lines[max(0, idx - 5) : idx + 1]
+            else:
+                idx = next((i for i, line in enumerate(lines) if "EXIT 1" in line), -1)
+                if idx != -1:
+                    matched_lines = lines[max(0, idx - 5) : idx + 1]
+                else:
+                    patt5 = re.compile(r"Result: died|isotovideo failed")
+                    idx = next((i for i, line in enumerate(lines) if patt5.search(line)), -1)
+                    if idx != -1:
+                        matched_lines = lines[max(0, idx - 10) : idx + 1]
+
+    if not matched_lines:
+        return "    # (No log excerpt found)"
+
+    ansi_escape = re.compile(r"\x1b\[[0-9;]*m")
+    clean_lines = [ansi_escape.sub("", line) for line in matched_lines]
+    if clean_lines:
+        clean_lines = clean_lines[:-1]
+
+    return "\n".join(f"    # {line}" for line in clean_lines)
+
+
+def comment_on_job(job_id: str, comment: str, force_result: str, client_call: list[str]) -> None:
+    enable_force_result = os.environ.get("enable_force_result", "false") == "true"
+    if enable_force_result and force_result:
+        comment = f"label:force_result:{force_result}:{comment}"
+
+    cmd = [*client_call, "-X", "POST", f"jobs/{job_id}/comments", f"text={comment}"]
+    if client_call and client_call[0] == "echo":
+        log.info("Would comment on job %s: %s", job_id, comment)
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to comment on job {job_id}: {e.stderr}", file=sys.stderr)
+
+
+def restart_job(job_id: str, client_call: list[str]) -> None:
+    cmd = [*client_call, "-X", "POST", f"jobs/{job_id}/restart"]
+    if client_call and client_call[0] == "echo":
+        log.info("Would restart job %s", job_id)
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, text=True)
+    except subprocess.CalledProcessError as e:
+        print(f"Failed to restart job {job_id}: {e.stderr}", file=sys.stderr)
+
+
+def search_log(search_term: str, filepath: str) -> bool:
+    try:
+        content = pathlib.Path(filepath).read_text(encoding="utf-8", errors="ignore")
+    except Exception as e:
+        print(f"Failed to read report file {filepath}: {e}", file=sys.stderr)
+        return False
+
+    try:
+        pattern = re.compile(search_term)
+    except re.error as e:
+        print(f"grep failed: cmd=>grep -qPzo '{search_term}' '{filepath}'< output='{e}'", file=sys.stderr)
+        sys.exit(2)
+    return bool(pattern.search(content))
+
+
+def label_on_issue(
+    job_id: str,
+    search_term: str,
+    label: str,
+    report_file: str,
+    restart: str,
+    force_result: str,
+    client_call: list[str],
+) -> bool:
+    log.debug("Searching for regex '%s' inside report file %s", search_term, report_file)
+    if not search_log(search_term, report_file):
+        return False
+    log.info("Job %s matches issue/label: %s", job_id, label)
+    comment_on_job(job_id, label, force_result, client_call)
+    if restart == "1":
+        restart_job(job_id, client_call)
+    return True
+
+
+def label_on_issues_from_issue_tracker(
+    job_id: str,
+    issues_list: list[dict[str, str]],
+    report_file: str,
+    client_call: list[str],
+) -> bool:
+    min_search_term = int(os.environ.get("min_search_term", "16"))
+    force_result_tracker = os.environ.get("force_result_tracker", "openqa-force-result")
+
+    for issue_info in issues_list:
+        issue_id = issue_info["id"]
+        subject = issue_info["subject"]
+        tracker = issue_info["tracker_name"]
+
+        if '"' in subject:
+            parts = subject.split('"', 1)
+            after = parts[1]
+            search = after.rsplit('"', 1)[0] if '"' in after else ""
+        else:
+            after = ""
+            search = ""
+
+        force_result = ""
+        label = f"poo#{issue_id} {subject}"
+
+        if len(search) >= min_search_term:
+            match_force = re.search(r":force_result:([a-z_]+)", after)
+            if match_force:
+                if tracker == force_result_tracker:
+                    force_result = match_force.group(1)
+                else:
+                    label = (
+                        f'{label} (ignoring force result for ticket which is not in tracker "{force_result_tracker}")'
+                    )
+
+            restart = "1" if '":retry' in after else ""
+
+            if label_on_issue(job_id, search, label, report_file, restart, force_result, client_call):
+                return True
+    return False
+
+
+def label_on_issues_without_tickets(
+    job_id: str,
+    report_file: str,
+    client_call: list[str],
+) -> bool:
+    patterns = [
+        (
+            r"([dD]ownload.*failed.*404)[\S\s]*Result: setup failure",
+            "label:non_existing asset, candidate for removal or wrong settings",
+            "",
+        ),
+        (r"File .*\.yaml.* does not exist at .*scheduler.pm", "label:missing_schedule_file", ""),
+        (r"Compilation failed in require at .*isotovideo line 28.", "label:schedule_compilation_error", ""),
+        (r"qemu-img: Could not open .*: No such file or directory", "label:missing_asset", ""),
+        (
+            r"fatal: Remote branch .* not found",
+            "label:remote_branch_not_found, probably wrong custom git URL specified with branch",
+            "",
+        ),
+        (r"fatal: repository not found", "label:remote_repo_not_found, probably wrong custom git URL specified", ""),
+        (
+            r"(?s)Cloning git URL.*to use as test distribution.*(No scripts in|needledir not found)",
+            "label:remote_repo_invalid, probably wrong custom git URL specified",
+            "",
+        ),
+        (
+            r"(?s)Cloning git URL.*to use as test distribution.*(SCHEDULE.*not set|loadtest needs a script below)",
+            "label:remote_repo_schedule_not_found, probably wrong custom git URL + PRODUCTDIR specified",
+            "",
+        ),
+        (r"\[error\] Failed to download", "label:download_error potentially out-of-space worker?", "1"),
+    ]
+
+    for regex, label, restart in patterns:
+        if label_on_issue(job_id, regex, label, report_file, restart, "", client_call):
+            return True
+    return False
+
+
+def handle_unreachable(
+    testurl: str,
+    job_id: str,
+    client: httpx.Client,
+    host_url: str,
+    client_call: list[str],
+) -> int:
+    html_out = os.environ.get("JOB_HTML_FILE")
+    temp_html_created = False
+    if not html_out:
+        fd, html_out = tempfile.mkstemp(prefix="openqa-label-known-issues--job-details-")
+        os.close(fd)
+        temp_html_created = True
+
+    try:
+        try:
+            head_res = client.head(testurl, follow_redirects=True)
+            head_ok = head_res.status_code < 400
+        except Exception:
+            head_ok = False
+
+        if not head_ok:
+            if host_url not in testurl:
+                print(
+                    f"'{testurl}' is not reachable and 'host_url' parameter does not match '{testurl}', can not check further, continuing with next",
+                    file=sys.stderr,
+                )
+                return 1
+
+            try:
+                host_res = client.head(host_url, follow_redirects=True)
+                host_ok = host_res.status_code < 400
+            except Exception:
+                host_ok = False
+
+            if not host_ok:
+                print(f"'{host_url}' is not reachable, bailing out", file=sys.stderr)
+                try:
+                    client.head(host_url, follow_redirects=True)
+                except Exception:
+                    pass
+            print(f"'{testurl}' is not reachable, assuming deleted, continuing with next", file=sys.stderr)
             return 1
-        fi
-        if ! curl "${curl_args[@]}" -s --head "$host_url"; then
-            echoerr "'$host_url' is not reachable, bailing out"
-            curl "${curl_args[@]}" --head "$host_url"
-        fi
-        echoerr "'$testurl' is not reachable, assuming deleted, continuing with next"
-        return 1
-    fi
-    # resorting to downloading the job details page instead of the
-    # log
-    if ! curl "${curl_args[@]}" -s "$testurl" -o "${html_out}"; then
-        echoerr "'$testurl' can be reached but not downloaded, bailing out"
-        curl "${curl_args[@]}" "$testurl"
-        exit 2
-    fi
 
-    if hxnormalize -x "${html_out}" | hxselect -s '\n' -c '.links_a .resborder' | grep -qPzo '(?s)Gru job failed.*connection error.*Inactivity timeout'; then
-        "${client_call[@]}" -X POST jobs/"$id"/comments text='poo#62456 test incompletes after failing in GRU download task on "Inactivity timeout" with no logs'
-        "${client_call[@]}" -X POST jobs/"$id"/restart
-        return 1
-    fi
+        try:
+            get_res = client.get(testurl, follow_redirects=True)
+            get_res.raise_for_status()
+            pathlib.Path(html_out).write_text(get_res.text, encoding="utf-8")
+        except Exception:
+            print(f"'{testurl}' can be reached but not downloaded, bailing out", file=sys.stderr)
+            sys.exit(2)
 
-    # Checking timestamp given by job details page
-    timeago=$(grep timeago "$html_out" | hxselect -s '\n' -c '.timeago::attr(title)')
-    if [[ $(date -uIs -d '-14days') > $timeago ]]; then
-        # if the page is there but not even an autoinst-log.txt exists
-        # then the job might be too old and logs are already deleted.
-        echoerr "'$testurl' job#${id} without autoinst-log.txt older than 14 days. Do not label"
-        return 1
-    fi
-}
+        html_content = pathlib.Path(html_out).read_text(encoding="utf-8", errors="ignore")
 
-label_on_issues_from_issue_tracker() {
-    local id=$1
-    # Iterate over all progress issues that have the search term included
-    # 1. line: issue id
-    # 2. line: subject
-    echo "$issues" | (
-        while read -r issue; do
-            read -r subject
-            read -r tracker
-            after=${subject#*\"}
-            search=${after%\"*}
-            force_result=''
-            label="poo#$issue $subject"
-            if [[ ${#search} -ge $min_search_term ]]; then
-                if [[ $after =~ :force_result:([a-z_]+) ]]; then
-                    if [[ $tracker == "$force_result_tracker" ]]; then
-                        force_result=${BASH_REMATCH[1]}
-                    else
-                        label="$label (ignoring force result for ticket which is not in tracker \"$force_result_tracker\")"
-                    fi
-                fi
-                label-on-issue "$id" "$search" "$label" "${after//*\":retry*/1}" "$force_result" && break
-            fi
-        done
-    )
-}
+        if re.search(r"(?s)Gru job failed.*connection error.*Inactivity timeout", html_content):
+            comment = (
+                'poo#62456 test incompletes after failing in GRU download task on "Inactivity timeout" with no logs'
+            )
+            comment_on_job(job_id, comment, "", client_call)
+            restart_job(job_id, client_call)
+            return 1
 
-label_on_issues_without_tickets() {
-    if label-on-issue "$id" '([dD]ownload.*failed.*404)[\S\s]*Result: setup failure' 'label:non_existing asset, candidate for removal or wrong settings'; then
-        return
-    elif label-on-issue "$id" 'File .*\.yaml.* does not exist at .*scheduler.pm' 'label:missing_schedule_file'; then
-        return
-    elif label-on-issue "$id" 'Compilation failed in require at .*isotovideo line 28.' 'label:schedule_compilation_error'; then
-        return
-    elif label-on-issue "$id" 'qemu-img: Could not open .*: No such file or directory' 'label:missing_asset'; then
-        return
-    elif label-on-issue "$id" 'fatal: Remote branch .* not found' 'label:remote_branch_not_found, probably wrong custom git URL specified with branch'; then
-        return
-    elif label-on-issue "$id" 'fatal: repository not found' 'label:remote_repo_not_found, probably wrong custom git URL specified'; then
-        return
-    elif label-on-issue "$id" '(?s)Cloning git URL.*to use as test distribution.*(No scripts in|needledir not found)' 'label:remote_repo_invalid, probably wrong custom git URL specified'; then
-        return
-    elif label-on-issue "$id" '(?s)Cloning git URL.*to use as test distribution.*(SCHEDULE.*not set|loadtest needs a script below)' 'label:remote_repo_schedule_not_found, probably wrong custom git URL + PRODUCTDIR specified'; then
-        return
-    elif label-on-issue "$id" '\[error\] Failed to download' 'label:download_error potentially out-of-space worker?' 1; then
-        return
-    fi
-    false
-}
+        timeago = extract_timeago(html_content)
+        if timeago and is_older_than_14_days(timeago):
+            print(
+                f"'{testurl}' job#{job_id} without autoinst-log.txt older than 14 days. Do not label",
+                file=sys.stderr,
+            )
+            return 1
+        return 0
+    finally:
+        keep_job_html_file = os.environ.get("KEEP_JOB_HTML_FILE") == "1"
+        if temp_html_created and not keep_job_html_file:
+            try:
+                pathlib.Path(html_out).unlink()
+            except Exception:
+                pass
 
-investigate_issue() {
-    local testurl=$1
-    local id="${testurl##*/}"
-    local reason
-    local curl_output
-    echo "Requesting jobs/${id} via openqa-cli"
-    job_data=$(openqa-cli "${client_args[@]}" jobs/"$id")
-    state="$(echo "$job_data" | runjq -r '.job.state')"
-    result="$(echo "$job_data" | runjq -r '.job.result')"
-    # Skip all unfinished or passed jobs for now
-    if [[ "$state" != 'done' || "$result" == passed ]]; then
-        return
-    fi
-    reason=$(echo "$job_data" | runjq -r '.job.reason')
-    group_id=$(echo "$job_data" | runjq -r '.job.group_id')
-    curl_output=$(curl "${curl_args[@]}" -sS -w "%{http_code}" "$testurl/file/autoinst-log.txt" -o "$out")
-    # combine both the reason and autoinst-log.txt to check known issues
-    # against even in case when autoinst-log.txt is missing the details, e.g.
-    # see https://progress.opensuse.org/issues/69178
-    echo "$reason" >> "$out"
-    if [[ "$curl_output" != "200" ]] && [[ "$curl_output" != "301" ]]; then
-        # if we can not even access the page it is something more critical
-        handle_unreachable "$testurl" "$out" || return 0
 
-        [[ $curl_output != 404 ]] && return
-        # not unreachable, no log, no reason, not too old
-        if [[ -z $reason ]] || [[ $reason = null ]]; then
-            echoerr "'$testurl' does not have autoinst-log.txt or reason, cannot label"
+def handle_unreviewed(
+    testurl: str,
+    report_file: str,
+    reason: str,
+    group_id: str,
+    email_unreviewed: bool,
+    from_email: str,
+    notification_address: str,
+    job_data: dict[str, Any],
+    dry_run: bool,
+    client_call: list[str],
+) -> None:
+    snip_start = "    # --- 8< ---\n"
+    snip_end = "    # --- >8 ---"
+
+    header = f"[{testurl}]({testurl}): Unknown test issue, to be reviewed\n-> [autoinst-log.txt]({testurl}/file/autoinst-log.txt)\n"
+    excerpt = "Last lines before SUT shutdown:\n\n" + snip_start
+    excerpt += extract_excerpt(report_file)
+    excerpt += "\n" + snip_end
+
+    print(header)
+    print(excerpt)
+
+    if email_unreviewed and group_id != "null":
+        cmd_group = (
+            ["openqa-cli"]
+            + [arg for arg in client_call if arg not in {"echo", "openqa-cli"}]
+            + [f"job_groups/{group_id}"]
+        )
+        try:
+            res = subprocess.run(cmd_group, check=True, capture_output=True, text=True)
+            group_data = json.loads(res.stdout)
+        except Exception as e:
+            print(f"Failed to load job group data for {group_id}: {e}", file=sys.stderr)
+            group_data = []
+
+        group_description = ""
+        group_name = ""
+        if isinstance(group_data, list) and len(group_data) > 0:
+            group_description = group_data[0].get("description", "")
+            group_name = group_data[0].get("name", "")
+
+        group_mailto = ""
+        if group_description:
+            match_mail = re.search(r"MAILTO:\s*(\S+)", group_description)
+            if match_mail:
+                group_mailto = match_mail.group(1)
+
+        group_mailto = group_mailto or notification_address
+
+        job = job_data.get("job", {})
+        clone_id = job.get("clone_id")
+
+        if group_mailto and (clone_id is None or str(clone_id) == "null"):
+            job_name = job.get("name", "")
+            job_result = job.get("result", "")
+
+            info = (
+                f"* Name: {job_name}\n"
+                f"* Result: {job_result}\n"
+                f"* Reason: {reason}\n\n"
+                "It might be a product bug, an outdated needle, test code needing adaptation or a\n"
+                "test infrastructure related problem.\n"
+                "Adding a [bugref](http://open.qa/docs/#_bug_references) that can be\n"
+                "[carried over](http://open.qa/docs/#carry-over) will prevent these mails for\n"
+                "this issue. If the carry-over is not sufficient, you may want to create a ticket with\n"
+                "[auto-review-regex](https://github.com/os-autoinst/os-autoinst-scripts/blob/master/README.md#auto-review---automatically-detect-known-issues-in-openqa-jobs-label-openqa-jobs-with-ticket-references-and-optionally-retrigger)."
+            )
+
+            email_body = f"[{job_name}]({testurl})\n{header}\n{info}\n\n{excerpt}"
+            subject = f"Unreviewed issue (Group {group_id} {group_name})"
+            email_full = multipart_from_markdown(
+                email_body, group_mailto, f"openqa-label-known-issues <{from_email}>", subject
+            )
+            send_email(group_mailto, email_full, dry_run)
+
+
+def fetch_issues(client: httpx.Client, issue_query: str) -> list[dict[str, str]]:
+    if "issues" in os.environ:
+        lines = [line.strip() for line in os.environ["issues"].split("\n") if line.strip()]
+        issues_list = []
+        for i in range(0, len(lines) - 2, 3):
+            issues_list.append({"id": lines[i], "subject": lines[i + 1], "tracker_name": lines[i + 2]})
+        return issues_list
+
+    try:
+        response = client.get(issue_query, follow_redirects=True)
+        response.raise_for_status()
+        data = response.json()
+        issues_list = []
+        for issue in data.get("issues", []):
+            issues_list.append({
+                "id": str(issue.get("id")),
+                "subject": issue.get("subject", ""),
+                "tracker_name": issue.get("tracker", {}).get("name", ""),
+            })
+        return issues_list
+    except Exception as e:
+        print(f"Error fetching issues from Redmine: {e}", file=sys.stderr)
+        return []
+
+
+def investigate_issue(
+    testurl: str,
+    client: httpx.Client,
+    client_call: list[str],
+    issues_list: list[dict[str, str]],
+    host_url: str,
+) -> None:
+    job_id = testurl.rstrip("/").split("/")[-1]
+    if not job_id.isdigit():
+        print(f"Invalid job ID extracted from {testurl}", file=sys.stderr)
+        return
+
+    report_file = os.environ.get("REPORT_FILE")
+    temp_report_created = False
+    if not report_file:
+        fd, report_file = tempfile.mkstemp(prefix="openqa-label-known-issues--output-")
+        os.close(fd)
+        temp_report_created = True
+
+    try:
+        print(f"Requesting jobs/{job_id} via openqa-cli")
+        cmd_job = (
+            ["openqa-cli"] + [arg for arg in client_call if arg not in {"echo", "openqa-cli"}] + [f"jobs/{job_id}"]
+        )
+        try:
+            res = subprocess.run(cmd_job, check=True, capture_output=True, text=True)
+            job_data = json.loads(res.stdout)
+        except Exception as e:
+            print(f"Failed to load job data for {job_id}: {e}", file=sys.stderr)
             return
-        fi
-    fi
 
-    label_on_issues_from_issue_tracker "$id" && return
+        job = job_data.get("job", {})
+        state = job.get("state")
+        result = job.get("result")
 
-    ## Issues without tickets, e.g. potential singular, manual debug jobs,
-    # wrong user settings, etc.
-    # could create an issue automatically with
-    # $client_prefix curl -s -H "Content-Type: application/json" -X POST -H "X-Redmine-API-Key: $(sed -n 's/redmine-token = //p' ~/.query_redminerc)" --data '{"issue": {"project_id": 36, "category_id": 152, priority_id: 5, "subject": "test from command line"}}' https://progress.opensuse.org/issues.json
-    # but we should check if the issue already exists, e.g. same
-    # subject line
-    label_on_issues_without_tickets "$id" && return
+        if state != "done" or result == "passed":
+            return
 
-    handle_unreviewed "$testurl" "$out" "$reason" "$group_id" "$email_unreviewed" "$from_email" "$notification_address" "$job_data" "$dry_run"
-}
+        reason = job.get("reason", "")
+        group_id = job.get("group_id")
 
-label_issue() {
-    local opts
-    opts=$(getopt -o hH: -l help -l host: -n "$0" -- "$@") || usage 1
-    eval set -- "$opts"
-    while true; do
-        case "$1" in
-            -h | --help) usage 0 ;;
-            -H | --host)
-                host=$2
-                shift 2
-                ;;
-            --)
-                shift
-                break
-                ;;
-            *) break ;;
-        esac
-    done
+        autoinst_log_url = f"{testurl.rstrip('/')}/file/autoinst-log.txt"
+        curl_output = 0
+        log_text = ""
+        try:
+            resp_log = client.get(autoinst_log_url, follow_redirects=True)
+            curl_output = resp_log.status_code
+            if resp_log.status_code in {200, 301}:
+                log_text = resp_log.text
+        except Exception:
+            curl_output = 0
 
-    local testurl="${1:?"Need 'testurl'"}"
-    [[ "$dry_run" = "1" ]] && client_prefix="echo"
-    if [[ -z "$client_call" ]]; then
-        client_call=(openqa-cli "${client_args[@]}")
-        if [[ -n "$client_prefix" ]]; then
-            client_call=("$client_prefix" "${client_call[@]}")
-        fi
-    fi
-    # search for issues with a subject search term
-    issues=${issues:-$(runcurl "${curl_args[@]}" -sS "$issue_query" | runjq -r '.issues | .[] | (.id,.subject,.tracker.name)')}
-    investigate_issue "$testurl"
-}
+        with pathlib.Path(report_file).open("w", encoding="utf-8") as f:
+            if log_text:
+                f.write(log_text)
+                if not log_text.endswith("\n"):
+                    f.write("\n")
+            f.write(str(reason) if reason is not None else "")
+            f.write("\n")
 
-caller 0 > /dev/null || label_issue "$@"
+        if curl_output not in {200, 301}:
+            if handle_unreachable(testurl, job_id, client, host_url, client_call) == 1:
+                return
+            if curl_output != 404:
+                return
+            if not reason or reason == "null":
+                print(f"'{testurl}' does not have autoinst-log.txt or reason, cannot label", file=sys.stderr)
+                return
+
+        if label_on_issues_from_issue_tracker(job_id, issues_list, report_file, client_call):
+            return
+
+        if label_on_issues_without_tickets(job_id, report_file, client_call):
+            return
+
+        email_unreviewed = os.environ.get("email_unreviewed", "false").lower() == "true"
+        from_email = os.environ.get("from_email", "openqa-label-known-issues@open.qa")
+        notification_address = os.environ.get("notification_address", "")
+        dry_run = os.environ.get("dry_run", "0") == "1"
+
+        handle_unreviewed(
+            testurl=testurl,
+            report_file=report_file,
+            reason=reason,
+            group_id=str(group_id) if group_id is not None else "null",
+            email_unreviewed=email_unreviewed,
+            from_email=from_email,
+            notification_address=notification_address,
+            job_data=job_data,
+            dry_run=dry_run,
+            client_call=client_call,
+        )
+
+    finally:
+        keep_report_file = os.environ.get("KEEP_REPORT_FILE") == "1"
+        if temp_report_created and not keep_report_file:
+            try:
+                pathlib.Path(report_file).unlink()
+            except Exception:
+                pass
+
+
+@app.command()
+def main(
+    job_url: str = typer.Argument(None, help="The openQA job URL"),
+    host: str = typer.Option(
+        os.environ.get("host", "openqa.opensuse.org"),
+        "--host",
+        "-H",
+        help="openQA host to contact.",
+    ),
+    dry: bool = typer.Option(False, "--dry", "-n", help="conduct dry-run without any labelling or restarting"),
+    verbose: Annotated[int, typer.Option("--verbose", "-v", count=True, help="Increase verbosity")] = 0,
+) -> None:
+    """Takes an openQA job URL, looks for matching "known issues", for example from progress.opensuse.org, labels the job and retriggers if specified in the issue (see the source code for details how to mark tickets)."""
+    setup_logging(verbose)
+    if not job_url:
+        print("Need 'testurl'", file=sys.stderr)
+        raise typer.Exit(1)
+
+    host_val = host
+    scheme_val = os.environ.get("scheme", "https")
+    host_url_val = f"{scheme_val}://{host_val}"
+
+    dry_run_val = dry or (os.environ.get("dry_run", "0") == "1")
+    if dry_run_val:
+        os.environ["dry_run"] = "1"
+
+    retries = os.environ.get("retries", "3")
+    client_args = [
+        "api",
+        "--header",
+        "User-Agent: openqa-label-known-issues (https://github.com/os-autoinst/os-autoinst-scripts)",
+        "--host",
+        host_url_val,
+        f"--retries={retries}",
+    ]
+
+    client_call = ["openqa-cli", *client_args]
+    if dry_run_val:
+        client_call = ["echo", *client_call]
+
+    issue_marker = os.environ.get("issue_marker", "auto_review%3A")
+    issue_query = os.environ.get(
+        "issue_query",
+        f"https://progress.opensuse.org/projects/openqav3/issues.json?limit=200&subproject_id=*&subject=~{issue_marker}",
+    )
+
+    with httpx.Client(headers={"User-Agent": "openqa-label-known-issues"}) as client:
+        issues_list = fetch_issues(client, issue_query)
+        investigate_issue(
+            testurl=job_url,
+            client=client,
+            client_call=client_call,
+            issues_list=issues_list,
+            host_url=host_url_val,
+        )
+
+
+if __name__ == "__main__":  # pragma: no cover
+    app()
