@@ -58,8 +58,8 @@ set initrd http://download.opensuse.org/distribution/leap/15.6/repo/oss/boot/x86
 goto editandboot
 
 :tumbleweed_KVM_agama
-set kernel http://openqa.opensuse.org/assets/repo/openSUSE-Tumbleweed-oss-x86_64-CURRENT/boot/x86_64/loader/linux
-set initrd http://openqa.opensuse.org/assets/repo/openSUSE-Tumbleweed-oss-x86_64-CURRENT/boot/x86_64/loader/initrd
+set kernel http://openqa.opensuse.org/assets/repo/Tumbleweed-agama-installer-x86_64-CURRENT/boot/x86_64/loader/linux
+set initrd http://openqa.opensuse.org/assets/repo/Tumbleweed-agama-installer-x86_64-CURRENT/boot/x86_64/loader/initrd
 set cmdline plymouth.enable=0 console=tty console=ttyS1,115200 reboot_timeout=0 kernel.softlockup_panic=1 vga=791 video=1024x768 vt.color=0x07 quiet inst.install_url=http://openqa.opensuse.org/assets/repo/openSUSE-Tumbleweed-oss-x86_64-CURRENT live.password=nots3cr3t inst.auto=http://openqa.opensuse.org/assets/other/tw_virt_host.jsonnet inst.finish=stop
 goto editandboot
 
