@@ -90,19 +90,23 @@ def test_trigger_actions(
     expected_cmd: str | None,
 ) -> None:
     mock_run_cmd = mocker.patch("reaper.run_cmd")
+    mocker.patch("reaper.wait_for_host", return_value=True)
+    mocker.patch("time.sleep")
     method = reaper.RebootMethod(reboot_method)
-    reaper.trigger_actions("s390zl12.oqa.prg2.suse.org", jobs, dry_run=dry_run, verbose=False, reboot_method=method)
+    config = reaper.ReaperConfig(dry_run=dry_run, verbose=False, reboot_method=method)
+    reaper.trigger_actions("s390zl12.oqa.prg2.suse.org", jobs, config)
     captured = capsys.readouterr().out
     for expected in expected_calls:
         assert expected in captured
     if not dry_run and expected_cmd:
-        mock_run_cmd.assert_any_call(expected_cmd, verbose=False)
+        mock_run_cmd.assert_any_call(expected_cmd, check=False, verbose=False)
 
 
 def test_handle_host_clean(mocker: MockerFixture) -> None:
     mock_run_cmd = mocker.patch("reaper.run_cmd")
     mock_run_cmd.return_value = ""
-    reaper.handle_host("s390zl12.oqa.prg2.suse.org", dry_run=False, verbose=False)
+    config = reaper.ReaperConfig(dry_run=False, verbose=False)
+    reaper.handle_host("s390zl12.oqa.prg2.suse.org", config)
     mock_run_cmd.assert_called_once_with(
         "ssh s390zl12.oqa.prg2.suse.org pgrep -r Z qemu-system-s39", check=False, verbose=False
     )
@@ -112,7 +116,8 @@ def test_handle_host_zombie_persistent(mocker: MockerFixture, capsys: pytest.Cap
     mock_run_cmd = mocker.patch("reaper.run_cmd")
     mock_sleep = mocker.patch("time.sleep")
     mock_run_cmd.side_effect = ["12345", "12345 Fri Jul 17 2026 Z", "12345 Fri Jul 17 2026 Z", '{"workers": []}', ""]
-    reaper.handle_host("s390zl12.oqa.prg2.suse.org", dry_run=False, verbose=False)
+    config = reaper.ReaperConfig(dry_run=False, verbose=False)
+    reaper.handle_host("s390zl12.oqa.prg2.suse.org", config)
     captured = capsys.readouterr().out
     assert "!!! CRITICAL: Found persistent zombie processes on s390zl12.oqa.prg2.suse.org: 12345" in captured
     mock_sleep.assert_called_once_with(10)
@@ -122,12 +127,53 @@ def test_handle_host_zombie_persistent_reboot(mocker: MockerFixture, capsys: pyt
     mock_run_cmd = mocker.patch("reaper.run_cmd")
     mock_sleep = mocker.patch("time.sleep")
     mock_run_cmd.side_effect = ["12345", "12345 Fri Jul 17 2026 Z", "12345 Fri Jul 17 2026 Z", '{"workers": []}', ""]
-    reaper.handle_host(
-        "s390zl12.oqa.prg2.suse.org",
-        dry_run=False,
-        verbose=False,
-        reboot_method=reaper.RebootMethod.REBOOT,
-    )
+    config = reaper.ReaperConfig(dry_run=False, verbose=False, reboot_method=reaper.RebootMethod.REBOOT)
+    reaper.handle_host("s390zl12.oqa.prg2.suse.org", config)
     captured = capsys.readouterr().out
     assert "Triggering reboot on s390zl12.oqa.prg2.suse.org..." in captured
     mock_sleep.assert_called_once_with(10)
+
+
+def test_wait_for_host_success(mocker: MockerFixture) -> None:
+    mock_run = mocker.patch("subprocess.run")
+    mock_run.return_value = mocker.MagicMock(returncode=0)
+    mock_sleep = mocker.patch("time.sleep")
+    assert reaper.wait_for_host("s390zl12.oqa.prg2.suse.org") is True
+    mock_sleep.assert_not_called()
+
+
+def test_wait_for_host_timeout(mocker: MockerFixture) -> None:
+    mock_run = mocker.patch("subprocess.run")
+    mock_run.return_value = mocker.MagicMock(returncode=255)
+    mock_sleep = mocker.patch("time.sleep")
+    mock_time = mocker.patch("time.time")
+    # First time.time() returns start_time (0). Subsequent calls simulate elapsed time.
+    # To timeout with max_wait_minutes=1, we need elapsed > 60.
+    mock_time.side_effect = [0, 10, 30, 65]
+    assert reaper.wait_for_host("s390zl12.oqa.prg2.suse.org", max_wait_minutes=1) is False
+    assert mock_sleep.call_count == 2
+
+
+def test_trigger_actions_custom_limits(
+    mocker: MockerFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    mocker.patch("reaper.run_cmd")
+    mock_wait = mocker.patch("reaper.wait_for_host", return_value=True)
+    mock_sleep = mocker.patch("time.sleep")
+
+    config = reaper.ReaperConfig(
+        dry_run=False,
+        verbose=False,
+        max_wait_minutes=5,
+        stability_delay_minutes=1,
+    )
+    reaper.trigger_actions(
+        "s390zl12.oqa.prg2.suse.org",
+        [123],
+        config,
+    )
+    captured = capsys.readouterr().out
+    assert "Waiting 1 minutes for host stability before restarting jobs..." in captured
+    mock_wait.assert_called_once_with("s390zl12.oqa.prg2.suse.org", verbose=False, max_wait_minutes=5)
+    mock_sleep.assert_called_once_with(60)
