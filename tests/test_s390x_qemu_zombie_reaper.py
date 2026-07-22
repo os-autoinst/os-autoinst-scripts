@@ -39,11 +39,12 @@ def test_get_running_jobs(mocker: MockerFixture) -> None:
 
 
 @pytest.mark.parametrize(
-    ("dry_run", "jobs", "expected_calls"),
+    ("dry_run", "jobs", "reboot_method", "expected_calls", "expected_cmd"),
     [
         (
             True,
             [123],
+            "sysrq",
             [
                 (
                     "[DRY-RUN] Would execute: ssh s390zl12.oqa.prg2.suse.org "
@@ -51,26 +52,51 @@ def test_get_running_jobs(mocker: MockerFixture) -> None:
                 ),
                 "[DRY-RUN] Would execute: openqa-cli api --osd -X POST jobs/123/restart",
             ],
+            None,
+        ),
+        (
+            True,
+            [123],
+            "reboot",
+            [
+                ('[DRY-RUN] Would execute: ssh s390zl12.oqa.prg2.suse.org "sudo reboot"'),
+                "[DRY-RUN] Would execute: openqa-cli api --osd -X POST jobs/123/restart",
+            ],
+            None,
         ),
         (
             False,
             [123],
+            "sysrq",
             ["Triggering kernel crash dump (kdump) on s390zl12.oqa.prg2.suse.org...", "Retriggering job 123..."],
+            "ssh s390zl12.oqa.prg2.suse.org \"sudo bash -c 'echo c > /proc/sysrq-trigger'\"",
+        ),
+        (
+            False,
+            [123],
+            "reboot",
+            ["Triggering reboot on s390zl12.oqa.prg2.suse.org...", "Retriggering job 123..."],
+            'ssh s390zl12.oqa.prg2.suse.org "sudo reboot"',
         ),
     ],
 )
 def test_trigger_actions(
-    mocker: MockerFixture, capsys: pytest.CaptureFixture[str], dry_run: bool, jobs: list[int], expected_calls: list[str]
+    mocker: MockerFixture,
+    capsys: pytest.CaptureFixture[str],
+    dry_run: bool,
+    jobs: list[int],
+    reboot_method: str,
+    expected_calls: list[str],
+    expected_cmd: str | None,
 ) -> None:
     mock_run_cmd = mocker.patch("reaper.run_cmd")
-    reaper.trigger_actions("s390zl12.oqa.prg2.suse.org", jobs, dry_run=dry_run, verbose=False)
+    method = reaper.RebootMethod(reboot_method)
+    reaper.trigger_actions("s390zl12.oqa.prg2.suse.org", jobs, dry_run=dry_run, verbose=False, reboot_method=method)
     captured = capsys.readouterr().out
     for expected in expected_calls:
         assert expected in captured
-    if not dry_run:
-        mock_run_cmd.assert_any_call(
-            "ssh s390zl12.oqa.prg2.suse.org \"sudo bash -c 'echo c > /proc/sysrq-trigger'\"", verbose=False
-        )
+    if not dry_run and expected_cmd:
+        mock_run_cmd.assert_any_call(expected_cmd, verbose=False)
 
 
 def test_handle_host_clean(mocker: MockerFixture) -> None:
@@ -89,4 +115,19 @@ def test_handle_host_zombie_persistent(mocker: MockerFixture, capsys: pytest.Cap
     reaper.handle_host("s390zl12.oqa.prg2.suse.org", dry_run=False, verbose=False)
     captured = capsys.readouterr().out
     assert "!!! CRITICAL: Found persistent zombie processes on s390zl12.oqa.prg2.suse.org: 12345" in captured
+    mock_sleep.assert_called_once_with(10)
+
+
+def test_handle_host_zombie_persistent_reboot(mocker: MockerFixture, capsys: pytest.CaptureFixture[str]) -> None:
+    mock_run_cmd = mocker.patch("reaper.run_cmd")
+    mock_sleep = mocker.patch("time.sleep")
+    mock_run_cmd.side_effect = ["12345", "12345 Fri Jul 17 2026 Z", "12345 Fri Jul 17 2026 Z", '{"workers": []}', ""]
+    reaper.handle_host(
+        "s390zl12.oqa.prg2.suse.org",
+        dry_run=False,
+        verbose=False,
+        reboot_method=reaper.RebootMethod.REBOOT,
+    )
+    captured = capsys.readouterr().out
+    assert "Triggering reboot on s390zl12.oqa.prg2.suse.org..." in captured
     mock_sleep.assert_called_once_with(10)

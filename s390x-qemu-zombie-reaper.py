@@ -14,6 +14,7 @@ import json
 import shlex
 import subprocess
 import time
+from enum import Enum
 from typing import TYPE_CHECKING, Annotated
 
 import typer
@@ -22,6 +23,14 @@ if TYPE_CHECKING:
     from typing import Any
 
 app = typer.Typer(help="Automated openQA Zombie Reaper for s390x")
+
+
+class RebootMethod(str, Enum):
+    """Method used to reboot the hypervisor."""
+
+    SYSRQ = "sysrq"
+    REBOOT = "reboot"
+
 
 # Mapping of hypervisors to the workers that use them
 HYPERVISORS = {
@@ -72,17 +81,30 @@ def get_running_jobs(hypervisor_host: str, *, verbose: bool = False) -> list[int
     return list(set(jobs_to_restart))
 
 
-def trigger_actions(host: str, jobs: list[int], *, dry_run: bool, verbose: bool) -> None:
-    """Trigger kdump (which reboots the machine) and job re-triggering."""
-    # Echoing 'c' to sysrq-trigger panics the kernel, dumping core and rebooting
-    reboot_cmd = f"ssh {host} \"sudo bash -c 'echo c > /proc/sysrq-trigger'\""
+def trigger_actions(
+    host: str,
+    jobs: list[int],
+    *,
+    dry_run: bool,
+    verbose: bool,
+    reboot_method: RebootMethod = RebootMethod.SYSRQ,
+) -> None:
+    """Trigger kdump (which reboots the machine) or standard reboot, and job re-triggering."""
+    if reboot_method == RebootMethod.SYSRQ:
+        # Echoing 'c' to sysrq-trigger panics the kernel, dumping core and rebooting
+        reboot_cmd = f"ssh {host} \"sudo bash -c 'echo c > /proc/sysrq-trigger'\""
+        action_msg = f"Triggering kernel crash dump (kdump) on {host}..."
+    else:
+        reboot_cmd = f'ssh {host} "sudo reboot"'
+        action_msg = f"Triggering reboot on {host}..."
+
     if dry_run:
         print(f"[DRY-RUN] Would execute: {reboot_cmd}")
         for job_id in jobs:
             retrigger_cmd = f"openqa-cli api --osd -X POST jobs/{job_id}/restart"
             print(f"[DRY-RUN] Would execute: {retrigger_cmd}")
     else:
-        print(f"Triggering kernel crash dump (kdump) on {host}...")
+        print(action_msg)
         run_cmd(reboot_cmd, verbose=verbose)
 
         for job_id in jobs:
@@ -91,7 +113,7 @@ def trigger_actions(host: str, jobs: list[int], *, dry_run: bool, verbose: bool)
             run_cmd(retrigger_cmd, verbose=verbose)
 
 
-def handle_host(host: str, *, dry_run: bool, verbose: bool) -> None:
+def handle_host(host: str, *, dry_run: bool, verbose: bool, reboot_method: RebootMethod = RebootMethod.SYSRQ) -> None:
     """Check a single host for zombies and take action if found."""
     if verbose:
         print(f"Checking {host} for zombies...")
@@ -131,17 +153,21 @@ def handle_host(host: str, *, dry_run: bool, verbose: bool) -> None:
     else:
         print(f"No active jobs found using {host}.")
 
-    trigger_actions(host, jobs, dry_run=dry_run, verbose=verbose)
+    trigger_actions(host, jobs, dry_run=dry_run, verbose=verbose, reboot_method=reboot_method)
 
 
 @app.command()
 def reap(
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Show what would be done without executing")] = False,  # noqa: FBT002
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Enable verbose output")] = False,  # noqa: FBT002
+    reboot_method: Annotated[
+        RebootMethod,
+        typer.Option("--reboot-method", help="Reboot method to use ('sysrq' to induce crash or 'reboot' to reboot)"),
+    ] = RebootMethod.SYSRQ,
 ) -> None:
     """Check hypervisors for zombies and reboot/retrigger jobs if found."""
     for host in HYPERVISORS:
-        handle_host(host, dry_run=dry_run, verbose=verbose)
+        handle_host(host, dry_run=dry_run, verbose=verbose, reboot_method=reboot_method)
 
 
 if __name__ == "__main__":
