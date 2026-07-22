@@ -20,6 +20,36 @@ from typing import Annotated, Any
 import httpx
 import typer
 
+
+class OpenQAClient:
+    """Encapsulates configuration and execution of the openQA CLI."""
+
+    def __init__(self, host_url: str, *, dry_run: bool = False, retries: str = "3") -> None:
+        """Initialize the OpenQAClient."""
+        self.host_url = host_url
+        self.dry_run = dry_run
+        self.retries = retries
+
+    @property
+    def base_args(self) -> list[str]:
+        """Base arguments for openqa-cli."""
+        return [
+            "api",
+            "--header",
+            "User-Agent: openqa-label-known-issues (https://github.com/os-autoinst/os-autoinst-scripts)",
+            "--host",
+            self.host_url,
+            f"--retries={self.retries}",
+        ]
+
+    def run_cmd(self, sub_args: list[str], *, force_no_dry: bool = False) -> subprocess.CompletedProcess[str]:
+        """Execute an openqa-cli command."""
+        cmd = ["openqa-cli", *self.base_args, *sub_args]
+        if self.dry_run and not force_no_dry:
+            cmd = ["echo", *cmd]
+        return subprocess.run(cmd, check=True, capture_output=True, text=True)
+
+
 app = typer.Typer(add_completion=False)
 log = logging.getLogger(__name__)
 
@@ -131,26 +161,24 @@ def extract_excerpt(filepath: str) -> str:
     return "\n".join(f"    # {line}" for line in clean_lines)
 
 
-def comment_on_job(job_id: str, comment: str, force_result: str, client_call: list[str]) -> None:
+def comment_on_job(job_id: str, comment: str, force_result: str, openqa_client: OpenQAClient) -> None:
     enable_force_result = os.environ.get("enable_force_result", "false") == "true"
     if enable_force_result and force_result:
         comment = f"label:force_result:{force_result}:{comment}"
 
-    cmd = [*client_call, "-X", "POST", f"jobs/{job_id}/comments", f"text={comment}"]
-    if client_call and client_call[0] == "echo":
+    if openqa_client.dry_run:
         log.info("Would comment on job %s: %s", job_id, comment)
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        openqa_client.run_cmd(["-X", "POST", f"jobs/{job_id}/comments", f"text={comment}"])
     except subprocess.CalledProcessError as e:
         print(f"Failed to comment on job {job_id}: {e.stderr}", file=sys.stderr)
 
 
-def restart_job(job_id: str, client_call: list[str]) -> None:
-    cmd = [*client_call, "-X", "POST", f"jobs/{job_id}/restart"]
-    if client_call and client_call[0] == "echo":
+def restart_job(job_id: str, openqa_client: OpenQAClient) -> None:
+    if openqa_client.dry_run:
         log.info("Would restart job %s", job_id)
     try:
-        subprocess.run(cmd, check=True, capture_output=True, text=True)
+        openqa_client.run_cmd(["-X", "POST", f"jobs/{job_id}/restart"])
     except subprocess.CalledProcessError as e:
         print(f"Failed to restart job {job_id}: {e.stderr}", file=sys.stderr)
 
@@ -177,26 +205,58 @@ def label_on_issue(
     report_file: str,
     restart: str,
     force_result: str,
-    client_call: list[str],
+    openqa_client: OpenQAClient,
 ) -> bool:
     log.debug("Searching for regex '%s' inside report file %s", search_term, report_file)
     if not search_log(search_term, report_file):
         return False
     log.info("Job %s matches issue/label: %s", job_id, label)
-    comment_on_job(job_id, label, force_result, client_call)
+    comment_on_job(job_id, label, force_result, openqa_client)
     if restart == "1":
-        restart_job(job_id, client_call)
+        restart_job(job_id, openqa_client)
     return True
+
+
+def get_default_retry_limit(default_limit: int = 7) -> int:
+    env_limit = os.environ.get("auto_review_retry_limit")
+    if env_limit is not None:
+        try:
+            return int(env_limit)
+        except ValueError:
+            pass
+    return default_limit
+
+
+def count_restarts(job: dict, openqa_client: OpenQAClient) -> int:
+    restarts = 0
+    current_job = job
+    while restarts < 100:
+        cloned_from = current_job.get("cloned_from") or current_job.get("settings", {}).get("cloned_from")
+        if not cloned_from:
+            break
+        restarts += 1
+        current_id = str(cloned_from)
+        try:
+            res = openqa_client.run_cmd([f"jobs/{current_id}"], force_no_dry=True)
+            job_data = json.loads(res.stdout)
+            current_job = job_data.get("job", {})
+        except Exception as e:
+            log.warning("Failed to fetch parent job %s: %s", current_id, e)
+            break
+    return restarts
 
 
 def label_on_issues_from_issue_tracker(
     job_id: str,
     issues_list: list[dict[str, str]],
     report_file: str,
-    client_call: list[str],
+    openqa_client: OpenQAClient,
+    job: dict | None = None,
+    default_retry_limit: int = 7,
 ) -> bool:
     min_search_term = int(os.environ.get("min_search_term", "16"))
     force_result_tracker = os.environ.get("force_result_tracker", "openqa-force-result")
+    job = job or {}
 
     for issue_info in issues_list:
         issue_id = issue_info["id"]
@@ -224,9 +284,25 @@ def label_on_issues_from_issue_tracker(
                         f'{label} (ignoring force result for ticket which is not in tracker "{force_result_tracker}")'
                     )
 
-            restart = "1" if '":retry' in after else ""
+            restart = ""
+            match_retry = re.search(r'":retry(?::(\d+))?', after)
+            if match_retry:
+                limit_str = match_retry.group(1)
+                limit = int(limit_str) if limit_str is not None else get_default_retry_limit(default_retry_limit)
+                restarts_count = count_restarts(job, openqa_client)
+                if restarts_count < limit:
+                    restart = "1"
+                else:
+                    log.info(
+                        "Job %s has already been restarted %s times, limit is %s. Skipping restart.",
+                        job_id,
+                        restarts_count,
+                        limit,
+                    )
 
-            if label_on_issue(job_id, search, label, report_file, restart, force_result, client_call):
+            if label_on_issue(
+                    job_id, search, label, report_file, restart, force_result, openqa_client
+                ):
                 return True
     return False
 
@@ -234,7 +310,7 @@ def label_on_issues_from_issue_tracker(
 def label_on_issues_without_tickets(
     job_id: str,
     report_file: str,
-    client_call: list[str],
+    openqa_client: OpenQAClient,
 ) -> bool:
     patterns = [
         (
@@ -265,7 +341,7 @@ def label_on_issues_without_tickets(
     ]
 
     for regex, label, restart in patterns:
-        if label_on_issue(job_id, regex, label, report_file, restart, "", client_call):
+        if label_on_issue(job_id, regex, label, report_file, restart, "", openqa_client):
             return True
     return False
 
@@ -275,7 +351,7 @@ def handle_unreachable(
     job_id: str,
     client: httpx.Client,
     host_url: str,
-    client_call: list[str],
+    openqa_client: OpenQAClient,
 ) -> int:
     html_out = os.environ.get("JOB_HTML_FILE")
     temp_html_created = False
@@ -328,8 +404,8 @@ def handle_unreachable(
             comment = (
                 'poo#62456 test incompletes after failing in GRU download task on "Inactivity timeout" with no logs'
             )
-            comment_on_job(job_id, comment, "", client_call)
-            restart_job(job_id, client_call)
+            comment_on_job(job_id, comment, "", openqa_client)
+            restart_job(job_id, openqa_client)
             return 1
 
         timeago = extract_timeago(html_content)
@@ -358,8 +434,7 @@ def handle_unreviewed(
     from_email: str,
     notification_address: str,
     job_data: dict[str, Any],
-    dry_run: bool,
-    client_call: list[str],
+    openqa_client: OpenQAClient,
 ) -> None:
     snip_start = "    # --- 8< ---\n"
     snip_end = "    # --- >8 ---"
@@ -373,13 +448,8 @@ def handle_unreviewed(
     print(excerpt, file=sys.stderr)
 
     if email_unreviewed and group_id != "null":
-        cmd_group = (
-            ["openqa-cli"]
-            + [arg for arg in client_call if arg not in {"echo", "openqa-cli"}]
-            + [f"job_groups/{group_id}"]
-        )
         try:
-            res = subprocess.run(cmd_group, check=True, capture_output=True, text=True)
+            res = openqa_client.run_cmd([f"job_groups/{group_id}"], force_no_dry=True)
             group_data = json.loads(res.stdout)
         except Exception as e:
             print(f"Failed to load job group data for {group_id}: {e}", file=sys.stderr)
@@ -423,7 +493,7 @@ def handle_unreviewed(
             email_full = multipart_from_markdown(
                 email_body, group_mailto, f"openqa-label-known-issues <{from_email}>", subject
             )
-            send_email(group_mailto, email_full, dry_run)
+            send_email(group_mailto, email_full, openqa_client.dry_run)
 
 
 def fetch_issues(client: httpx.Client, issue_query: str) -> list[dict[str, str]]:
@@ -454,9 +524,10 @@ def fetch_issues(client: httpx.Client, issue_query: str) -> list[dict[str, str]]
 def investigate_issue(
     testurl: str,
     client: httpx.Client,
-    client_call: list[str],
+    openqa_client: OpenQAClient,
     issues_list: list[dict[str, str]],
     host_url: str,
+    default_retry_limit: int = 7,
 ) -> None:
     job_id = testurl.rstrip("/").split("/")[-1]
     if not job_id.isdigit():
@@ -472,9 +543,7 @@ def investigate_issue(
 
     try:
         print(f"Requesting jobs/{job_id} via openqa-cli")
-        cmd_job = (
-            ["openqa-cli"] + [arg for arg in client_call if arg not in {"echo", "openqa-cli"}] + [f"jobs/{job_id}"]
-        )
+        cmd_job = ["openqa-cli", *openqa_client.base_args, f"jobs/{job_id}"]
         try:
             res = subprocess.run(cmd_job, check=True, capture_output=True, text=True)
             job_data = json.loads(res.stdout)
@@ -512,7 +581,7 @@ def investigate_issue(
             f.write("\n")
 
         if curl_output not in {200, 301}:
-            if handle_unreachable(testurl, job_id, client, host_url, client_call) == 1:
+            if handle_unreachable(testurl, job_id, client, host_url, openqa_client) == 1:
                 return
             if curl_output != 404:
                 return
@@ -520,16 +589,17 @@ def investigate_issue(
                 print(f"'{testurl}' does not have autoinst-log.txt or reason, cannot label", file=sys.stderr)
                 return
 
-        if label_on_issues_from_issue_tracker(job_id, issues_list, report_file, client_call):
+        if label_on_issues_from_issue_tracker(
+            job_id, issues_list, report_file, openqa_client, job=job, default_retry_limit=default_retry_limit
+        ):
             return
 
-        if label_on_issues_without_tickets(job_id, report_file, client_call):
+        if label_on_issues_without_tickets(job_id, report_file, openqa_client):
             return
 
         email_unreviewed = os.environ.get("email_unreviewed", "false").lower() == "true"
         from_email = os.environ.get("from_email", "openqa-label-known-issues@open.qa")
         notification_address = os.environ.get("notification_address", "")
-        dry_run = os.environ.get("dry_run", "0") == "1"
 
         handle_unreviewed(
             testurl=testurl,
@@ -540,8 +610,7 @@ def investigate_issue(
             from_email=from_email,
             notification_address=notification_address,
             job_data=job_data,
-            dry_run=dry_run,
-            client_call=client_call,
+            openqa_client=openqa_client,
         )
 
     finally:
@@ -564,6 +633,11 @@ def main(
     ),
     dry: bool = typer.Option(False, "--dry", "-n", help="conduct dry-run without any labelling or restarting"),
     verbose: Annotated[int, typer.Option("--verbose", "-v", count=True, help="Increase verbosity")] = 0,
+    retry_limit: int = typer.Option(
+        int(os.environ.get("auto_review_retry_limit", "7")),
+        "--retry-limit",
+        help="Default retry limit for the auto-review feature.",
+    ),
 ) -> None:
     """Takes an openQA job URL, looks for matching "known issues", for example from progress.opensuse.org, labels the job and retriggers if specified in the issue (see the source code for details how to mark tickets)."""
     setup_logging(verbose)
@@ -580,18 +654,7 @@ def main(
         os.environ["dry_run"] = "1"
 
     retries = os.environ.get("retries", "3")
-    client_args = [
-        "api",
-        "--header",
-        "User-Agent: openqa-label-known-issues (https://github.com/os-autoinst/os-autoinst-scripts)",
-        "--host",
-        host_url_val,
-        f"--retries={retries}",
-    ]
-
-    client_call = ["openqa-cli", *client_args]
-    if dry_run_val:
-        client_call = ["echo", *client_call]
+    openqa_client = OpenQAClient(host_url=host_url_val, dry_run=dry_run_val, retries=retries)
 
     issue_marker = os.environ.get("issue_marker", "auto_review%3A")
     issue_query = os.environ.get(
@@ -604,9 +667,10 @@ def main(
         investigate_issue(
             testurl=job_url,
             client=client,
-            client_call=client_call,
+            openqa_client=openqa_client,
             issues_list=issues_list,
             host_url=host_url_val,
+            default_retry_limit=retry_limit,
         )
 
 
