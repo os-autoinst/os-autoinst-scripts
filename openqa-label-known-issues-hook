@@ -11,8 +11,7 @@ usage() {
 Usage: $0 [OPTIONS]
 
 "hook script" intended to be called by openQA instances taking a job ID as
-parameter and forwarding a complete job URL to
-"openqa-label-known-issues-multi" on stdin.
+parameter and calling "openqa-label-known-issues" directly.
 
 Options:
  -h, --help         display this help
@@ -35,7 +34,7 @@ done
 
 main() {
     host_url="$scheme://$host"
-    echo "$host_url/tests/$id" | "$(dirname "$0")"/openqa-label-known-issues-multi
+    "$(dirname "$0")"/openqa-label-known-issues "$host_url/tests/$id"
 }
 
 caller 0 > /dev/null || main "$@"
