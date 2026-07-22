@@ -2,8 +2,6 @@
 
 set -o pipefail -o errtrace
 
-source "$(dirname "$0")"/openqa-label-known-issues
-
 to_review=()
 
 print_summary() {
@@ -32,7 +30,19 @@ main() {
 
     # shellcheck disable=SC2013
     for testurl in $(cat - | sed 's/ .*$//'); do
-        label_issue "$testurl"
+        err_out=$(mktemp)
+        set +e
+        { "$(dirname "$0")"/openqa-label-known-issues "$testurl" 2>&1 1>&3 | tee "$err_out" >&2; } 3>&1
+        rc=${PIPESTATUS[0]}
+        set -e
+        if [[ $rc -ne 0 ]]; then
+            rm -f "$err_out"
+            exit "$rc"
+        fi
+        if grep -q "Unknown test issue, to be reviewed" "$err_out"; then
+            to_review+=("$testurl")
+        fi
+        rm -f "$err_out"
     done
     print_summary
 }

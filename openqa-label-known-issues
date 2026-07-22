@@ -369,8 +369,8 @@ def handle_unreviewed(
     excerpt += extract_excerpt(report_file)
     excerpt += "\n" + snip_end
 
-    print(header)
-    print(excerpt)
+    print(header, file=sys.stderr)
+    print(excerpt, file=sys.stderr)
 
     if email_unreviewed and group_id != "null":
         cmd_group = (

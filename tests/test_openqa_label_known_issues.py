@@ -473,7 +473,8 @@ def test_handle_unreviewed(mocker: MockerFixture, tmp_path: pathlib.Path) -> Non
             "http://testurl", str(f), "my reason", "24", False, "from@ex.com", "notif@ex.com", {}, True, []
         )
         mock_print.assert_any_call(
-            "[http://testurl](http://testurl): Unknown test issue, to be reviewed\n-> [autoinst-log.txt](http://testurl/file/autoinst-log.txt)\n"
+            "[http://testurl](http://testurl): Unknown test issue, to be reviewed\n-> [autoinst-log.txt](http://testurl/file/autoinst-log.txt)\n",
+            file=sys.stderr,
         )
     mock_send.assert_not_called()
 
