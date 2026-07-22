@@ -5,7 +5,6 @@ interval="${interval:-"30 day"}"
 failed_since="${failed_since:-"(timezone('UTC', now()) - interval '$interval')"}"
 comment="${1:?"Need comment to search for"}"
 limit="${limit:-10}"
-query="${query:-"select jobs.id,t_finished,state,result,test,reason,host from jobs, comments, workers where t_finished >= $failed_since and jobs.assigned_worker_id = workers.id and jobs.id = comments.job_id and comments.text ~ '$comment' order by t_finished desc limit $limit;"}"
 dry_run="${dry_run:-"0"}"
 
 usage() {
@@ -40,7 +39,8 @@ main() {
 
     [ "$dry_run" = "1" ] && _dry_run="echo"
     for h in $host; do
-        $_dry_run ssh "$h" "cd /tmp; sudo -u geekotest psql --no-align --tuples-only --command=\"$query\" openqa"
+        q="${query:-"select '${scheme}://${h}/tests/' || jobs.id,t_finished,state,result,test,reason,host from jobs, comments, workers where t_finished >= $failed_since and jobs.assigned_worker_id = workers.id and jobs.id = comments.job_id and comments.text ~ '$comment' order by t_finished desc limit $limit;"}"
+        $_dry_run ssh "$h" "cd /tmp; sudo -u geekotest psql --no-align --tuples-only -F ' | ' --command=\"$q\" openqa"
     done
     :
 }
