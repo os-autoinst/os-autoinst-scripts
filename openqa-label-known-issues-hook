@@ -35,7 +35,7 @@ done
 
 main() {
     host_url="$scheme://$host"
-    echo "$host_url/tests/$id" | "$(dirname "$0")"/openqa-label-known-issues-multi
+    "$(dirname "$0")"/openqa-label-known-issues "$host_url/tests/$id"
 }
 
 caller 0 > /dev/null || main "$@"
