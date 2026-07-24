@@ -300,9 +300,7 @@ def label_on_issues_from_issue_tracker(
                         limit,
                     )
 
-            if label_on_issue(
-                    job_id, search, label, report_file, restart, force_result, openqa_client
-                ):
+            if label_on_issue(job_id, search, label, report_file, restart, force_result, openqa_client):
                 return True
     return False
 
