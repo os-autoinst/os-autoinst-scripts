@@ -2,7 +2,7 @@
 
 source test/init
 
-plan tests 21
+plan tests 27
 
 source ./_common
 
@@ -64,7 +64,6 @@ somecommand() {
 
 try runcli somecommand
 like "$got" "somecommand.*>>>STDERR<<<.*STDOUT" "somecommand stdout and stderr"
-
 try "bash -c 'command() { if [[ \"\$1\" == \"-v\" && \"\$2\" == \"jq\" ]]; then return 1; fi; if [[ \"\$1\" == \"-v\" && ( \"\$2\" == \"retry\" || \"\$2\" == \"osc\" || \"\$2\" == \"openqa-cli\" ) ]]; then return 0; fi; builtin command \"\$@\"; }; export -f command; source ./_common'"
 is "$rc" 1 "exits with 1 when jq is missing"
 like "$got" "ERROR: 'jq' command not found" "prints correct error message when jq is missing"
@@ -80,3 +79,32 @@ like "$got" "ERROR: 'osc' command not found" "prints correct error message when 
 try "bash -c 'command() { if [[ \"\$1\" == \"-v\" && \"\$2\" == \"openqa-cli\" ]]; then return 1; fi; if [[ \"\$1\" == \"-v\" && ( \"\$2\" == \"jq\" || \"\$2\" == \"retry\" || \"\$2\" == \"osc\" ) ]]; then return 0; fi; builtin command \"\$@\"; }; export -f command; source ./_common'"
 is "$rc" 1 "exits with 1 when openqa-cli is missing"
 like "$got" "ERROR: 'openqa-cli' command not found" "prints correct error message when openqa-cli is missing"
+
+# list_packages: 'osc' is invoked via the $osc variable, so mock it there
+# list_packages: returns real package names, filtering out '*-test' entries
+mock_osc_success() {
+    shift
+    printf '%s\n' openQA os-autoinst openQA-test
+}
+osc=mock_osc_success
+try list_packages devel:openQA
+is "$rc" 0 "list_packages success"
+is "$got" $'openQA\nos-autoinst' "list_packages returns packages without -test entries"
+
+# list_packages: empty project yields no output and success
+mock_osc_empty() { return 0; }
+osc=mock_osc_empty
+try list_packages devel:openQA:testing
+is "$rc" 0 "list_packages empty project success"
+is "$got" "" "list_packages empty project has no output"
+
+# list_packages: failed 'osc ls' (e.g. HTTP 5xx printing to stdout) must not
+# be mistaken for a package list; propagate failure and emit nothing
+mock_osc_fail() {
+    printf '%s\n' "Request: https://api.opensuse.org/source/devel:openQA:testing?deleted=0" "Headers:"
+    return 1
+}
+osc=mock_osc_fail
+try list_packages devel:openQA:testing
+is "$rc" 1 "list_packages propagates osc failure"
+is "$got" "" "list_packages emits no output on osc failure"

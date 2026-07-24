@@ -181,3 +181,32 @@ def test_last_revision_none(mocker: MockerFixture) -> None:
     mock_run.return_value = subprocess.CompletedProcess(["osc"], 0, stdout="")
     res = auto_submit.last_revision("proj", "pkg", "Factory", "osc")
     assert res == ""
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        ("", "unknown"),
+        ("   \n  ", "unknown"),
+        ("Package pkg is not yet ready for release\nscheduled", "Package pkg is not yet ready for release\nscheduled"),
+        ('{"failed_jobs": [123, 456]}', "failed openQA jobs: 123, 456"),
+        ('{"failed_jobs": []}', '{"failed_jobs": []}'),
+        ('{"other": 1}', '{"other": 1}'),
+        ("not json { at all", "not json { at all"),
+    ],
+)
+def test_format_skip_reason(content: str, expected: str) -> None:
+    assert auto_submit._format_skip_reason(content) == expected  # noqa: SLF001
+
+
+@pytest.mark.parametrize(
+    ("reason", "expected"),
+    [
+        ("single line", "Skipping submission, reason: single line"),
+        ("note\npkg1\npkg2", "Skipping submission, reason:\n  note\n  pkg1\n  pkg2"),
+    ],
+)
+def test_log_skip_reason(reason: str, expected: str, caplog: pytest.LogCaptureFixture) -> None:
+    with caplog.at_level("INFO"):
+        auto_submit._log_skip_reason(reason)  # noqa: SLF001
+    assert caplog.records[0].getMessage() == expected
