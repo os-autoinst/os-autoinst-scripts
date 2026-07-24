@@ -14,6 +14,7 @@ import json
 import shlex
 import subprocess
 import time
+from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Annotated
 
@@ -37,6 +38,24 @@ HYPERVISORS = {
     "s390zl12.oqa.prg2.suse.org": ["worker31", "worker32"],
     "s390zl13.oqa.prg2.suse.org": ["worker32", "worker33"],
 }
+
+
+# Default timing behaviors
+DEFAULT_MAX_WAIT_MINUTES = 30
+DEFAULT_STABILITY_DELAY_MINUTES = 3
+SSH_TIMEOUT_SECONDS = 10
+SSH_CHECK_INTERVAL_SECONDS = 15
+
+
+@dataclass(frozen=True)
+class ReaperConfig:
+    """Configuration for the zombie reaper execution."""
+
+    dry_run: bool = False
+    verbose: bool = False
+    reboot_method: RebootMethod = RebootMethod.SYSRQ
+    max_wait_minutes: int = DEFAULT_MAX_WAIT_MINUTES
+    stability_delay_minutes: int = DEFAULT_STABILITY_DELAY_MINUTES
 
 
 def run_cmd(cmd: str, *, check: bool = True, verbose: bool = False) -> str:
@@ -81,16 +100,49 @@ def get_running_jobs(hypervisor_host: str, *, verbose: bool = False) -> list[int
     return list(set(jobs_to_restart))
 
 
+def wait_for_host(
+    host: str,
+    *,
+    verbose: bool = False,
+    max_wait_minutes: int = DEFAULT_MAX_WAIT_MINUTES,
+) -> bool:
+    """Wait until the host is responsive over SSH."""
+    print(f"Waiting for {host} to become responsive over SSH...")
+    start_time = time.time()
+    max_wait_seconds = max_wait_minutes * 60
+
+    while time.time() - start_time < max_wait_seconds:
+        # Use short timeout to avoid hanging indefinitely
+        check_cmd = f"ssh -o ConnectTimeout={SSH_TIMEOUT_SECONDS} -o BatchMode=yes {host} true"
+        if verbose:
+            print(f"Checking host availability: {check_cmd}")
+        try:
+            res = subprocess.run(  # noqa: S603
+                shlex.split(check_cmd),
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=SSH_TIMEOUT_SECONDS + 5,
+            )
+            if res.returncode == 0:
+                print(f"Host {host} is responsive again.")
+                return True
+        except (OSError, subprocess.TimeoutExpired) as e:
+            if verbose:
+                print(f"SSH check failed: {e}")
+        time.sleep(SSH_CHECK_INTERVAL_SECONDS)
+
+    print(f"Timeout waiting for {host} to become responsive after {max_wait_minutes} minutes.")
+    return False
+
+
 def trigger_actions(
     host: str,
     jobs: list[int],
-    *,
-    dry_run: bool,
-    verbose: bool,
-    reboot_method: RebootMethod = RebootMethod.SYSRQ,
+    config: ReaperConfig,
 ) -> None:
     """Trigger kdump (which reboots the machine) or standard reboot, and job re-triggering."""
-    if reboot_method == RebootMethod.SYSRQ:
+    if config.reboot_method == RebootMethod.SYSRQ:
         # Echoing 'c' to sysrq-trigger panics the kernel, dumping core and rebooting
         reboot_cmd = f"ssh {host} \"sudo bash -c 'echo c > /proc/sysrq-trigger'\""
         action_msg = f"Triggering kernel crash dump (kdump) on {host}..."
@@ -98,47 +150,65 @@ def trigger_actions(
         reboot_cmd = f'ssh {host} "sudo reboot"'
         action_msg = f"Triggering reboot on {host}..."
 
-    if dry_run:
+    if config.dry_run:
         print(f"[DRY-RUN] Would execute: {reboot_cmd}")
-        for job_id in jobs:
-            retrigger_cmd = f"openqa-cli api --osd -X POST jobs/{job_id}/restart"
-            print(f"[DRY-RUN] Would execute: {retrigger_cmd}")
     else:
         print(action_msg)
-        run_cmd(reboot_cmd, verbose=verbose)
+        run_cmd(reboot_cmd, check=False, verbose=config.verbose)
 
-        for job_id in jobs:
-            retrigger_cmd = f"openqa-cli api --osd -X POST jobs/{job_id}/restart"
+    if not jobs:
+        return
+
+    if config.dry_run:
+        print(f"[DRY-RUN] Would wait for {host} to be responsive over SSH.")
+        print(f"[DRY-RUN] Would wait an additional {config.stability_delay_minutes} minutes.")
+    else:
+        if not wait_for_host(host, verbose=config.verbose, max_wait_minutes=config.max_wait_minutes):
+            print(f"Host {host} did not come back online. Skipping job retriggering.")
+            return
+
+        if config.stability_delay_minutes > 0:
+            print(f"Waiting {config.stability_delay_minutes} minutes for host stability before restarting jobs...")
+            time.sleep(config.stability_delay_minutes * 60)
+
+    for job_id in jobs:
+        retrigger_cmd = f"openqa-cli api --osd -X POST jobs/{job_id}/restart"
+        if config.dry_run:
+            print(f"[DRY-RUN] Would execute: {retrigger_cmd}")
+        else:
             print(f"Retriggering job {job_id}...")
-            run_cmd(retrigger_cmd, verbose=verbose)
+            run_cmd(retrigger_cmd, verbose=config.verbose)
 
 
-def handle_host(host: str, *, dry_run: bool, verbose: bool, reboot_method: RebootMethod = RebootMethod.SYSRQ) -> None:
+def handle_host(
+    host: str,
+    config: ReaperConfig,
+) -> None:
     """Check a single host for zombies and take action if found."""
-    if verbose:
+    if config.verbose:
         print(f"Checking {host} for zombies...")
 
     # Discover zombie qemu processes
-    zombie_pids_str = run_cmd(f"ssh {host} pgrep -r Z qemu-system-s39", check=False, verbose=verbose)
+    zombie_pids_str = run_cmd(f"ssh {host} pgrep -r Z qemu-system-s39", check=False, verbose=config.verbose)
     if not zombie_pids_str:
-        if verbose:
+        if config.verbose:
             print(f"Host {host} is clean.")
         return
 
     # Snapshot process identities (PID + start time + state) to detect PID reuse
     pids = ",".join(zombie_pids_str.split())
     id_cmd = f"ssh {host} ps -o pid,lstart,state -p {pids} --no-headers"
-    initial_identities = run_cmd(id_cmd, check=False, verbose=verbose)
+    initial_identities = run_cmd(id_cmd, check=False, verbose=config.verbose)
 
     print(f"Detected potential zombies on {host}, waiting 10s to verify persistence...")
     time.sleep(10)
 
     # Re-verify identities. Only processes that match exactly are confirmed as persistent zombies.
-    verified_identities = run_cmd(id_cmd, check=False, verbose=verbose)
+    verified_identities = run_cmd(id_cmd, check=False, verbose=config.verbose)
     stuck_identities = set(initial_identities.splitlines()).intersection(verified_identities.splitlines())
 
     if not stuck_identities:
-        if verbose:
+        if config.verbose:
             print(f"Zombies on {host} were transient or PIDs were reused.")
         return
 
@@ -147,13 +217,13 @@ def handle_host(host: str, *, dry_run: bool, verbose: bool, reboot_method: Reboo
     print(f"!!! CRITICAL: Found persistent zombie processes on {host}: {', '.join(stuck_pids)}")
 
     print(f"Identifying jobs using {host}...")
-    jobs = get_running_jobs(host, verbose=verbose)
+    jobs = get_running_jobs(host, verbose=config.verbose)
     if jobs:
         print(f"Affected jobs to be retriggered: {', '.join(map(str, jobs))}")
     else:
         print(f"No active jobs found using {host}.")
 
-    trigger_actions(host, jobs, dry_run=dry_run, verbose=verbose, reboot_method=reboot_method)
+    trigger_actions(host, jobs, config)
 
 
 @app.command()
@@ -164,10 +234,25 @@ def reap(
         RebootMethod,
         typer.Option("--reboot-method", help="Reboot method to use ('sysrq' to induce crash or 'reboot' to reboot)"),
     ] = RebootMethod.SYSRQ,
+    max_wait_minutes: Annotated[
+        int,
+        typer.Option("--max-wait-minutes", help="Maximum time in minutes to wait for host to become responsive"),
+    ] = DEFAULT_MAX_WAIT_MINUTES,
+    stability_delay_minutes: Annotated[
+        int,
+        typer.Option("--stability-delay-minutes", help="Time in minutes to wait for host stability after reboot"),
+    ] = DEFAULT_STABILITY_DELAY_MINUTES,
 ) -> None:
     """Check hypervisors for zombies and reboot/retrigger jobs if found."""
+    config = ReaperConfig(
+        dry_run=dry_run,
+        verbose=verbose,
+        reboot_method=reboot_method,
+        max_wait_minutes=max_wait_minutes,
+        stability_delay_minutes=stability_delay_minutes,
+    )
     for host in HYPERVISORS:
-        handle_host(host, dry_run=dry_run, verbose=verbose, reboot_method=reboot_method)
+        handle_host(host, config)
 
 
 if __name__ == "__main__":
