@@ -1,0 +1,85 @@
+#!/bin/bash
+
+# Usage
+# echo openqa-run-multi -j <job_id> -r retires
+
+# http://redsymbol.net/articles/unofficial-bash-strict-mode/
+set -euo pipefail
+
+# shellcheck source=/dev/null
+. "$(dirname "${BASH_SOURCE[0]}")"/_common
+
+job_to_clone=""
+retries=100
+
+while getopts "j:r:" opt; do
+  case $opt in
+    j) job_to_clone=$OPTARG ;;
+    r) retries=$OPTARG ;;
+    *) echo "Usage: $0 -j <job_id> [-r retires]" >&2; exit 1 ;;
+  esac
+done
+
+# Ensure job_to_clone is provided
+if [[ -z "$job_to_clone" ]]; then
+  echo "Error: -j <job_id> is mandatory" >&2
+  exit 1
+fi
+
+declare -i passed=0
+SECONDS=0 # https://stackoverflow.com/questions/8903239/how-can-i-calculate-time-elapsed-in-a-bash-script
+
+failed_jobs=()
+cancelled_jobs=()
+while (( retries > 0 )); do
+    clone_output=$(openqa-clone-job --within-instance https://openqa.suse.de "$job_to_clone" _GROUP=0 {BUILD,TEST}+=-gpuliti-poo188082 2>/dev/null) #TODO: {BUILD,TEST}+=something coming from args or optional
+    # clone_output='Cloning parents of sle-15-SP4-...
+    # Cloning children of sle-15-SP4-...
+    # 2 jobs have been created:
+    #  - sle-15-SP4-mru... -> https://openqa.suse.de/tests/19333074
+    #  - sle-15-SP4-mau... -> https://openqa.suse.de/tests/19333073
+    # '
+
+    jobs=()
+    while IFS= read -r line; do
+        if [[ $line =~ mau.*https:\/\/.*\/tests\/([0-9]+) ]]; then #TODO: mau is my case, but not generalized
+            jobs+=("${BASH_REMATCH[1]}")
+        fi
+    done <<< "$clone_output"
+
+    echo "Running retry $retries..."
+    echo "Job running at https://openqa.suse.de/tests/${jobs[0]}" #TODO: remove or transform
+    i=$(( ${#jobs[@]} - 1 ))
+    while (( i >= 0 )); do #TODO: remvoe this since we only need the parent job that we are filtering with the line above
+        result=$(openqa-cli api --osd --json jobs/"${jobs[$i]}" | jq -r '(.job.result)')
+        # result="passed"
+        if [[ $result == 'passed' ]]; then
+            (( passed+=1 ))
+        elif [[ $result == 'failed' ]]; then
+            failed_jobs+=( "${jobs[$i]}" )
+        elif [[ $result == 'cancelled' ]]; then
+            cancelled_jobs+=( "${jobs[$i]}" )
+        elif [[ $result == 'none' ]]; then
+            sleep 10
+            continue
+        fi
+        (( i-=1 ))
+    done
+    (( retries-=1 )) || :
+done
+
+duration=$SECONDS
+echo "$((duration / 60)) minutes and $((duration % 60)) seconds elapsed."
+
+echo "Tests passed: $passed, failed: ${#failed_jobs[@]}, cancelled: ${#cancelled_jobs[@]}"
+
+echo "Failed jobs:"
+for job in "${failed_jobs[@]}"; do
+  echo "- https://openqa.suse.de/tests/$job"
+done
+
+echo "Cancelled jobs:"
+for job in "${cancelled_jobs[@]}"; do
+  echo "- https://openqa.suse.de/tests/$job"
+done
+
