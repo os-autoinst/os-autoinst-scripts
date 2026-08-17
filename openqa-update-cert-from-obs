@@ -31,6 +31,7 @@ Systemd Setup (to run the updates regularly):
    $ journalctl --user -u os-autoinst-scripts-update-cert-from-obs@factory-staging.service
 """
 
+import configparser
 import pathlib
 import shlex
 import subprocess
@@ -43,23 +44,19 @@ app = typer.Typer(add_completion=False)
 
 
 def parse_config(config_path: pathlib.Path) -> dict[str, str]:
-    config_vars = {}
+    config = configparser.ConfigParser()
+    config.optionxform = str
     try:
-        with config_path.open("r", encoding="utf-8") as f:
-            lines = f.readlines()
+        read_files = config.read(config_path, encoding="utf-8")
     except Exception as e:
         print(f"Error reading config file {config_path}: {e}", file=sys.stderr)
         raise typer.Exit(code=2) from e
 
-    for raw_line in lines:
-        line = raw_line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" in line:
-            key, value = line.split("=", 1)
-            config_vars[key.strip()] = value.strip().strip("'\"")
+    if not read_files:
+        print(f"Error reading config file {config_path}: Config file not found or empty", file=sys.stderr)
+        raise typer.Exit(code=2)
 
-    return config_vars
+    return {k: v.strip("'\"") for k, v in config.defaults().items()}
 
 
 @app.command()

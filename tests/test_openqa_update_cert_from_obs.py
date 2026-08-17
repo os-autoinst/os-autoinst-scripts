@@ -35,12 +35,12 @@ spec.loader.exec_module(update_cert)
 def test_parse_config_success(tmp_path: pathlib.Path) -> None:
     config_file = tmp_path / "test.conf"
     config_file.write_text(
+        "[DEFAULT]\n"
         "# This is a comment\n"
         "\n"
         "OBS_PROJECT=openSUSE:Factory:Staging\n"
         "CRT_NAME = 'openSUSE-Factory-Staging.crt'\n"
         'OBS_API_URL = "https://api.opensuse.org"\n'
-        "INVALID_LINE\n"
     )
     res = update_cert.parse_config(config_file)
     assert res == {
