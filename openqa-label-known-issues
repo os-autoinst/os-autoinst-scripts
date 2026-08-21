@@ -227,25 +227,6 @@ def get_default_retry_limit(default_limit) -> int:
     return default_limit
 
 
-def count_restarts(job: dict, openqa_client: OpenQAClient) -> int:
-    restarts = 0
-    current_job = job
-    while restarts < 100:
-        origin_id = current_job.get("origin_id") or current_job.get("settings", {}).get("origin_id")
-        if not origin_id:
-            break
-        restarts += 1
-        current_id = str(origin_id)
-        try:
-            res = openqa_client.run_cmd([f"jobs/{current_id}"], force_no_dry=True)
-            job_data = json.loads(res.stdout)
-            current_job = job_data.get("job", {})
-        except Exception as e:
-            log.warning("Failed to fetch parent job %s: %s", current_id, e)
-            break
-    return restarts
-
-
 def label_on_issues_from_issue_tracker(
     job_id: str,
     issues_list: list[dict[str, str]],
@@ -301,14 +282,14 @@ def label_on_issues_from_issue_tracker(
             if match_retry:
                 limit_str = match_retry.group(1)
                 limit = int(limit_str) if limit_str is not None else get_default_retry_limit(default_retry_limit)
-                restarts_count = count_restarts(job, openqa_client)
-                if restarts_count < limit:
+                restarts_count = job.get("ancestors")
+                if restarts_count is not None and restarts_count < limit:
                     restart = "1"
                 else:
                     log.info(
                         "Job %s has already been restarted %s times, limit is %s. Skipping restart.",
                         job_id,
-                        restarts_count,
+                        restarts_count or "?",
                         limit,
                     )
 
@@ -553,7 +534,7 @@ def investigate_issue(
 
     try:
         print(f"Requesting jobs/{job_id} via openqa-cli")
-        cmd_job = ["openqa-cli", *openqa_client.base_args, f"jobs/{job_id}"]
+        cmd_job = ["openqa-cli", *openqa_client.base_args, f"jobs/{job_id}?ancestors=1"]
         try:
             res = subprocess.run(cmd_job, check=True, capture_output=True, text=True)
             job_data = json.loads(res.stdout)

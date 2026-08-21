@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
-import json
 import pathlib
 import subprocess
 import sys
@@ -253,7 +252,8 @@ def test_label_on_issues_from_issue_tracker(mocker: MockerFixture) -> None:
         }
     ]
     mock_lbl = mocker.patch("openqa_label_known_issues.label_on_issue", return_value=True)
-    assert openqa_label_known_issues.label_on_issues_from_issue_tracker("123", issues_list, "file", client) is True
+    job = {"id": 123, "ancestors": 0}
+    assert openqa_label_known_issues.label_on_issues_from_issue_tracker("123", issues_list, "file", client, job) is True
     mock_lbl.assert_called_once_with(
         "123",
         "match_me",
@@ -298,7 +298,7 @@ def test_label_on_issues_from_issue_tracker(mocker: MockerFixture) -> None:
     mock_lbl.reset_mock()
     mock_lbl.side_effect = None
     assert (
-        openqa_label_known_issues.label_on_issues_from_issue_tracker("123", issues_list_one_quote, "file", client)
+        openqa_label_known_issues.label_on_issues_from_issue_tracker("123", issues_list_one_quote, "file", client, job)
         is False
     )
     mock_lbl.assert_not_called()
@@ -313,7 +313,9 @@ def test_label_on_issues_from_issue_tracker(mocker: MockerFixture) -> None:
     ]
     mock_lbl.reset_mock()
     mock_lbl.return_value = True
-    assert openqa_label_known_issues.label_on_issues_from_issue_tracker("123", issues_list2, "file", client) is True
+    assert (
+        openqa_label_known_issues.label_on_issues_from_issue_tracker("123", issues_list2, "file", client, job) is True
+    )
     mock_lbl.assert_called_once_with(
         "123",
         "match_me",
@@ -333,7 +335,9 @@ def test_label_on_issues_from_issue_tracker(mocker: MockerFixture) -> None:
         }
     ]
     mock_lbl.reset_mock()
-    assert openqa_label_known_issues.label_on_issues_from_issue_tracker("123", issues_list3, "file", client) is False
+    assert (
+        openqa_label_known_issues.label_on_issues_from_issue_tracker("123", issues_list3, "file", client, job) is False
+    )
     mock_lbl.assert_not_called()
 
     # no quotes
@@ -345,7 +349,9 @@ def test_label_on_issues_from_issue_tracker(mocker: MockerFixture) -> None:
         }
     ]
     mock_lbl.reset_mock()
-    assert openqa_label_known_issues.label_on_issues_from_issue_tracker("123", issues_list4, "file", client) is False
+    assert (
+        openqa_label_known_issues.label_on_issues_from_issue_tracker("123", issues_list4, "file", client, job) is False
+    )
     mock_lbl.assert_not_called()
 
 
@@ -357,27 +363,6 @@ def test_get_default_retry_limit(mocker: MockerFixture) -> None:
     # Custom parameter override
     mocker.patch.dict("os.environ", {}, clear=True)
     assert openqa_label_known_issues.get_default_retry_limit(5) == 5
-
-
-def test_count_restarts(mocker: MockerFixture) -> None:
-    # No origin_id
-    job = {"id": 123}
-    client = openqa_label_known_issues.OpenQAClient("http://localhost")
-    assert openqa_label_known_issues.count_restarts(job, client) == 0
-
-    # With nested clone structure (restarts = 2)
-    job_with_parent = {"id": 123, "origin_id": 122}
-
-    # Mock openqa_label_known_issues.OpenQAClient.run_cmd instead of subprocess.run
-    mock_run = mocker.patch.object(openqa_label_known_issues.OpenQAClient, "run_cmd")
-    res1 = mocker.MagicMock()
-    res1.stdout = json.dumps({"job": {"id": 122, "origin_id": 121}})
-    res2 = mocker.MagicMock()
-    res2.stdout = json.dumps({"job": {"id": 121}})
-    mock_run.side_effect = [res1, res2]
-
-    assert openqa_label_known_issues.count_restarts(job_with_parent, client) == 2
-    assert mock_run.call_count == 2
 
 
 @pytest.mark.parametrize(
@@ -400,12 +385,11 @@ def test_label_on_issues_from_issue_tracker_retry_limit(
         }
     ]
     mock_lbl = mocker.patch("openqa_label_known_issues.label_on_issue", return_value=True)
-    mocker.patch("openqa_label_known_issues.count_restarts", return_value=restarts_count)
 
     client = openqa_label_known_issues.OpenQAClient("http://localhost")
     assert (
         openqa_label_known_issues.label_on_issues_from_issue_tracker(
-            "123", issues_list, "file", client, job={"id": 123}
+            "123", issues_list, "file", client, job={"id": 123, "ancestors": restarts_count}
         )
         is True
     )
@@ -451,7 +435,6 @@ def test_label_on_issues_from_issue_tracker_carry_over_modifiers(
 ) -> None:
     mocker.patch.dict("os.environ", {"min_search_term": "5"})
     mock_lbl = mocker.patch("openqa_label_known_issues.label_on_issue", return_value=True)
-    mocker.patch("openqa_label_known_issues.count_restarts", return_value=0)
 
     client = openqa_label_known_issues.OpenQAClient("http://localhost")
     issues_list = [
@@ -464,7 +447,7 @@ def test_label_on_issues_from_issue_tracker_carry_over_modifiers(
 
     assert (
         openqa_label_known_issues.label_on_issues_from_issue_tracker(
-            "123", issues_list, "file", client, job={"id": 123}
+            "123", issues_list, "file", client, job={"id": 123, "ancestors": 0}
         )
         is True
     )
