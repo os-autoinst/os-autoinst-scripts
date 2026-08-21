@@ -16,25 +16,18 @@ import sys
 import time
 from typing import Annotated, Any
 
-import httpx
 import tenacity
 import typer
+from openqa_client.client import OpenQA_Client
 
 log = logging.getLogger(__name__)
 
 
-def _get_product_status_and_job_ids(host: str, product_id: int) -> tuple[str, list[int]]:
-    cmd = ["openqa-cli", "api", "--host", host, f"isos/{product_id}", "include_job_ids=1"]
+def _get_product_status_and_job_ids(client: OpenQA_Client, product_id: int) -> tuple[str, list[int]]:
     try:
-        res = subprocess.run(cmd, check=True, capture_output=True, text=True)
-    except subprocess.CalledProcessError as e:
-        msg = f"openqa-cli failed with exit code {e.returncode}: {e.stderr.strip() or e.stdout.strip()}"
-        raise RuntimeError(msg) from e
-
-    try:
-        res_data = json.loads(res.stdout)
-    except json.JSONDecodeError as e:
-        msg = f"Failed to parse JSON response from openqa-cli: {res.stdout.strip()}"
+        res_data = client.openqa_request("GET", f"isos/{product_id}", params={"include_job_ids": 1})
+    except Exception as e:
+        msg = f"openqa-cli failed with an unexpected error: {e}"
         raise RuntimeError(msg) from e
 
     status = res_data.get("status", "")
@@ -42,7 +35,7 @@ def _get_product_status_and_job_ids(host: str, product_id: int) -> tuple[str, li
     return status, [int(jid) for jid in job_ids]
 
 
-def _poll_scheduled_product(host: str, product_id: int) -> list[int]:
+def _poll_scheduled_product(client: OpenQA_Client, product_id: int) -> list[int]:
     log.info("Asynchronous scheduling initiated. Scheduled Product ID: %s", product_id)
     log.info("Waiting for openQA to schedule the jobs...")
 
@@ -53,7 +46,7 @@ def _poll_scheduled_product(host: str, product_id: int) -> list[int]:
             wait=tenacity.wait_fixed(5),
             retry=tenacity.retry_if_result(lambda x: x[0] == "scheduling"),
             reraise=True,
-        )(_get_product_status_and_job_ids, host, product_id)
+        )(_get_product_status_and_job_ids, client, product_id)
     except Exception as e:
         log.error("%s: %s", err_prefix, e)
         raise typer.Exit(code=2) from e
@@ -83,22 +76,21 @@ def load_job_ids(path: str = "job_post_response", host: str | None = None) -> li
     product_id = data.get("scheduled_product_id")
     if product_id:
         host_val = host or "https://openqa.opensuse.org"
-        return _poll_scheduled_product(host_val, int(product_id))
+        client = OpenQA_Client(server=host_val)
+        return _poll_scheduled_product(client, int(product_id))
 
     ids = data.get("ids", [])
     return [int(jid) for jid in ids]
 
 
-def fetch_job_api(client: httpx.Client, url: str, params: dict[str, Any], retries: int) -> dict[str, Any]:
+def fetch_job_api(client: OpenQA_Client, endpoint: str, params: dict[str, Any], retries: int) -> dict[str, Any]:
     for attempt in tenacity.Retrying(
         stop=tenacity.stop_after_attempt(retries),
         wait=tenacity.wait_exponential(multiplier=1, min=1, max=10),
         reraise=True,
     ):
         with attempt:
-            response = client.get(url, params=params, timeout=30.0)
-            response.raise_for_status()
-            return response.json()
+            return client.openqa_request("GET", endpoint, params=params)
     return {}  # pragma: no cover
 
 
@@ -232,20 +224,19 @@ def comment_on_failed_jobs(
 
 
 def monitor_single_job(
-    client: httpx.Client,
+    client: OpenQA_Client,
     job_id: int,
-    host_val: str,
     retries: int,
     sleep_time_val: int,
 ) -> tuple[int, str, str]:
     """Poll openQA job status until complete. Returns (final_id, result, version)."""
     log.info("Waiting for job %d to finish", job_id)
-    url = f"{host_val}/api/v1/jobs/{job_id}"
+    endpoint = f"jobs/{job_id}"
     params = {"follow": 1}
     current_id = job_id
     while True:
         try:
-            res_json = fetch_job_api(client, url, params, retries)
+            res_json = fetch_job_api(client, endpoint, params, retries)
         except Exception as e:
             log.warning("openqa-cli monitor failed with an unexpected error (%s)", e)
             raise typer.Exit(code=1) from e
@@ -258,7 +249,7 @@ def monitor_single_job(
         if followed_id != current_id:
             log.info("Job %d was restarted/cloned to %d", current_id, followed_id)
             current_id = followed_id
-            url = f"{host_val}/api/v1/jobs/{current_id}"
+            endpoint = f"jobs/{current_id}"
 
         if state in {"done", "cancelled"}:
             result = job.get("result", "")
@@ -306,9 +297,8 @@ def main(
     staging_project_val = staging_project or "devel:openQA:testing"
 
     # Check OPENQA_CLI_RETRIES or openqa_cli_retries env vars or defaults
-    retries_env = os.environ.get("OPENQA_CLI_RETRIES")
     try:
-        retries = int(retries_env) if retries_env else openqa_cli_retries
+        retries = int(os.environ.get("OPENQA_CLI_RETRIES") or openqa_cli_retries)
     except ValueError:
         retries = 7
 
@@ -321,14 +311,14 @@ def main(
     failed_jobs: list[int] = []
     failed_versions: dict[str, int] = {}
 
-    with httpx.Client() as client:
-        for job_id in job_ids:
-            final_id, result, version = monitor_single_job(client, job_id, host_val, retries, sleep_time_val)
-            log.info("Result of job %d: %s", final_id, result)
-            if result != "passed":
-                failed_jobs.append(final_id)
-                if obs_package_name and version:
-                    failed_versions[version] = 1
+    client = OpenQA_Client(server=host_val)
+    for job_id in job_ids:
+        final_id, result, version = monitor_single_job(client, job_id, retries, sleep_time_val)
+        log.info("Result of job %d: %s", final_id, result)
+        if result != "passed":
+            failed_jobs.append(final_id)
+            if obs_package_name and version:
+                failed_versions[version] = 1
 
     if not failed_jobs:
         raise typer.Exit(code=0)
