@@ -24,7 +24,9 @@ log = logging.getLogger(__name__)
 
 
 class RetryTransport(httpx.HTTPTransport):
-    """Custom HTTP transport that retries on 429 Too Many Requests."""
+    """Custom HTTP transport that retries on transient errors (e.g. 429, 5xx)."""
+
+    RETRY_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
 
     def __init__(self, retries: int = 1, **kwargs: Any) -> None:
         """Initialize the RetryTransport with a configurable number of retries."""
@@ -36,11 +38,11 @@ class RetryTransport(httpx.HTTPTransport):
         return datetime.datetime.now(datetime.timezone.utc)
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
-        """Handle the HTTP request, retrying on 429 status code if retries are available."""
+        """Handle the HTTP request, retrying on transient status codes if retries are available."""
         retries_left = self.retries
         response = super().handle_request(request)
 
-        while response.status_code == 429 and retries_left > 0:
+        while response.status_code in self.RETRY_STATUS_CODES and retries_left > 0:
             retry_after = response.headers.get("Retry-After")
             delay = 0.0
             if retry_after:
@@ -60,7 +62,10 @@ class RetryTransport(httpx.HTTPTransport):
             response.close()
 
             log.warning(
-                "Received 429 Too Many Requests. Retrying in %.2f seconds (%d retries left)...", delay, retries_left
+                "Received HTTP %d. Retrying in %.2f seconds (%d retries left)...",
+                response.status_code,
+                delay,
+                retries_left,
             )
             time.sleep(delay)
 
@@ -317,7 +322,7 @@ def investigate(
     timeout: Annotated[int, typer.Option("--timeout", help="Timeout for LLM API requests in seconds")] = int(
         os.environ.get("LLM_TIMEOUT", "600")
     ),
-    retries: Annotated[int, typer.Option("--retries", help="Number of retries on 429 responses")] = int(
+    retries: Annotated[int, typer.Option("--retries", help="Number of retries on retry-worthy HTTP responses")] = int(
         os.environ.get("LLM_RETRIES", "1")
     ),
 ) -> None:
