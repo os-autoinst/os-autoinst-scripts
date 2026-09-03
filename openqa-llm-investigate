@@ -3,12 +3,15 @@
 # ruff: file-ignore[any-type, blind-except, complex-structure, undocumented-public-function, line-too-long, future-required-type-annotation, boolean-type-hint-positional-argument, reimplemented-operator, too-many-arguments, too-many-locals, too-many-statements, too-many-positional-arguments, magic-value-comparison, suspicious-subprocess-import, subprocess-without-shell-equals-true, print, error-instead-of-exception]
 """Investigates an openQA job failure using an LLM."""
 
+import datetime
 import json
 import logging
 import os
 import subprocess
 import sys
+import time
 from collections import deque
+from email.utils import parsedate_to_datetime
 from typing import Annotated, Any
 from urllib.parse import urlparse, urlunparse
 
@@ -18,6 +21,59 @@ import typer
 USER_AGENT = "openqa-llm-investigate (https://github.com/os-autoinst/os-autoinst-scripts)"
 
 log = logging.getLogger(__name__)
+
+
+class RetryTransport(httpx.HTTPTransport):
+    """Custom HTTP transport that retries on transient errors (e.g. 429, 5xx)."""
+
+    RETRY_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
+
+    def __init__(self, retries: int = 1, **kwargs: Any) -> None:
+        """Initialize the RetryTransport with a configurable number of retries."""
+        super().__init__(**kwargs)
+        self.retries = retries
+
+    @staticmethod
+    def _now() -> datetime.datetime:
+        return datetime.datetime.now(datetime.timezone.utc)
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        """Handle the HTTP request, retrying on transient status codes if retries are available."""
+        retries_left = self.retries
+        response = super().handle_request(request)
+
+        while response.status_code in self.RETRY_STATUS_CODES and retries_left > 0:
+            retry_after = response.headers.get("Retry-After")
+            delay = 0.0
+            if retry_after:
+                try:
+                    delay = float(retry_after)
+                except ValueError:
+                    try:
+                        dt = parsedate_to_datetime(retry_after)
+                        delay = (dt - self._now()).total_seconds()
+                    except Exception as e:
+                        log.debug("Failed to parse Retry-After header as date: %s", e)
+
+            if delay <= 0.0:
+                attempt = self.retries - retries_left + 1
+                delay = float(2 ** (attempt - 1))
+
+            response.close()
+
+            log.warning(
+                "Received HTTP %d. Retrying in %.2f seconds (%d retries left)...",
+                response.status_code,
+                delay,
+                retries_left,
+            )
+            time.sleep(delay)
+
+            retries_left -= 1
+            response = super().handle_request(request)
+
+        return response
+
 
 app = typer.Typer(add_completion=False)
 
@@ -266,6 +322,9 @@ def investigate(
     timeout: Annotated[int, typer.Option("--timeout", help="Timeout for LLM API requests in seconds")] = int(
         os.environ.get("LLM_TIMEOUT", "600")
     ),
+    retries: Annotated[int, typer.Option("--retries", help="Number of retries on retry-worthy HTTP responses")] = int(
+        os.environ.get("LLM_RETRIES", "1")
+    ),
 ) -> None:
     setup_logging(verbose, quiet)
     base_url, job_id = parse_job_url(job_url)
@@ -277,7 +336,8 @@ def investigate(
     llm_url = os.environ.get("LLM_API_URL", "http://localhost:8080/v1/chat/completions")
     llm_model = os.environ.get("LLM_MODEL", "gemma-4-26B-A4B-it")
 
-    with httpx.Client(headers={"User-Agent": USER_AGENT}) as client:
+    transport = RetryTransport(retries=retries)
+    with httpx.Client(transport=transport, headers={"User-Agent": USER_AGENT}) as client:
         _perform_investigation(client, base_url, job_id, force, dry, llm_url, llm_model, timeout)
 
 
