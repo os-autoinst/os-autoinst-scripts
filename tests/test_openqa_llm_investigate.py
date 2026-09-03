@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import datetime
 import importlib.machinery
 import importlib.util
 import logging
@@ -291,3 +292,117 @@ def test_investigate_logging_levels(mocker: MockerFixture) -> None:
     mock_basic_config.assert_called_with(
         level=logging.ERROR, format="%(levelname)s: %(message)s", stream=sys.stderr, force=True
     )
+
+
+def test_retry_transport_no_retry_on_200(mocker: MockerFixture) -> None:
+    # If the response is 200, we should not retry and sleep should not be called.
+    mock_sleep = mocker.patch("llm_investigate.time.sleep")
+    mock_super_handle = mocker.patch("llm_investigate.httpx.HTTPTransport.handle_request")
+
+    mock_response = MagicMock(spec=httpx.Response)
+    mock_response.status_code = 200
+    mock_super_handle.return_value = mock_response
+
+    transport = llm_investigate.RetryTransport(retries=3)
+    req = httpx.Request("GET", "http://example.com")
+    res = transport.handle_request(req)
+
+    assert res == mock_response
+    assert mock_super_handle.call_count == 1
+    mock_sleep.assert_not_called()
+
+
+def test_retry_transport_retry_after_seconds(mocker: MockerFixture) -> None:
+    mock_sleep = mocker.patch("llm_investigate.time.sleep")
+    mock_super_handle = mocker.patch("llm_investigate.httpx.HTTPTransport.handle_request")
+
+    resp429 = MagicMock(spec=httpx.Response)
+    resp429.status_code = 429
+    resp429.headers = httpx.Headers({"Retry-After": "5"})
+
+    resp200 = MagicMock(spec=httpx.Response)
+    resp200.status_code = 200
+
+    mock_super_handle.side_effect = [resp429, resp200]
+
+    transport = llm_investigate.RetryTransport(retries=2)
+    req = httpx.Request("GET", "http://example.com")
+    res = transport.handle_request(req)
+
+    assert res == resp200
+    assert mock_super_handle.call_count == 2
+    mock_sleep.assert_called_once_with(5.0)
+    resp429.close.assert_called_once()
+
+
+def test_retry_transport_retry_after_http_date(mocker: MockerFixture) -> None:
+    mock_sleep = mocker.patch("llm_investigate.time.sleep")
+    mock_super_handle = mocker.patch("llm_investigate.httpx.HTTPTransport.handle_request")
+
+    resp429 = MagicMock(spec=httpx.Response)
+    resp429.status_code = 429
+    # Date is Oct 21 2015 07:28:00 UTC (10 seconds later than now)
+    resp429.headers = httpx.Headers({"Retry-After": "Wed, 21 Oct 2015 07:28:00 GMT"})
+
+    resp200 = MagicMock(spec=httpx.Response)
+    resp200.status_code = 200
+
+    mock_super_handle.side_effect = [resp429, resp200]
+
+    transport = llm_investigate.RetryTransport(retries=2)
+
+    # Mock _now method to return static now (Oct 21 2015 07:27:50 UTC)
+    static_now = datetime.datetime(2015, 10, 21, 7, 27, 50, tzinfo=datetime.timezone.utc)
+    mocker.patch.object(transport, "_now", return_value=static_now)
+
+    req = httpx.Request("GET", "http://example.com")
+    res = transport.handle_request(req)
+
+    assert res == resp200
+    assert mock_super_handle.call_count == 2
+    mock_sleep.assert_called_once_with(10.0)
+    resp429.close.assert_called_once()
+
+
+def test_retry_transport_exponential_backoff(mocker: MockerFixture) -> None:
+    mock_sleep = mocker.patch("llm_investigate.time.sleep")
+    mock_super_handle = mocker.patch("llm_investigate.httpx.HTTPTransport.handle_request")
+
+    resp429_1 = MagicMock(spec=httpx.Response)
+    resp429_1.status_code = 429
+    resp429_1.headers = httpx.Headers({})  # No Retry-After header
+
+    resp429_2 = MagicMock(spec=httpx.Response)
+    resp429_2.status_code = 429
+    resp429_2.headers = httpx.Headers({})  # No Retry-After header
+
+    resp200 = MagicMock(spec=httpx.Response)
+    resp200.status_code = 200
+
+    mock_super_handle.side_effect = [resp429_1, resp429_2, resp200]
+
+    transport = llm_investigate.RetryTransport(retries=3)
+    req = httpx.Request("GET", "http://example.com")
+    res = transport.handle_request(req)
+
+    assert res == resp200
+    assert mock_super_handle.call_count == 3
+
+    # First sleep should be 2 ** (1 - 1) = 1.0 second
+    # Second sleep should be 2 ** (2 - 1) = 2.0 seconds
+    mock_sleep.assert_has_calls([mocker.call(1.0), mocker.call(2.0)])
+    resp429_1.close.assert_called_once()
+    resp429_2.close.assert_called_once()
+
+
+def test_investigate_configures_retry_transport(mocker: MockerFixture) -> None:
+    # Verify that calling investigate with a specific retries value configures RetryTransport
+    mock_client_class = mocker.patch("llm_investigate.httpx.Client")
+    mock_retry_transport_class = mocker.patch("llm_investigate.RetryTransport")
+    mocker.patch("llm_investigate._perform_investigation")
+
+    llm_investigate.investigate("123", retries=4)
+
+    mock_retry_transport_class.assert_called_once_with(retries=4)
+    mock_client_class.assert_called_once()
+    assert mock_client_class.call_args[1]["transport"] == mock_retry_transport_class.return_value
