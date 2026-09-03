@@ -335,6 +335,29 @@ def test_retry_transport_retry_after_seconds(mocker: MockerFixture) -> None:
     resp429.close.assert_called_once()
 
 
+def test_retry_transport_retry_on_503(mocker: MockerFixture) -> None:
+    mock_sleep = mocker.patch("llm_investigate.time.sleep")
+    mock_super_handle = mocker.patch("llm_investigate.httpx.HTTPTransport.handle_request")
+
+    resp503 = MagicMock(spec=httpx.Response)
+    resp503.status_code = 503
+    resp503.headers = httpx.Headers({})  # No Retry-After header
+
+    resp200 = MagicMock(spec=httpx.Response)
+    resp200.status_code = 200
+
+    mock_super_handle.side_effect = [resp503, resp200]
+
+    transport = llm_investigate.RetryTransport(retries=2)
+    req = httpx.Request("GET", "http://example.com")
+    res = transport.handle_request(req)
+
+    assert res == resp200
+    assert mock_super_handle.call_count == 2
+    mock_sleep.assert_called_once_with(1.0)  # Exponential backoff first step
+    resp503.close.assert_called_once()
+
+
 def test_retry_transport_retry_after_http_date(mocker: MockerFixture) -> None:
     mock_sleep = mocker.patch("llm_investigate.time.sleep")
     mock_super_handle = mocker.patch("llm_investigate.httpx.HTTPTransport.handle_request")
