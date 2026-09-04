@@ -649,11 +649,10 @@ class AutoSubmitter:
         if not self._commit_local_changes(package, version):
             return False
 
-        # Log both changes files before submitting
-        for filename in (f"_service:obs_scm:{package}.changes", f"{package}.changes"):
-            changes_file = pathlib.Path(filename)
-            content = changes_file.read_text(encoding="utf-8", errors="ignore")
-            _log_head(changes_file, content, 50)
+        # Log changes file before submitting
+        changes_file = pathlib.Path(f"{package}.changes")
+        content = changes_file.read_text(encoding="utf-8", errors="ignore")
+        _log_head(changes_file, content, 50)
 
         success = True
         for target in self.targets:
