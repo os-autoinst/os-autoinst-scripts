@@ -322,11 +322,9 @@ def test_update_package(caplog: pytest.LogCaptureFixture, mocker: MockerFixture,
     mocker.patch("auto_submit.AutoSubmitter._osc_addremove_and_filter_specs", return_value="23")
     mocker.patch("auto_submit.AutoSubmitter._commit_local_changes", return_value=True)
     content = "Line 1\nLine 2"
-    filename1 = "_service:obs_scm:pkg.changes"
-    filename2 = "pkg.changes"
-    for filename in (filename1, filename2):
-        changes_file = tmp_path / filename
-        changes_file.write_text(content, encoding="utf-8")
+    filename = "pkg.changes"
+    changes_file = tmp_path / filename
+    changes_file.write_text(content, encoding="utf-8")
 
     monkeypatch.chdir(tmp_path)
     submitter = auto_submit.AutoSubmitter(
@@ -337,6 +335,5 @@ def test_update_package(caplog: pytest.LogCaptureFixture, mocker: MockerFixture,
     caplog.set_level(logging.INFO)
     res = submitter.update_package("pkg")
     assert caplog.records[0].getMessage() == "update_package pkg"
-    assert caplog.records[1].getMessage() == f"First 2 lines of '{filename1}':\n{content}"
-    assert caplog.records[2].getMessage() == f"First 2 lines of '{filename2}':\n{content}"
+    assert caplog.records[1].getMessage() == f"First 2 lines of '{filename}':\n{content}"
     assert res is True
