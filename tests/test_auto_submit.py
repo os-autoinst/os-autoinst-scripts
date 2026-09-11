@@ -61,10 +61,10 @@ def test_get_obs_sr_id_empty(mocker: MockerFixture) -> None:
 @pytest.mark.parametrize(
     ("target", "days", "pr_json", "sr_stdout", "expected"),
     [
-        ("openSUSE:Factory", 0, None, "", True),
-        ("openSUSE:Factory", 1, None, "openSUSE:Factory", False),
-        ("openSUSE:Factory", 1, None, "different_target", True),
-        ("openSUSE:Leap:16.0", 1, [], "", True),
+        ("openSUSE:Factory", 0, None, "", False),
+        ("openSUSE:Factory", 1, None, "openSUSE:Factory", True),
+        ("openSUSE:Factory", 1, None, "different_target", False),
+        ("openSUSE:Leap:16.0", 1, [], "", False),
         (
             "openSUSE:Leap:16.0",
             3,
@@ -79,7 +79,7 @@ def test_get_obs_sr_id_empty(mocker: MockerFixture) -> None:
                 }
             ],
             "",
-            False,
+            True,
         ),
         (
             "openSUSE:Leap:16.0",
@@ -95,7 +95,7 @@ def test_get_obs_sr_id_empty(mocker: MockerFixture) -> None:
                 }
             ],
             "",
-            True,
+            False,
         ),
     ],
 )

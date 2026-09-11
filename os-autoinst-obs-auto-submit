@@ -475,7 +475,7 @@ class AutoSubmitter:
             self.throttle_days_leap_16 if throttle_var == "throttle_days_leap_16" else self.throttle_days
         )
         if throttle_days_value == 0:
-            return True
+            return False
 
         log.info("has_pending_submission(%s, %s)", package, target)
 
@@ -490,7 +490,7 @@ class AutoSubmitter:
                 res = run_osc_cmd(cmd, dry_run=self.dry_run, mutating=False)
             except Exception as e:  # ruff: ignore[blind-except]
                 log.warning("Gitea PR check failed: %s", e)
-                return True
+                return False
 
             if res.stdout:
                 pulls = json.loads(res.stdout)
@@ -510,7 +510,7 @@ class AutoSubmitter:
                                 git_branch,
                                 throttle_days_value,
                             )
-                            return False
+                            return True
         else:
             cmd = [
                 *shlex.split(self.osc_cmd_str),
@@ -531,7 +531,7 @@ class AutoSubmitter:
                 res = run_osc_cmd(cmd, dry_run=self.dry_run, mutating=False)
             except Exception as e:  # ruff: ignore[blind-except]
                 log.warning("OBS SR check failed: %s", e)
-                return True
+                return False
 
             if target in res.stdout:
                 log.info(
@@ -542,9 +542,9 @@ class AutoSubmitter:
                     throttle_days_value,
                 )
                 log.info("%s", res.stdout)
-                return False
+                return True
 
-        return True
+        return False
 
     @staticmethod
     def _cleanup_and_rename_files() -> None:
@@ -666,7 +666,7 @@ class AutoSubmitter:
         for target in self.targets:
             if target == "none" or not target:
                 continue
-            if not self.has_pending_submission(package, target):
+            if self.has_pending_submission(package, target):
                 continue
 
             log.info("## Ready to submit %s to %s ##", package, target)
