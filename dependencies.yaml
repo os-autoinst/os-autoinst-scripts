@@ -37,7 +37,7 @@ main_requires:
   python3-sh:
   python3-tenacity:
   python3-typer:
-  python3-httpx:
+  python3-openqa_client:
   retry:
   sed:
   sudo:

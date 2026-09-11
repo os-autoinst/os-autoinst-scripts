@@ -13,7 +13,6 @@ import sys
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, Mock
 
-import httpx
 import pytest
 import typer
 
@@ -66,10 +65,11 @@ def test_load_job_ids(tmp_path: pathlib.Path, content: str | None, exists: bool,
 
 
 def test_fetch_job_api() -> None:
-    client, resp = MagicMock(spec=httpx.Client), Mock()
-    resp.json.return_value = {"key": "val"}
-    client.get.return_value = resp
-    assert monitor_job.fetch_job_api(client, "http://host", {}, 2) == {"key": "val"}
+    client = MagicMock()
+    client.openqa_request.return_value = {"key": "val"}
+    res = monitor_job.fetch_job_api(client, "jobs/123", {"follow": 1}, 2)
+    assert res == {"key": "val"}
+    client.openqa_request.assert_called_once_with("GET", "jobs/123", params={"follow": 1})
 
 
 @pytest.mark.parametrize(
@@ -144,10 +144,10 @@ def test_monitor_single_job(
     client = MagicMock()
     if should_raise:
         with pytest.raises(typer.Exit) as exc:
-            monitor_job.monitor_single_job(client, 1, "http://host", 2, 0)
+            monitor_job.monitor_single_job(client, 1, 2, 0)
         assert exc.value.exit_code == 1
     else:
-        fid, res, ver = monitor_job.monitor_single_job(client, 1, "http://host", 2, 0)
+        fid, res, ver = monitor_job.monitor_single_job(client, 1, 2, 0)
         assert (fid, res, ver) == (expected_id, expected_res, expected_ver)
         assert mock_fetch.call_count == len(side_effects)
 
@@ -177,7 +177,7 @@ def test_main_flow(
     mocker.patch("monitor_job.delete_packages_from_obs_project")
     mocker.patch("monitor_job.delete_old_comments")
     mocker.patch("monitor_job.post_comment")
-    mocker.patch("monitor_job.httpx.Client")
+    mocker.patch("monitor_job.OpenQA_Client")
     if env_patch:
         mocker.patch.dict("os.environ", env_patch)
 
@@ -255,54 +255,40 @@ def test_run_osc_cmd_non_transient_fails_immediately(mocker: MockerFixture) -> N
     ("run_result", "expected_status", "expected_job_ids", "expected_err"),
     [
         (
-            subprocess.CompletedProcess(
-                args=["openqa-cli"], returncode=0, stdout='{"status": "scheduled", "job_ids": [123, 456]}', stderr=""
-            ),
+            {"status": "scheduled", "job_ids": [123, 456]},
             "scheduled",
             [123, 456],
             None,
         ),
         (
-            subprocess.CalledProcessError(returncode=1, cmd=["openqa-cli"], stderr="Some openqa-cli error"),
+            Exception("Some openqa-cli error"),
             "",
             [],
-            "openqa-cli failed with exit code 1: Some openqa-cli error",
-        ),
-        (
-            subprocess.CompletedProcess(args=["openqa-cli"], returncode=0, stdout="not a json", stderr=""),
-            "",
-            [],
-            "Failed to parse JSON response from openqa-cli: not a json",
+            "openqa-cli failed with an unexpected error: Some openqa-cli error",
         ),
     ],
 )
 def test_get_product_status_and_job_ids(
-    mocker: MockerFixture,
     run_result: Any,
     expected_status: str,
     expected_job_ids: list[int],
     expected_err: str | None,
 ) -> None:
-    mock_run = mocker.patch("monitor_job.subprocess.run")
+    client = MagicMock()
     if isinstance(run_result, Exception):
-        mock_run.side_effect = run_result
+        client.openqa_request.side_effect = run_result
     else:
-        mock_run.return_value = run_result
+        client.openqa_request.return_value = run_result
 
     if expected_err:
         with pytest.raises(RuntimeError) as exc:
-            monitor_job._get_product_status_and_job_ids("http://host", 598236)
+            monitor_job._get_product_status_and_job_ids(client, 598236)
         assert expected_err in str(exc.value)
     else:
-        status, job_ids = monitor_job._get_product_status_and_job_ids("http://host", 598236)
+        status, job_ids = monitor_job._get_product_status_and_job_ids(client, 598236)
         assert status == expected_status
         assert job_ids == expected_job_ids
-        mock_run.assert_called_once_with(
-            ["openqa-cli", "api", "--host", "http://host", "isos/598236", "include_job_ids=1"],
-            check=True,
-            capture_output=True,
-            text=True,
-        )
+        client.openqa_request.assert_called_once_with("GET", "isos/598236", params={"include_job_ids": 1})
 
 
 @pytest.mark.parametrize(
@@ -327,9 +313,10 @@ def test_poll_scheduled_product(
     else:
         mock_get.return_value = side_effect
 
+    client = MagicMock()
     if expected_exit_code is not None:
         with pytest.raises(typer.Exit) as exc:
-            monitor_job._poll_scheduled_product("http://host", 598236)
+            monitor_job._poll_scheduled_product(client, 598236)
         assert exc.value.exit_code == expected_exit_code
     else:
-        assert monitor_job._poll_scheduled_product("http://host", 598236) == expected_res
+        assert monitor_job._poll_scheduled_product(client, 598236) == expected_res
