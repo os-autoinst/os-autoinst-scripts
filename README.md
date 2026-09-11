@@ -241,6 +241,11 @@ certificate from '…' written to '…/openqa/share/factory/other/fixed/openSUSE
 Finished Update a certificate from OBS.
 ```
 
+For more details on how to use, configure, and install systemd units/timers for it, run:
+```bash
+./openqa-update-cert-from-obs --help
+```
+
 In production you might want to use a distinct user, e.g.:
 ```
 $ sudo useradd -mG users osc
