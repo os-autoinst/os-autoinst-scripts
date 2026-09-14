@@ -296,7 +296,7 @@ def test_investigate_logging_levels(mocker: MockerFixture) -> None:
 
 def test_retry_transport_no_retry_on_200(mocker: MockerFixture) -> None:
     # If the response is 200, we should not retry and sleep should not be called.
-    mock_sleep = mocker.patch("llm_investigate.time.sleep")
+    mock_sleep = mocker.patch("time.sleep")
     mock_super_handle = mocker.patch("llm_investigate.httpx.HTTPTransport.handle_request")
 
     mock_response = MagicMock(spec=httpx.Response)
@@ -313,7 +313,7 @@ def test_retry_transport_no_retry_on_200(mocker: MockerFixture) -> None:
 
 
 def test_retry_transport_retry_after_seconds(mocker: MockerFixture) -> None:
-    mock_sleep = mocker.patch("llm_investigate.time.sleep")
+    mock_sleep = mocker.patch("time.sleep")
     mock_super_handle = mocker.patch("llm_investigate.httpx.HTTPTransport.handle_request")
 
     resp429 = MagicMock(spec=httpx.Response)
@@ -336,7 +336,7 @@ def test_retry_transport_retry_after_seconds(mocker: MockerFixture) -> None:
 
 
 def test_retry_transport_retry_on_503(mocker: MockerFixture) -> None:
-    mock_sleep = mocker.patch("llm_investigate.time.sleep")
+    mock_sleep = mocker.patch("time.sleep")
     mock_super_handle = mocker.patch("llm_investigate.httpx.HTTPTransport.handle_request")
 
     resp503 = MagicMock(spec=httpx.Response)
@@ -359,7 +359,7 @@ def test_retry_transport_retry_on_503(mocker: MockerFixture) -> None:
 
 
 def test_retry_transport_retry_after_http_date(mocker: MockerFixture) -> None:
-    mock_sleep = mocker.patch("llm_investigate.time.sleep")
+    mock_sleep = mocker.patch("time.sleep")
     mock_super_handle = mocker.patch("llm_investigate.httpx.HTTPTransport.handle_request")
 
     resp429 = MagicMock(spec=httpx.Response)
@@ -388,7 +388,7 @@ def test_retry_transport_retry_after_http_date(mocker: MockerFixture) -> None:
 
 
 def test_retry_transport_exponential_backoff(mocker: MockerFixture) -> None:
-    mock_sleep = mocker.patch("llm_investigate.time.sleep")
+    mock_sleep = mocker.patch("time.sleep")
     mock_super_handle = mocker.patch("llm_investigate.httpx.HTTPTransport.handle_request")
 
     resp429_1 = MagicMock(spec=httpx.Response)

@@ -9,18 +9,27 @@ import logging
 import os
 import subprocess
 import sys
-import time
 from collections import deque
 from email.utils import parsedate_to_datetime
 from typing import Annotated, Any
 from urllib.parse import urlparse, urlunparse
 
 import httpx
+import tenacity
 import typer
 
 USER_AGENT = "openqa-llm-investigate (https://github.com/os-autoinst/os-autoinst-scripts)"
 
 log = logging.getLogger(__name__)
+
+
+class TransientHTTPError(Exception):
+    """Exception raised for HTTP responses with transient status codes."""
+
+    def __init__(self, response: httpx.Response) -> None:
+        """Initialize the exception with the HTTP response."""
+        super().__init__(f"HTTP {response.status_code}")
+        self.response = response
 
 
 class RetryTransport(httpx.HTTPTransport):
@@ -37,29 +46,40 @@ class RetryTransport(httpx.HTTPTransport):
     def _now() -> datetime.datetime:
         return datetime.datetime.now(datetime.timezone.utc)
 
-    def handle_request(self, request: httpx.Request) -> httpx.Response:
-        """Handle the HTTP request, retrying on transient status codes if retries are available."""
-        retries_left = self.retries
-        response = super().handle_request(request)
+    def _check_and_raise(self, response: httpx.Response) -> None:
+        if response.status_code in self.RETRY_STATUS_CODES:
+            raise TransientHTTPError(response)
 
-        while response.status_code in self.RETRY_STATUS_CODES and retries_left > 0:
-            retry_after = response.headers.get("Retry-After")
-            delay = 0.0
-            if retry_after:
+    def _wait_strategy(self, retry_state: tenacity.RetryCallState) -> float:
+        exc = retry_state.outcome.exception()
+        if not isinstance(exc, TransientHTTPError):
+            return 0.0
+        response = exc.response
+        retry_after = response.headers.get("Retry-After")
+        delay = 0.0
+        if retry_after:
+            try:
+                delay = float(retry_after)
+            except ValueError:
                 try:
-                    delay = float(retry_after)
-                except ValueError:
-                    try:
-                        dt = parsedate_to_datetime(retry_after)
-                        delay = (dt - self._now()).total_seconds()
-                    except Exception as e:
-                        log.debug("Failed to parse Retry-After header as date: %s", e)
+                    dt = parsedate_to_datetime(retry_after)
+                    delay = (dt - self._now()).total_seconds()
+                except Exception as e:
+                    log.debug("Failed to parse Retry-After header as date: %s", e)
 
-            if delay <= 0.0:
-                attempt = self.retries - retries_left + 1
-                delay = float(2 ** (attempt - 1))
+        if delay <= 0.0:
+            delay = float(2 ** (retry_state.attempt_number - 1))
 
+        return delay
+
+    def _before_sleep(self, retry_state: tenacity.RetryCallState) -> None:
+        exc = retry_state.outcome.exception()
+        if isinstance(exc, TransientHTTPError):
+            response = exc.response
             response.close()
+
+            retries_left = self.retries - retry_state.attempt_number
+            delay = retry_state.next_action.sleep
 
             log.warning(
                 "Received HTTP %d. Retrying in %.2f seconds (%d retries left)...",
@@ -67,10 +87,22 @@ class RetryTransport(httpx.HTTPTransport):
                 delay,
                 retries_left,
             )
-            time.sleep(delay)
 
-            retries_left -= 1
-            response = super().handle_request(request)
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        """Handle the HTTP request, retrying on transient status codes if retries are available."""
+        try:
+            for attempt in tenacity.Retrying(
+                retry=tenacity.retry_if_exception_type(TransientHTTPError),
+                stop=tenacity.stop_after_attempt(self.retries + 1),
+                wait=self._wait_strategy,
+                before_sleep=self._before_sleep,
+                reraise=True,
+            ):
+                with attempt:
+                    response = super().handle_request(request)
+                    self._check_and_raise(response)
+        except TransientHTTPError as e:
+            return e.response
 
         return response
 
