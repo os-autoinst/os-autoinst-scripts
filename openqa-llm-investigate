@@ -3,21 +3,109 @@
 # ruff: file-ignore[any-type, blind-except, complex-structure, undocumented-public-function, line-too-long, future-required-type-annotation, boolean-type-hint-positional-argument, reimplemented-operator, too-many-arguments, too-many-locals, too-many-statements, too-many-positional-arguments, magic-value-comparison, suspicious-subprocess-import, subprocess-without-shell-equals-true, print, error-instead-of-exception]
 """Investigates an openQA job failure using an LLM."""
 
+import datetime
 import json
 import logging
 import os
 import subprocess
 import sys
 from collections import deque
+from email.utils import parsedate_to_datetime
 from typing import Annotated, Any
 from urllib.parse import urlparse, urlunparse
 
 import httpx
+import tenacity
 import typer
 
 USER_AGENT = "openqa-llm-investigate (https://github.com/os-autoinst/os-autoinst-scripts)"
 
 log = logging.getLogger(__name__)
+
+
+class TransientHTTPError(Exception):
+    """Exception raised for HTTP responses with transient status codes."""
+
+    def __init__(self, response: httpx.Response) -> None:
+        """Initialize the exception with the HTTP response."""
+        super().__init__(f"HTTP {response.status_code}")
+        self.response = response
+
+
+class RetryTransport(httpx.HTTPTransport):
+    """Custom HTTP transport that retries on transient errors (e.g. 429, 5xx)."""
+
+    RETRY_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
+
+    def __init__(self, retries: int = 1, **kwargs: Any) -> None:
+        """Initialize the RetryTransport with a configurable number of retries."""
+        super().__init__(**kwargs)
+        self.retries = retries
+
+    @staticmethod
+    def _now() -> datetime.datetime:
+        return datetime.datetime.now(datetime.timezone.utc)
+
+    def _check_and_raise(self, response: httpx.Response) -> None:
+        if response.status_code in self.RETRY_STATUS_CODES:
+            raise TransientHTTPError(response)
+
+    def _wait_strategy(self, retry_state: tenacity.RetryCallState) -> float:
+        exc = retry_state.outcome.exception()
+        if not isinstance(exc, TransientHTTPError):
+            return 0.0
+        response = exc.response
+        retry_after = response.headers.get("Retry-After")
+        delay = 0.0
+        if retry_after:
+            try:
+                delay = float(retry_after)
+            except ValueError:
+                try:
+                    dt = parsedate_to_datetime(retry_after)
+                    delay = (dt - self._now()).total_seconds()
+                except Exception as e:
+                    log.debug("Failed to parse Retry-After header as date: %s", e)
+
+        if delay <= 0.0:
+            delay = float(2 ** (retry_state.attempt_number - 1))
+
+        return delay
+
+    def _before_sleep(self, retry_state: tenacity.RetryCallState) -> None:
+        exc = retry_state.outcome.exception()
+        if isinstance(exc, TransientHTTPError):
+            response = exc.response
+            response.close()
+
+            retries_left = self.retries - retry_state.attempt_number
+            delay = retry_state.next_action.sleep
+
+            log.warning(
+                "Received HTTP %d. Retrying in %.2f seconds (%d retries left)...",
+                response.status_code,
+                delay,
+                retries_left,
+            )
+
+    def handle_request(self, request: httpx.Request) -> httpx.Response:
+        """Handle the HTTP request, retrying on transient status codes if retries are available."""
+        try:
+            for attempt in tenacity.Retrying(
+                retry=tenacity.retry_if_exception_type(TransientHTTPError),
+                stop=tenacity.stop_after_attempt(self.retries + 1),
+                wait=self._wait_strategy,
+                before_sleep=self._before_sleep,
+                reraise=True,
+            ):
+                with attempt:
+                    response = super().handle_request(request)
+                    self._check_and_raise(response)
+        except TransientHTTPError as e:
+            return e.response
+
+        return response
+
 
 app = typer.Typer(add_completion=False)
 
@@ -266,6 +354,9 @@ def investigate(
     timeout: Annotated[int, typer.Option("--timeout", help="Timeout for LLM API requests in seconds")] = int(
         os.environ.get("LLM_TIMEOUT", "600")
     ),
+    retries: Annotated[int, typer.Option("--retries", help="Number of retries on retry-worthy HTTP responses")] = int(
+        os.environ.get("LLM_RETRIES", "1")
+    ),
 ) -> None:
     setup_logging(verbose, quiet)
     base_url, job_id = parse_job_url(job_url)
@@ -277,7 +368,8 @@ def investigate(
     llm_url = os.environ.get("LLM_API_URL", "http://localhost:8080/v1/chat/completions")
     llm_model = os.environ.get("LLM_MODEL", "gemma-4-26B-A4B-it")
 
-    with httpx.Client(headers={"User-Agent": USER_AGENT}) as client:
+    transport = RetryTransport(retries=retries)
+    with httpx.Client(transport=transport, headers={"User-Agent": USER_AGENT}) as client:
         _perform_investigation(client, base_url, job_id, force, dry, llm_url, llm_model, timeout)
 
 
