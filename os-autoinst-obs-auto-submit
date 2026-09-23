@@ -360,14 +360,17 @@ class AutoSubmitter:
         # "parent" remote is added by git-obs; fetch before switch because the
         # fork may lack the branch (switch-first fails "invalid reference").
         fetch_cmd = [*git_cmd, "fetch", "parent"]
+        lfs_fetch_cmd = [*git_cmd, "lfs", "fetch", "--all", "parent"]
         switch_cmd = [*git_cmd, "switch", "-C", branch, f"parent/{branch}"]
 
         if self.dry_run:
             log.info("[dry-run] Would execute: %s", " ".join(fetch_cmd))
+            log.info("[dry-run] Would execute: %s", " ".join(lfs_fetch_cmd))
             log.info("[dry-run] Would execute: %s", " ".join(switch_cmd))
             log.info("[dry-run] Would replace files in clone with files from ../../%s/*", package)
         else:
             _run_cmd(fetch_cmd, check=True)
+            _run_cmd(lfs_fetch_cmd, check=True)
             _run_cmd(switch_cmd, check=True)
 
             # Delete and replace every file that we have just generated.
