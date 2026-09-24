@@ -3,7 +3,7 @@ name = "os-autoinst-scripts"
 dynamic = ["version"]
 description = "Collection of scripts for os-autoinst and openQA"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.12"
 license = "MIT"
 authors = [
     { name = "SUSE LLC" },
