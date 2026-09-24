@@ -1,0 +1,98 @@
+#!/usr/bin/env perl
+# Copyright SUSE LLC
+# SPDX-License-Identifier: MIT
+
+use Mojo::Base -strict, -signatures;
+use Mojo::File qw(path);
+use autodie ':all';
+
+sub configure_firewall ($firewall, $bridge) {
+    path($firewall)->spurt(qq(
+    <?xml version="1.0" encoding="utf-8"?>
+    <zone target="ACCEPT">
+      <short>Trusted</short>
+      <description>All network connections are accepted.</description>
+      <interface name="br$bridge"/>
+      <interface name="ovs-system"/>
+      <interface name="eth0"/>
+      <masquerade/>
+    </zone>
+    ));
+}
+
+sub provision_services () {
+    # bind-utils contains dig
+    system("zypper in -y bind-utils os-autoinst-openvswitch");
+    system("systemctl enable --now openvswitch os-autoinst-openvswitch");
+    system("systemctl reload firewalld");
+}
+
+sub generate_bridge_configs ($etc, $bridge) {
+    path("$etc/sysconfig/os-autoinst-openvswitch")->spurt("OS_AUTOINST_USE_BRIDGE=br$bridge");
+    # Manage services only if writing to system-wide files
+    system("ovs-vsctl add-br br$bridge") if $etc =~ /^\/etc/;
+
+    my $bridge_file = "$etc/sysconfig/network/ifcfg-br$bridge";
+    my $ip = "10.0.2.2/15";
+    my $config = "
+    BOOTPROTO=static
+    IPADDR=$ip                                                                                                       
+    STARTMODE=auto
+    ZONE=trusted
+    OVS_BRIDGE=yes
+    PRE_UP_SCRIPT=wicked:gre_tunnel_preup.sh
+    ";
+
+    for my $i (0..147) {
+        $config .= "OVS_BRIDGE_PORT_DEVICE_$i='tap$i'\n";
+
+        path("$etc/sysconfig/network/ifcfg-tap$i")->spurt("
+        BOOTPROTO='none'
+        IPADDR=''
+        NETMASK=''
+        PREFIXLEN=''
+        STARTMODE='auto'
+        TUNNEL='tap'
+        TUNNEL_SET_GROUP='nogroup'
+        TUNNEL_SET_OWNER='_openqa-worker'
+        ZONE=trusted
+        ");
+    }
+
+    path($bridge_file)->spurt($config);
+}
+
+sub generate_preup ($gre, $bridge) {
+    my $gre_config = '
+    #!/bin/sh
+    action="$1"
+    bridge="$2"
+    ovs-vsctl set bridge $bridge stp_enable=true
+    ';
+
+    my @workers = qw(openqaworker1 openqaworker4 openqaworker7 openqaworker19);
+    my $device = 0;
+    my $this_worker = qx(hostname -i);
+    chomp $this_worker;
+    for my $worker (@workers) {
+        my $ip = qx"dig +short $worker";
+        next if $ip eq $this_worker; # Don't put the machine itself here
+        $device++;
+        $gre_config .= "
+            # $worker
+            ovs-vsctl --may-exist add-port $bridge gre$device -- set interface gre$device type=gre options:remote_ip=$ip";
+    }
+
+    path($gre)->spurt($gre_config);
+    system("chmod +x $gre");
+}
+
+my ($etc, $bridge) = @ARGV;
+$etc //= '/etc';
+$bridge //= 1;
+
+configure_firewall("$etc/firewalld/zones/trusted.xml", $bridge);
+# Manage services only if writing to system-wide files
+provision_services if $etc =~ /^\/etc/;
+generate_bridge_configs($etc, $bridge);
+generate_preup("$etc/wicked/scripts/gre_tunnel_preup.sh", $bridge);
