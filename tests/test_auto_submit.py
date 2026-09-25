@@ -139,7 +139,8 @@ def test_prepare_local_clone_fetches_before_switch(mocker: MockerFixture) -> Non
     submitter._prepare_local_clone("openQA", "leap-16.0")
     git_calls = [call.args[0] for call in mock_run.call_args_list]
     assert git_calls[0] == ["git", "fetch", "parent"]
-    assert git_calls[1] == ["git", "switch", "-C", "leap-16.0", "parent/leap-16.0"]
+    assert git_calls[1] == ["git", "lfs", "fetch", "--all",  "parent"]
+    assert git_calls[2] == ["git", "switch", "-C", "leap-16.0", "parent/leap-16.0"]
 
 
 def test_prepare_local_clone_dry_run_logs_fetch_first(caplog: pytest.LogCaptureFixture) -> None:
@@ -148,7 +149,8 @@ def test_prepare_local_clone_dry_run_logs_fetch_first(caplog: pytest.LogCaptureF
         submitter._prepare_local_clone("openQA", "leap-16.0")
     messages = [r.getMessage() for r in caplog.records]
     assert messages[0] == "[dry-run] Would execute: git fetch parent"
-    assert messages[1] == "[dry-run] Would execute: git switch -C leap-16.0 parent/leap-16.0"
+    assert messages[1] == "[dry-run] Would execute: git lfs fetch --all parent"
+    assert messages[2] == "[dry-run] Would execute: git switch -C leap-16.0 parent/leap-16.0"
 
 
 def test_make_obs_submit_request_success(mocker: MockerFixture) -> None:
