@@ -344,7 +344,41 @@ def test_update_package_no_changes(
     mocker.patch("auto_submit.AutoSubmitter._cleanup_and_rename_files", return_value="23")
     mocker.patch("auto_submit.AutoSubmitter._find_version", return_value="23")
     mocker.patch("auto_submit.AutoSubmitter._osc_addremove_and_filter_specs", return_value="23")
-    mocker.patch("auto_submit.AutoSubmitter._commit_local_changes", return_value=False)
+    mocker.patch("auto_submit.AutoSubmitter._commit_local_changes", return_value=auto_submit.CommitResult.NO_CHANGES)
+    mocker.patch("auto_submit._run_cmd", return_value=True)
+
+    content = "Line 1\nLine 2"
+    changes_file = "pkg.changes"
+
+    (tmp_path / "dst" / "pkg").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "dst" / "pkg" / changes_file).write_text(content, encoding="utf-8")
+
+    monkeypatch.chdir(tmp_path / "dst" / "pkg")
+    submitter = auto_submit.AutoSubmitter(
+        dst_project="dst",
+        osc_cmd_str="osc",
+        dry_run=False,
+        targets=["openSUSE:Leap:16.0"],
+    )
+    caplog.set_level(logging.INFO)
+    res = submitter.update_package("pkg")
+    assert caplog.records[0].getMessage() == "update_package pkg"
+    assert len(caplog.records) == 1
+    assert res is True
+    assert not (tmp_path / "git-repos" / "pkg" / changes_file).exists()
+
+
+def test_update_package_failure(
+    caplog: pytest.LogCaptureFixture,
+    mocker: MockerFixture,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mocker.patch("auto_submit.AutoSubmitter._disable_service_buildtime", return_value="23")
+    mocker.patch("auto_submit.AutoSubmitter._cleanup_and_rename_files", return_value="23")
+    mocker.patch("auto_submit.AutoSubmitter._find_version", return_value="23")
+    mocker.patch("auto_submit.AutoSubmitter._osc_addremove_and_filter_specs", return_value="23")
+    mocker.patch("auto_submit.AutoSubmitter._commit_local_changes", return_value=auto_submit.CommitResult.FAILURE)
     mocker.patch("auto_submit._run_cmd", return_value=True)
 
     content = "Line 1\nLine 2"
@@ -378,7 +412,7 @@ def test_update_package(
     mocker.patch("auto_submit.AutoSubmitter._cleanup_and_rename_files", return_value="23")
     mocker.patch("auto_submit.AutoSubmitter._find_version", return_value="23")
     mocker.patch("auto_submit.AutoSubmitter._osc_addremove_and_filter_specs", return_value="23")
-    mocker.patch("auto_submit.AutoSubmitter._commit_local_changes", return_value=True)
+    mocker.patch("auto_submit.AutoSubmitter._commit_local_changes", return_value=auto_submit.CommitResult.SUCCESS)
     mocker.patch("auto_submit.AutoSubmitter._commit_and_push", return_value=True)
     mocker.patch("auto_submit.AutoSubmitter._create_pull_request", return_value=True)
     mocker.patch("auto_submit.AutoSubmitter.has_pending_submission", return_value=False)

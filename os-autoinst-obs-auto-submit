@@ -20,11 +20,21 @@ import time
 import urllib.parse
 import xml.etree.ElementTree as ET  # ruff: ignore[suspicious-xml-etree-import]
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Annotated
 
 import httpx
 import tenacity
 import typer
+
+
+class CommitResult(Enum):
+    """Result of committing local changes."""
+
+    SUCCESS = "success"
+    FAILURE = "failure"
+    NO_CHANGES = "no_changes"
+
 
 log = logging.getLogger(__name__)
 
@@ -609,7 +619,7 @@ class AutoSubmitter:
             content = re.sub(r"^  \* $", "  * Update to latest openQA version", content, flags=re.MULTILINE)
             changes_file.write_text(content, encoding="utf-8")
 
-    def _commit_local_changes(self, package: str, version: str) -> bool:
+    def _commit_local_changes(self, package: str, version: str) -> CommitResult:
         """Commit offline changes and wait for package build."""
         res_status = run_osc_cmd([*shlex.split(self.osc_cmd_str), "status"], dry_run=self.dry_run, mutating=False)
         relevant_changes = 0
@@ -622,7 +632,7 @@ class AutoSubmitter:
 
         if relevant_changes < 1:
             log.info("## Not updating package '%s/%s' as only changelogs were modified", self.dst_project, package)
-            return False
+            return CommitResult.NO_CHANGES
 
         ci_args = []
         if package == "os-autoinst-distri-opensuse-deps" or "container" in package:
@@ -632,8 +642,9 @@ class AutoSubmitter:
         run_osc_cmd(ci_cmd, dry_run=self.dry_run, mutating=True)
 
         if self.skip_wait_for_build:
-            return True
-        return self.wait_for_package_build(self.submit_target, package)
+            return CommitResult.SUCCESS
+        build_success = self.wait_for_package_build(self.submit_target, package)
+        return CommitResult.SUCCESS if build_success else CommitResult.FAILURE
 
     @staticmethod
     def _disable_service_buildtime() -> None:
@@ -669,8 +680,11 @@ class AutoSubmitter:
         version = self._find_version()
         self._osc_addremove_and_filter_specs()
 
-        if not self._commit_local_changes(package, version):
+        commit_res = self._commit_local_changes(package, version)
+        if commit_res is False or commit_res == CommitResult.FAILURE:
             return False
+        if commit_res == CommitResult.NO_CHANGES:
+            return True
 
         # Log changes file before submitting
         changes_file = pathlib.Path(f"{package}.changes")
