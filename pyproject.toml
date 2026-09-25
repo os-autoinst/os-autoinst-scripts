@@ -20,6 +20,7 @@ dependencies = [
     "pynetbox",
     "tenacity",
     "typer",
+    "openqa_client",
 ]
 
 [tool.setuptools]
