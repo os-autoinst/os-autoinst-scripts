@@ -149,7 +149,7 @@ def setup_mock_client(mocker: MockerFixture, overrides: dict[str, Any] | None = 
 
 def test_investigate_cmd(mocker: MockerFixture) -> None:
     mock_post = mocker.patch("llm_investigate.post_comment")
-    mock_print = mocker.patch("builtins.print")
+    mock_print = mocker.patch("llm_investigate.typer.echo")
     setup_mock_client(mocker)
     llm_investigate.investigate("123")
     mock_print.assert_called_once_with("https://openqa.opensuse.org/tests/123")
@@ -159,7 +159,7 @@ def test_investigate_cmd(mocker: MockerFixture) -> None:
 
 def test_investigate_cmd_with_token(mocker: MockerFixture) -> None:
     mock_post = mocker.patch("llm_investigate.post_comment")
-    mocker.patch("builtins.print")
+    mocker.patch("llm_investigate.typer.echo")
     mocker.patch.dict("os.environ", {"LLM_API_TOKEN": "my-secret-token"})
     client = setup_mock_client(mocker)
 
@@ -171,7 +171,7 @@ def test_investigate_cmd_with_token(mocker: MockerFixture) -> None:
 
 
 def test_investigate_cmd_passed_job(mocker: MockerFixture) -> None:
-    mock_print = mocker.patch("builtins.print")
+    mock_print = mocker.patch("llm_investigate.typer.echo")
     setup_mock_client(mocker, overrides={"api/v1/jobs": {"job": {"id": 123, "result": "passed"}}})
 
     with pytest.raises(SystemExit) as exc:
@@ -182,7 +182,7 @@ def test_investigate_cmd_passed_job(mocker: MockerFixture) -> None:
 
 
 def test_investigate_cmd_softfailed_job(mocker: MockerFixture) -> None:
-    mock_print = mocker.patch("builtins.print")
+    mock_print = mocker.patch("llm_investigate.typer.echo")
     setup_mock_client(mocker, overrides={"api/v1/jobs": {"job": {"id": 123, "result": "softfailed"}}})
 
     with pytest.raises(SystemExit) as exc:
@@ -206,7 +206,7 @@ def test_investigate_cmd_already_commented(mocker: MockerFixture) -> None:
 
 def test_investigate_cmd_already_commented_with_force(mocker: MockerFixture) -> None:
     mock_post = mocker.patch("llm_investigate.post_comment")
-    mock_print = mocker.patch("builtins.print")
+    mock_print = mocker.patch("llm_investigate.typer.echo")
     setup_mock_client(mocker, overrides={"comments": [{"text": "**LLM Investigation summary:** already done"}]})
 
     llm_investigate.investigate("123", force=True)
@@ -218,7 +218,7 @@ def test_investigate_cmd_already_commented_with_force(mocker: MockerFixture) -> 
 
 def test_investigate_cmd_dry_run(mocker: MockerFixture) -> None:
     mock_post = mocker.patch("llm_investigate.post_comment")
-    mock_print = mocker.patch("builtins.print")
+    mock_print = mocker.patch("llm_investigate.typer.echo")
     client = setup_mock_client(mocker)
     client.post.side_effect = lambda *_, **__: Mock(
         json=Mock(return_value={"choices": [{"message": {"content": "BISECT: NO. Already known."}}]})
@@ -240,8 +240,8 @@ def test_investigate_cmd_connection_error(mocker: MockerFixture) -> None:
         llm_investigate.investigate("123")
 
     assert exc.value.code == 1
-    mock_log.error.assert_called_once()
-    assert "Could not connect to LLM server" in mock_log.error.call_args[0][0]
+    mock_log.exception.assert_called_once()
+    assert "Could not connect to LLM server" in mock_log.exception.call_args[0][0]
 
 
 def test_investigate_cmd_http_status_error(mocker: MockerFixture) -> None:
@@ -256,13 +256,13 @@ def test_investigate_cmd_http_status_error(mocker: MockerFixture) -> None:
         llm_investigate.investigate("123")
 
     assert exc.value.code == 1
-    mock_log.error.assert_called_once()
-    error_msg = mock_log.error.call_args[0][0]
+    mock_log.exception.assert_called_once()
+    error_msg = mock_log.exception.call_args[0][0]
     assert error_msg == "LLM API %s (%s) status %d: %s"
-    assert mock_log.error.call_args[0][1] == "http://localhost:8080/v1/chat/completions"
-    assert mock_log.error.call_args[0][2] == "gemma-4-26B-A4B-it"
-    assert mock_log.error.call_args[0][3] == 500
-    assert mock_log.error.call_args[0][4] == "Internal Server Error"
+    assert mock_log.exception.call_args[0][1] == "http://localhost:8080/v1/chat/completions"
+    assert mock_log.exception.call_args[0][2] == "gemma-4-26B-A4B-it"
+    assert mock_log.exception.call_args[0][3] == 500
+    assert mock_log.exception.call_args[0][4] == "Internal Server Error"
 
 
 def test_investigate_logging_levels(mocker: MockerFixture) -> None:
