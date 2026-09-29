@@ -14,7 +14,7 @@ import time
 from typing import Annotated, Any
 from urllib.parse import urlparse
 
-import httpx
+import httpx2
 import typer
 
 HTTP_NOT_FOUND = 404
@@ -101,7 +101,7 @@ class OpenQAClient:
 
         for attempt in range(self.retries + 1):
             try:
-                with httpx.Client(headers=headers, follow_redirects=True, timeout=req_timeout) as client:
+                with httpx2.Client(headers=headers, follow_redirects=True, timeout=req_timeout) as client:
                     response = client.get(url)
                     response.raise_for_status()
                     res_json = response.json()
@@ -175,7 +175,7 @@ class OpenQAClient:
     def get_dependencies_ajax(self, job_id: int) -> dict[str, Any]:
         try:
             return self._get_http(f"tests/{job_id}/dependencies_ajax")
-        except httpx.HTTPError:
+        except httpx2.HTTPError:
             log.debug("HTTP GET failed, falling back to openqa-cli for dependencies_ajax")
             res = self._run_openqa_cli(["-X", "GET", f"tests/{job_id}/dependencies_ajax"])
             if isinstance(res, dict):

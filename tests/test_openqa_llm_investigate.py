@@ -12,7 +12,7 @@ import sys
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, Mock
 
-import httpx
+import httpx2
 import pytest
 
 if TYPE_CHECKING:
@@ -29,7 +29,7 @@ loader.exec_module(llm_investigate)
 
 
 def test_fetch_json_success() -> None:
-    mock_client = MagicMock(spec=httpx.Client)
+    mock_client = MagicMock(spec=httpx2.Client)
     mock_response = Mock()
     mock_response.json.return_value = {"foo": "bar"}
     mock_client.get.return_value = mock_response
@@ -47,9 +47,9 @@ def test_fetch_json_success() -> None:
 
 
 def test_fetch_json_failure() -> None:
-    mock_client = MagicMock(spec=httpx.Client)
+    mock_client = MagicMock(spec=httpx2.Client)
     mock_response = Mock()
-    mock_response.raise_for_status.side_effect = httpx.HTTPStatusError("error", request=Mock(), response=Mock())
+    mock_response.raise_for_status.side_effect = httpx2.HTTPStatusError("error", request=Mock(), response=Mock())
     mock_client.get.return_value = mock_response
 
     # Default failure returns {}
@@ -62,7 +62,7 @@ def test_fetch_json_failure() -> None:
 
 
 def test_fetch_text_success() -> None:
-    mock_client = MagicMock(spec=httpx.Client)
+    mock_client = MagicMock(spec=httpx2.Client)
     mock_response = MagicMock()
     mock_response.iter_lines.return_value = [f"line {i}" for i in range(300)]
     mock_client.stream.return_value.__enter__.return_value = mock_response
@@ -81,8 +81,8 @@ def test_fetch_text_success() -> None:
 
 
 def test_fetch_text_failure() -> None:
-    mock_client = MagicMock(spec=httpx.Client)
-    mock_client.stream.side_effect = httpx.RequestError("error")
+    mock_client = MagicMock(spec=httpx2.Client)
+    mock_client.stream.side_effect = httpx2.RequestError("error")
 
     res = llm_investigate.fetch_text(mock_client, "http://example.com")
     assert not res
@@ -99,7 +99,7 @@ def test_post_comment(mocker: MockerFixture) -> None:
 
 
 def setup_mock_client(mocker: MockerFixture, overrides: dict[str, Any] | None = None) -> MagicMock:
-    mock_client_class = mocker.patch("llm_investigate.httpx.Client")
+    mock_client_class = mocker.patch("llm_investigate.httpx2.Client")
     mock_client = MagicMock()
     mock_client_class.return_value.__enter__.return_value = mock_client
 
@@ -249,7 +249,7 @@ def test_investigate_cmd_dry_run(mocker: MockerFixture) -> None:
 def test_investigate_cmd_connection_error(mocker: MockerFixture) -> None:
     mock_log = mocker.patch("llm_investigate.log")
     client = setup_mock_client(mocker)
-    client.post.side_effect = httpx.ConnectError("Connection refused")
+    client.post.side_effect = httpx2.ConnectError("Connection refused")
 
     with pytest.raises(SystemExit) as exc:
         llm_investigate.investigate("123")
@@ -265,7 +265,7 @@ def test_investigate_cmd_http_status_error(mocker: MockerFixture) -> None:
     mock_resp = Mock()
     mock_resp.status_code = 500
     mock_resp.text = "Internal Server Error"
-    client.post.side_effect = httpx.HTTPStatusError("error", request=Mock(), response=mock_resp)
+    client.post.side_effect = httpx2.HTTPStatusError("error", request=Mock(), response=mock_resp)
 
     with pytest.raises(SystemExit) as exc:
         llm_investigate.investigate("123")
@@ -282,7 +282,7 @@ def test_investigate_cmd_http_status_error(mocker: MockerFixture) -> None:
 
 def test_investigate_logging_levels(mocker: MockerFixture) -> None:
     mock_basic_config = mocker.patch("llm_investigate.logging.basicConfig")
-    mocker.patch("llm_investigate.httpx.Client")
+    mocker.patch("llm_investigate.httpx2.Client")
     mock_fetch = mocker.patch("llm_investigate.fetch_json")
 
     def mock_fetch_side_effect(_client: Any, url: str, params: Any = None, **_kwargs: Any) -> Any:
@@ -325,14 +325,14 @@ def test_investigate_logging_levels(mocker: MockerFixture) -> None:
 def test_retry_transport_no_retry_on_200(mocker: MockerFixture) -> None:
     # If the response is 200, we should not retry and sleep should not be called.
     mock_sleep = mocker.patch("time.sleep")
-    mock_super_handle = mocker.patch("llm_investigate.httpx.HTTPTransport.handle_request")
+    mock_super_handle = mocker.patch("llm_investigate.httpx2.HTTPTransport.handle_request")
 
-    mock_response = MagicMock(spec=httpx.Response)
+    mock_response = MagicMock(spec=httpx2.Response)
     mock_response.status_code = 200
     mock_super_handle.return_value = mock_response
 
     transport = llm_investigate.RetryTransport(retries=3)
-    req = httpx.Request("GET", "http://example.com")
+    req = httpx2.Request("GET", "http://example.com")
     res = transport.handle_request(req)
 
     assert res == mock_response
@@ -342,19 +342,19 @@ def test_retry_transport_no_retry_on_200(mocker: MockerFixture) -> None:
 
 def test_retry_transport_retry_after_seconds(mocker: MockerFixture) -> None:
     mock_sleep = mocker.patch("time.sleep")
-    mock_super_handle = mocker.patch("llm_investigate.httpx.HTTPTransport.handle_request")
+    mock_super_handle = mocker.patch("llm_investigate.httpx2.HTTPTransport.handle_request")
 
-    resp429 = MagicMock(spec=httpx.Response)
+    resp429 = MagicMock(spec=httpx2.Response)
     resp429.status_code = 429
-    resp429.headers = httpx.Headers({"Retry-After": "5"})
+    resp429.headers = httpx2.Headers({"Retry-After": "5"})
 
-    resp200 = MagicMock(spec=httpx.Response)
+    resp200 = MagicMock(spec=httpx2.Response)
     resp200.status_code = 200
 
     mock_super_handle.side_effect = [resp429, resp200]
 
     transport = llm_investigate.RetryTransport(retries=2)
-    req = httpx.Request("GET", "http://example.com")
+    req = httpx2.Request("GET", "http://example.com")
     res = transport.handle_request(req)
 
     assert res == resp200
@@ -365,19 +365,19 @@ def test_retry_transport_retry_after_seconds(mocker: MockerFixture) -> None:
 
 def test_retry_transport_retry_on_503(mocker: MockerFixture) -> None:
     mock_sleep = mocker.patch("time.sleep")
-    mock_super_handle = mocker.patch("llm_investigate.httpx.HTTPTransport.handle_request")
+    mock_super_handle = mocker.patch("llm_investigate.httpx2.HTTPTransport.handle_request")
 
-    resp503 = MagicMock(spec=httpx.Response)
+    resp503 = MagicMock(spec=httpx2.Response)
     resp503.status_code = 503
-    resp503.headers = httpx.Headers({})  # No Retry-After header
+    resp503.headers = httpx2.Headers({})  # No Retry-After header
 
-    resp200 = MagicMock(spec=httpx.Response)
+    resp200 = MagicMock(spec=httpx2.Response)
     resp200.status_code = 200
 
     mock_super_handle.side_effect = [resp503, resp200]
 
     transport = llm_investigate.RetryTransport(retries=2)
-    req = httpx.Request("GET", "http://example.com")
+    req = httpx2.Request("GET", "http://example.com")
     res = transport.handle_request(req)
 
     assert res == resp200
@@ -388,14 +388,14 @@ def test_retry_transport_retry_on_503(mocker: MockerFixture) -> None:
 
 def test_retry_transport_retry_after_http_date(mocker: MockerFixture) -> None:
     mock_sleep = mocker.patch("time.sleep")
-    mock_super_handle = mocker.patch("llm_investigate.httpx.HTTPTransport.handle_request")
+    mock_super_handle = mocker.patch("llm_investigate.httpx2.HTTPTransport.handle_request")
 
-    resp429 = MagicMock(spec=httpx.Response)
+    resp429 = MagicMock(spec=httpx2.Response)
     resp429.status_code = 429
     # Date is Oct 21 2015 07:28:00 UTC (10 seconds later than now)
-    resp429.headers = httpx.Headers({"Retry-After": "Wed, 21 Oct 2015 07:28:00 GMT"})
+    resp429.headers = httpx2.Headers({"Retry-After": "Wed, 21 Oct 2015 07:28:00 GMT"})
 
-    resp200 = MagicMock(spec=httpx.Response)
+    resp200 = MagicMock(spec=httpx2.Response)
     resp200.status_code = 200
 
     mock_super_handle.side_effect = [resp429, resp200]
@@ -406,7 +406,7 @@ def test_retry_transport_retry_after_http_date(mocker: MockerFixture) -> None:
     static_now = datetime.datetime(2015, 10, 21, 7, 27, 50, tzinfo=datetime.UTC)
     mocker.patch.object(transport, "_now", return_value=static_now)
 
-    req = httpx.Request("GET", "http://example.com")
+    req = httpx2.Request("GET", "http://example.com")
     res = transport.handle_request(req)
 
     assert res == resp200
@@ -417,23 +417,23 @@ def test_retry_transport_retry_after_http_date(mocker: MockerFixture) -> None:
 
 def test_retry_transport_exponential_backoff(mocker: MockerFixture) -> None:
     mock_sleep = mocker.patch("time.sleep")
-    mock_super_handle = mocker.patch("llm_investigate.httpx.HTTPTransport.handle_request")
+    mock_super_handle = mocker.patch("llm_investigate.httpx2.HTTPTransport.handle_request")
 
-    resp429_1 = MagicMock(spec=httpx.Response)
+    resp429_1 = MagicMock(spec=httpx2.Response)
     resp429_1.status_code = 429
-    resp429_1.headers = httpx.Headers({})  # No Retry-After header
+    resp429_1.headers = httpx2.Headers({})  # No Retry-After header
 
-    resp429_2 = MagicMock(spec=httpx.Response)
+    resp429_2 = MagicMock(spec=httpx2.Response)
     resp429_2.status_code = 429
-    resp429_2.headers = httpx.Headers({})  # No Retry-After header
+    resp429_2.headers = httpx2.Headers({})  # No Retry-After header
 
-    resp200 = MagicMock(spec=httpx.Response)
+    resp200 = MagicMock(spec=httpx2.Response)
     resp200.status_code = 200
 
     mock_super_handle.side_effect = [resp429_1, resp429_2, resp200]
 
     transport = llm_investigate.RetryTransport(retries=3)
-    req = httpx.Request("GET", "http://example.com")
+    req = httpx2.Request("GET", "http://example.com")
     res = transport.handle_request(req)
 
     assert res == resp200
@@ -448,7 +448,7 @@ def test_retry_transport_exponential_backoff(mocker: MockerFixture) -> None:
 
 def test_investigate_configures_retry_transport(mocker: MockerFixture) -> None:
     # Verify that calling investigate with a specific retries value configures RetryTransport
-    mock_client_class = mocker.patch("llm_investigate.httpx.Client")
+    mock_client_class = mocker.patch("llm_investigate.httpx2.Client")
     mock_retry_transport_class = mocker.patch("llm_investigate.RetryTransport")
     mocker.patch("llm_investigate._perform_investigation")
 
@@ -461,7 +461,7 @@ def test_investigate_configures_retry_transport(mocker: MockerFixture) -> None:
 
 
 def test_investigate_configures_timeouts(mocker: MockerFixture) -> None:
-    mock_client_class = mocker.patch("llm_investigate.httpx.Client")
+    mock_client_class = mocker.patch("llm_investigate.httpx2.Client")
     mock_perform = mocker.patch("llm_investigate._perform_investigation")
 
     llm_investigate.investigate("123", openqa_timeout=45.0, investigation_timeout=60.0)

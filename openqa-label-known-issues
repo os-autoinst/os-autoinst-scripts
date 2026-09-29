@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 from typing import Annotated, Any
 
-import httpx
+import httpx2
 import typer
 
 
@@ -341,7 +341,7 @@ def label_on_issues_without_tickets(
 def handle_unreachable(
     testurl: str,
     job_id: str,
-    client: httpx.Client,
+    client: httpx2.Client,
     host_url: str,
     openqa_client: OpenQAClient,
 ) -> int:
@@ -485,7 +485,7 @@ def handle_unreviewed(
             send_email(group_mailto, email_full, openqa_client.dry_run)
 
 
-def fetch_issues(client: httpx.Client, issue_query: str) -> list[dict[str, str]]:
+def fetch_issues(client: httpx2.Client, issue_query: str) -> list[dict[str, str]]:
     if "issues" in os.environ:
         lines = [line.strip() for line in os.environ["issues"].split("\n") if line.strip()]
         issues_list = []
@@ -512,7 +512,7 @@ def fetch_issues(client: httpx.Client, issue_query: str) -> list[dict[str, str]]
 
 def investigate_issue(
     testurl: str,
-    client: httpx.Client,
+    client: httpx2.Client,
     openqa_client: OpenQAClient,
     issues_list: list[dict[str, str]],
     host_url: str,
@@ -645,7 +645,7 @@ def main(
         f"https://progress.opensuse.org/projects/openqav3/issues.json?limit=200&subproject_id=*&subject=~{issue_marker}",
     )
 
-    with httpx.Client(headers={"User-Agent": "openqa-label-known-issues"}) as client:
+    with httpx2.Client(headers={"User-Agent": "openqa-label-known-issues"}) as client:
         issues_list = fetch_issues(client, issue_query)
         investigate_issue(
             testurl=job_url,

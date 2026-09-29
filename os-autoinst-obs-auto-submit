@@ -22,7 +22,7 @@ import xml.etree.ElementTree as ET  # ruff: ignore[suspicious-xml-etree-import]
 from dataclasses import dataclass, field
 from typing import Annotated
 
-import httpx
+import httpx2
 import tenacity
 import typer
 
@@ -269,7 +269,7 @@ class AutoSubmitter:
         bad_states = {"failed", "unresolvable", "broken"}
 
         attempts = self.osc_build_start_poll_tries
-        with httpx.Client() as client:
+        with httpx2.Client() as client:
             while True:
                 try:
                     response = client.get(url, timeout=30.0)

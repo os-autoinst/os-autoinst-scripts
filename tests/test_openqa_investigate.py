@@ -12,7 +12,7 @@ import sys
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, Mock
 
-import httpx
+import httpx2
 import pytest
 import typer
 
@@ -208,14 +208,14 @@ def test_client_get_job_comments_variations(mocker: MockerFixture) -> None:
 
 def test_client_get_http(mocker: MockerFixture, caplog: pytest.LogCaptureFixture) -> None:
     client = openqa_investigate.OpenQAClient("https://openqa.opensuse.org")
-    mock_response = MagicMock(spec=httpx.Response)
+    mock_response = MagicMock(spec=httpx2.Response)
     mock_response.json.return_value = {"status": "ok"}
 
-    mock_client_inst = MagicMock(spec=httpx.Client)
+    mock_client_inst = MagicMock(spec=httpx2.Client)
     mock_client_inst.__enter__.return_value = mock_client_inst
     mock_client_inst.get.return_value = mock_response
 
-    mocker.patch("openqa_investigate.httpx.Client", return_value=mock_client_inst)
+    mocker.patch("openqa_investigate.httpx2.Client", return_value=mock_client_inst)
 
     with caplog.at_level(logging.DEBUG):
         res = client._get_http("tests/123/dependencies_ajax")
@@ -231,18 +231,18 @@ def test_client_get_http(mocker: MockerFixture, caplog: pytest.LogCaptureFixture
 def test_client_get_http_variants(mocker: MockerFixture, caplog: pytest.LogCaptureFixture) -> None:
     # Non-dict JSON response returns {"data": res_json}
     client = openqa_investigate.OpenQAClient("https://openqa.opensuse.org")
-    mock_resp_list = MagicMock(spec=httpx.Response)
+    mock_resp_list = MagicMock(spec=httpx2.Response)
     mock_resp_list.json.return_value = [1, 2, 3]
-    mock_client_inst = MagicMock(spec=httpx.Client)
+    mock_client_inst = MagicMock(spec=httpx2.Client)
     mock_client_inst.__enter__.return_value = mock_client_inst
     mock_client_inst.get.return_value = mock_resp_list
-    mocker.patch("openqa_investigate.httpx.Client", return_value=mock_client_inst)
+    mocker.patch("openqa_investigate.httpx2.Client", return_value=mock_client_inst)
     assert client._get_http("test/path") == {"data": [1, 2, 3]}
 
     # Retry then succeed
     mocker.patch("time.sleep")
     client_retry = openqa_investigate.OpenQAClient("https://openqa.opensuse.org", retries=2)
-    resp_ok = MagicMock(spec=httpx.Response)
+    resp_ok = MagicMock(spec=httpx2.Response)
     resp_ok.json.return_value = {"ok": True}
     mock_client_inst.get.side_effect = [Exception("Temporary error"), resp_ok]
     with caplog.at_level(logging.WARNING):
@@ -263,7 +263,7 @@ def test_client_get_http_variants(mocker: MockerFixture, caplog: pytest.LogCaptu
 
 def test_client_get_dependencies_ajax_fallback(mocker: MockerFixture, caplog: pytest.LogCaptureFixture) -> None:
     client = openqa_investigate.OpenQAClient("https://openqa.opensuse.org")
-    mocker.patch.object(client, "_get_http", side_effect=httpx.HTTPError("HTTP error"))
+    mocker.patch.object(client, "_get_http", side_effect=httpx2.HTTPError("HTTP error"))
     mock_cli = mocker.patch.object(client, "_run_openqa_cli", return_value={"fallback": "ok"})
 
     with caplog.at_level(logging.DEBUG):

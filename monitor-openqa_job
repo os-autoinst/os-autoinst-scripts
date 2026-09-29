@@ -16,7 +16,7 @@ import sys
 import time
 from typing import Annotated, Any
 
-import httpx
+import httpx2
 import tenacity
 import typer
 
@@ -89,7 +89,7 @@ def load_job_ids(path: str = "job_post_response", host: str | None = None) -> li
     return [int(jid) for jid in ids]
 
 
-def fetch_job_api(client: httpx.Client, url: str, params: dict[str, Any], retries: int) -> dict[str, Any]:
+def fetch_job_api(client: httpx2.Client, url: str, params: dict[str, Any], retries: int) -> dict[str, Any]:
     for attempt in tenacity.Retrying(
         stop=tenacity.stop_after_attempt(retries),
         wait=tenacity.wait_exponential(multiplier=1, min=1, max=10),
@@ -232,7 +232,7 @@ def comment_on_failed_jobs(
 
 
 def monitor_single_job(
-    client: httpx.Client,
+    client: httpx2.Client,
     job_id: int,
     host_val: str,
     retries: int,
@@ -321,7 +321,7 @@ def main(
     failed_jobs: list[int] = []
     failed_versions: dict[str, int] = {}
 
-    with httpx.Client() as client:
+    with httpx2.Client() as client:
         for job_id in job_ids:
             final_id, result, version = monitor_single_job(client, job_id, host_val, retries, sleep_time_val)
             log.info("Result of job %d: %s", final_id, result)

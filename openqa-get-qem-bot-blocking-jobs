@@ -16,7 +16,7 @@ import sys
 from pathlib import Path
 from typing import Annotated, Any
 
-import httpx
+import httpx2
 import typer
 
 app = typer.Typer(add_completion=False)
@@ -42,7 +42,7 @@ def get_gitlab_access_token(filename: str) -> str:
 
 
 def get_gitlab_jobs(
-    client: httpx.Client, gitlab_url: str, project_id: int, headers: dict[str, str]
+    client: httpx2.Client, gitlab_url: str, project_id: int, headers: dict[str, str]
 ) -> list[dict[str, Any]]:
     """Fetch GitLab jobs for the project."""
     jobs_url = f"{gitlab_url}/api/v4/projects/{project_id}/jobs"
@@ -54,7 +54,7 @@ def get_gitlab_jobs(
 
 
 def get_gitlab_job_raw(
-    client: httpx.Client, gitlab_url: str, project_id: int, job_id: int, headers: dict[str, str]
+    client: httpx2.Client, gitlab_url: str, project_id: int, job_id: int, headers: dict[str, str]
 ) -> str:
     """Fetch the raw trace log of a GitLab job via the API."""
     job_raw_url = f"{gitlab_url}/api/v4/projects/{project_id}/jobs/{job_id}/trace"
@@ -86,7 +86,7 @@ def extract_openqa_job_ids(raw_content: str, submission_regex: re.Pattern[str] |
     return openqa_job_ids
 
 
-def get_openqa_job_info(client: httpx.Client, openqa_url: str, job_id: str) -> dict[str, Any]:
+def get_openqa_job_info(client: httpx2.Client, openqa_url: str, job_id: str) -> dict[str, Any]:
     """Fetch details of an openQA job."""
     openqa_job_url = f"{openqa_url}/api/v1/jobs/{job_id}"
     log.info("Fetching openQA job info for %s", job_id)
@@ -96,7 +96,7 @@ def get_openqa_job_info(client: httpx.Client, openqa_url: str, job_id: str) -> d
     return response.json()
 
 
-def process_openqa_job(client: httpx.Client, openqa_url: str, job_id: str, compiled_regex: re.Pattern[str]) -> None:
+def process_openqa_job(client: httpx2.Client, openqa_url: str, job_id: str, compiled_regex: re.Pattern[str]) -> None:
     """Fetch openQA job, format output, and print if matched by regex."""
     log.debug("Processing openQA job %s", job_id)
     job_info = get_openqa_job_info(client, openqa_url, job_id).get("job", {})
@@ -109,7 +109,7 @@ def process_openqa_job(client: httpx.Client, openqa_url: str, job_id: str, compi
 
 
 def find_blocking_jobs(
-    client: httpx.Client,
+    client: httpx2.Client,
     project_id: int,
     job_name: str,
     gitlab_url: str,
@@ -161,7 +161,7 @@ def main(
     private_token = get_gitlab_access_token(gitlab_access_token_file)
     headers = {"PRIVATE-TOKEN": private_token}
 
-    with httpx.Client() as client:
+    with httpx2.Client() as client:
         find_blocking_jobs(
             client=client,
             project_id=project_id,

@@ -12,7 +12,7 @@ import sys
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, Mock, patch
 
-import httpx
+import httpx2
 import pytest
 import typer
 
@@ -476,7 +476,7 @@ def test_label_on_issues_without_tickets(mocker: MockerFixture) -> None:
 
 
 def test_handle_unreachable(mocker: MockerFixture, tmp_path: pathlib.Path) -> None:
-    mock_client = MagicMock(spec=httpx.Client)
+    mock_client = MagicMock(spec=httpx2.Client)
 
     # 1. testurl head failure, host_url not in testurl
     mock_client.head.side_effect = Exception("conn err")
@@ -646,7 +646,7 @@ def test_handle_unreviewed(mocker: MockerFixture, tmp_path: pathlib.Path) -> Non
 
 
 def test_fetch_issues(mocker: MockerFixture) -> None:
-    mock_client = MagicMock(spec=httpx.Client)
+    mock_client = MagicMock(spec=httpx2.Client)
 
     # 1. From environment variable 'issues'
     mocker.patch.dict("os.environ", {"issues": "123\nsubject1\ntracker1\n456\nsubject2\ntracker2"})
@@ -673,7 +673,7 @@ def test_fetch_issues(mocker: MockerFixture) -> None:
 
 
 def test_investigate_issue(mocker: MockerFixture, tmp_path: pathlib.Path) -> None:
-    mock_client = MagicMock(spec=httpx.Client)
+    mock_client = MagicMock(spec=httpx2.Client)
 
     # 1. Invalid job ID
     with patch("builtins.print") as mock_print:

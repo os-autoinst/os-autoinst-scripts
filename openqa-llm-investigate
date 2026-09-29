@@ -15,7 +15,7 @@ from email.utils import parsedate_to_datetime
 from typing import Annotated, Any
 from urllib.parse import urlparse, urlunparse
 
-import httpx
+import httpx2
 import tenacity
 import typer
 
@@ -29,13 +29,13 @@ log = logging.getLogger(__name__)
 class TransientHTTPError(Exception):
     """Exception raised for HTTP responses with transient status codes."""
 
-    def __init__(self, response: httpx.Response) -> None:
+    def __init__(self, response: httpx2.Response) -> None:
         """Initialize the exception with the HTTP response."""
         super().__init__(f"HTTP {response.status_code}")
         self.response = response
 
 
-class RetryTransport(httpx.HTTPTransport):
+class RetryTransport(httpx2.HTTPTransport):
     """Custom HTTP transport that retries on transient errors (e.g. 429, 5xx)."""
 
     RETRY_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
@@ -49,7 +49,7 @@ class RetryTransport(httpx.HTTPTransport):
     def _now() -> datetime.datetime:
         return datetime.datetime.now(datetime.UTC)
 
-    def _check_and_raise(self, response: httpx.Response) -> None:
+    def _check_and_raise(self, response: httpx2.Response) -> None:
         if response.status_code in self.RETRY_STATUS_CODES:
             raise TransientHTTPError(response)
 
@@ -91,7 +91,7 @@ class RetryTransport(httpx.HTTPTransport):
                 retries_left,
             )
 
-    def handle_request(self, request: httpx.Request) -> httpx.Response:
+    def handle_request(self, request: httpx2.Request) -> httpx2.Response:
         """Handle the HTTP request, retrying on transient status codes if retries are available."""
         try:
             for attempt in tenacity.Retrying(
@@ -114,7 +114,7 @@ app = typer.Typer(add_completion=False)
 
 
 def fetch_json(
-    client: httpx.Client,
+    client: httpx2.Client,
     url: str,
     params: dict[str, Any] | None = None,
     default: Any = None,
@@ -132,7 +132,7 @@ def fetch_json(
         return default if default is not None else {}
 
 
-def fetch_text(client: httpx.Client, url: str, max_lines: int = 200, timeout: float | None = None) -> str:
+def fetch_text(client: httpx2.Client, url: str, max_lines: int = 200, timeout: float | None = None) -> str:
     lines: deque[str] = deque(maxlen=max_lines)
     kwargs: dict[str, Any] = {}
     if timeout is not None:
@@ -198,7 +198,7 @@ def _shares_failed_modules(other_job: dict[str, Any], target_modules: set[str]) 
 
 
 def _call_llm_api(
-    client: httpx.Client,
+    client: httpx2.Client,
     llm_url: str,
     llm_model: str,
     llm_token: str | None,
@@ -216,13 +216,13 @@ def _call_llm_api(
         res.raise_for_status()
         res_json = res.json()
         return res_json["choices"][0]["message"]["content"]
-    except httpx.ConnectError:
+    except httpx2.ConnectError:
         log.error(
             "Could not connect to LLM server at %s. Please check if the server is running or the LLM_API_URL environment variable is correct.",
             llm_url,
         )
         sys.exit(1)
-    except httpx.HTTPStatusError as e:
+    except httpx2.HTTPStatusError as e:
         log.error("LLM API %s (%s) status %d: %s", llm_url, llm_model, e.response.status_code, e.response.text)
         sys.exit(1)
     except Exception as e:
@@ -231,7 +231,7 @@ def _call_llm_api(
 
 
 def _perform_investigation(
-    client: httpx.Client,
+    client: httpx2.Client,
     base_url: str,
     job_id: str,
     force: bool,
@@ -479,7 +479,7 @@ def investigate(
         sys.exit(1)
 
     transport = RetryTransport(retries=retries)
-    with httpx.Client(transport=transport, headers={"User-Agent": USER_AGENT}, timeout=openqa_timeout) as client:
+    with httpx2.Client(transport=transport, headers={"User-Agent": USER_AGENT}, timeout=openqa_timeout) as client:
         _perform_investigation(
             client,
             base_url,

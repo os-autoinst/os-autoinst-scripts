@@ -13,7 +13,7 @@ import sys
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, Mock
 
-import httpx
+import httpx2
 import pytest
 import typer
 
@@ -66,7 +66,7 @@ def test_load_job_ids(tmp_path: pathlib.Path, content: str | None, exists: bool,
 
 
 def test_fetch_job_api() -> None:
-    client, resp = MagicMock(spec=httpx.Client), Mock()
+    client, resp = MagicMock(spec=httpx2.Client), Mock()
     resp.json.return_value = {"key": "val"}
     client.get.return_value = resp
     assert monitor_job.fetch_job_api(client, "http://host", {}, 2) == {"key": "val"}
@@ -180,7 +180,7 @@ def test_main_flow(
     mocker.patch("monitor_job.delete_packages_from_obs_project")
     mocker.patch("monitor_job.delete_old_comments")
     mocker.patch("monitor_job.post_comment")
-    mocker.patch("monitor_job.httpx.Client")
+    mocker.patch("monitor_job.httpx2.Client")
     if env_patch:
         mocker.patch.dict("os.environ", env_patch)
 

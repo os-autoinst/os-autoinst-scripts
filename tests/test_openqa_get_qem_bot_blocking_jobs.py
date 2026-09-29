@@ -12,7 +12,7 @@ import sys
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, Mock
 
-import httpx
+import httpx2
 import pytest
 import typer
 
@@ -36,8 +36,8 @@ spec.loader.exec_module(blocking_jobs)
 
 @pytest.fixture
 def mock_client() -> MagicMock:
-    client = MagicMock(spec=httpx.Client)
-    client.get.return_value = Mock(spec=httpx.Response)
+    client = MagicMock(spec=httpx2.Client)
+    client.get.return_value = Mock(spec=httpx2.Response)
     return client
 
 
@@ -213,7 +213,7 @@ def test_find_blocking_jobs_not_found(mocker: MockerFixture, mock_client: MagicM
     ("side_effect", "expected_exception"),
     [
         (None, None),
-        (httpx.HTTPStatusError("error", request=Mock(), response=Mock()), httpx.HTTPStatusError),
+        (httpx2.HTTPStatusError("error", request=Mock(), response=Mock()), httpx2.HTTPStatusError),
         (ValueError("error"), ValueError),
     ],
 )
