@@ -10,6 +10,7 @@ import importlib.util
 import logging
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 from typing import TYPE_CHECKING, Any
@@ -149,6 +150,175 @@ def test_prepare_local_clone_dry_run_logs_fetch_first(caplog: pytest.LogCaptureF
     messages = [r.getMessage() for r in caplog.records]
     assert messages[0] == "[dry-run] Would execute: git fetch parent"
     assert messages[1] == "[dry-run] Would execute: git switch -C leap-16.0 parent/leap-16.0"
+    assert messages[2] == "[dry-run] Would execute: git merge-base origin/leap-16.0 leap-16.0"
+    assert messages[3] == "[dry-run] Would execute: git rev-list <merge-base>..HEAD"
+    assert messages[4] == "[dry-run] Would execute: git lfs fetch parent <commits>"
+    assert messages[5] == "[dry-run] Would replace files in clone with files from ../../openQA/*"
+
+
+def test_prepare_local_clone_calls_fetch_lfs(mocker: MockerFixture) -> None:
+    mock_run = mocker.patch("auto_submit.subprocess.run")
+    mock_fetch_lfs = mocker.patch("auto_submit.AutoSubmitter._fetch_lfs_objects")
+    mock_copy = mocker.patch("auto_submit.AutoSubmitter._copy_files_to_clone")
+    submitter = auto_submit.AutoSubmitter(dst_project="dst", git_cmd_str="git", dir=pathlib.Path(), dry_run=False)
+    submitter._prepare_local_clone("openQA", "leap-16.0")
+
+    git_calls = [call.args[0] for call in mock_run.call_args_list]
+    assert git_calls[0] == ["git", "fetch", "parent"]
+    assert git_calls[1] == ["git", "switch", "-C", "leap-16.0", "parent/leap-16.0"]
+    mock_fetch_lfs.assert_called_once_with("leap-16.0")
+    mock_copy.assert_called_once_with("openQA")
+
+
+def test_fetch_lfs_objects_with_merge_base(mocker: MockerFixture) -> None:
+    calls = []
+
+    def mocked_run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        if cmd[1] == "merge-base":
+            return subprocess.CompletedProcess(cmd, 0, stdout="0c9eddb\n", stderr="")
+        if cmd[1] == "rev-list":
+            return subprocess.CompletedProcess(cmd, 0, stdout="554e99\n9d1bd5\n", stderr="")
+        if cmd[1:3] == ["lfs", "fetch"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    mocker.patch("auto_submit.subprocess.run", side_effect=mocked_run)
+    submitter = auto_submit.AutoSubmitter(git_cmd_str="git", dry_run=False)
+    submitter._fetch_lfs_objects("leap-16.0")
+
+    assert calls[0] == ["git", "merge-base", "origin/leap-16.0", "leap-16.0"]
+    assert calls[1] == ["git", "rev-list", "0c9eddb..HEAD"]
+    assert calls[2] == ["git", "lfs", "fetch", "parent", "554e99", "9d1bd5"]
+
+
+def test_fetch_lfs_objects_no_new_commits(mocker: MockerFixture) -> None:
+    calls = []
+
+    def mocked_run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        if cmd[1] == "merge-base":
+            return subprocess.CompletedProcess(cmd, 0, stdout="0c9eddb\n", stderr="")
+        if cmd[1] == "rev-list":
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    mocker.patch("auto_submit.subprocess.run", side_effect=mocked_run)
+    submitter = auto_submit.AutoSubmitter(git_cmd_str="git", dry_run=False)
+    submitter._fetch_lfs_objects("leap-16.0")
+
+    assert calls[0] == ["git", "merge-base", "origin/leap-16.0", "leap-16.0"]
+    assert calls[1] == ["git", "rev-list", "0c9eddb..HEAD"]
+    assert len(calls) == 2
+
+
+def test_fetch_lfs_objects_fallback_no_origin_branch(mocker: MockerFixture) -> None:
+    calls = []
+
+    def mocked_run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        if cmd[1] == "merge-base":
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="fatal: Not a valid object name")
+        if cmd[1] == "rev-list":
+            return subprocess.CompletedProcess(cmd, 0, stdout="c1\nc2\n", stderr="")
+        if cmd[1:3] == ["lfs", "fetch"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    mocker.patch("auto_submit.subprocess.run", side_effect=mocked_run)
+    submitter = auto_submit.AutoSubmitter(git_cmd_str="git", dry_run=False)
+    submitter._fetch_lfs_objects("leap-16.0")
+
+    assert calls[0] == ["git", "merge-base", "origin/leap-16.0", "leap-16.0"]
+    assert calls[1] == ["git", "rev-list", "--not", "--remotes=origin", "HEAD"]
+    assert calls[2] == ["git", "lfs", "fetch", "parent", "c1", "c2"]
+
+
+def test_fetch_lfs_objects_batching(mocker: MockerFixture) -> None:
+    calls = []
+    fake_commits = [f"commit{i:03d}" for i in range(105)]
+
+    def mocked_run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        if cmd[1] == "merge-base":
+            return subprocess.CompletedProcess(cmd, 0, stdout="base_sha\n", stderr="")
+        if cmd[1] == "rev-list":
+            return subprocess.CompletedProcess(cmd, 0, stdout="\n".join(fake_commits) + "\n", stderr="")
+        if cmd[1:3] == ["lfs", "fetch"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    mocker.patch("auto_submit.subprocess.run", side_effect=mocked_run)
+    submitter = auto_submit.AutoSubmitter(git_cmd_str="git", dry_run=False)
+    submitter._fetch_lfs_objects("leap-16.0")
+
+    assert calls[0] == ["git", "merge-base", "origin/leap-16.0", "leap-16.0"]
+    assert calls[1] == ["git", "rev-list", "base_sha..HEAD"]
+    assert calls[2] == ["git", "lfs", "fetch", "parent", *fake_commits[0:50]]
+    assert calls[3] == ["git", "lfs", "fetch", "parent", *fake_commits[50:100]]
+    assert calls[4] == ["git", "lfs", "fetch", "parent", *fake_commits[100:105]]
+    assert len(calls) == 5
+
+
+def test_fetch_lfs_objects_real_git_repo(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify that _fetch_lfs_objects downloads missing LFS objects in a real git repository."""
+    # Setup a "parent" Git repository with LFS and an initial commit
+    git_bin = shutil.which("git") or "/usr/bin/git"
+    parent_dir = tmp_path / "parent"
+    parent_dir.mkdir()
+    subprocess.run([git_bin, "init", "-b", "leap-16.0", str(parent_dir)], check=True)
+    subprocess.run([git_bin, "-C", str(parent_dir), "config", "user.name", "Test User"], check=True)
+    subprocess.run([git_bin, "-C", str(parent_dir), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run([git_bin, "-C", str(parent_dir), "lfs", "install", "--local"], check=True)
+    subprocess.run([git_bin, "-C", str(parent_dir), "lfs", "track", "*.obscpio"], check=True)
+    (parent_dir / "base.txt").write_text("base content\n", encoding="utf-8")
+    subprocess.run([git_bin, "-C", str(parent_dir), "add", ".gitattributes", "base.txt"], check=True)
+    subprocess.run([git_bin, "-C", str(parent_dir), "commit", "-m", "commit 1: initial"], check=True)
+
+    # Clone the "parent" Git repo into an "origin" repo and configure this as "origin" remote in the "parent" repo
+    origin_dir = tmp_path / "origin"
+    subprocess.run([git_bin, "clone", "--bare", str(parent_dir), str(origin_dir)], check=True)
+    subprocess.run([git_bin, "-C", str(parent_dir), "remote", "add", "origin", str(origin_dir)], check=True)
+    subprocess.run([git_bin, "-C", str(parent_dir), "push", "origin", "leap-16.0"], check=True)
+
+    # Commit 2 on parent: add intermediate LFS object
+    (parent_dir / "intermediate.obscpio").write_text("intermediate lfs content\n", encoding="utf-8")
+    subprocess.run([git_bin, "-C", str(parent_dir), "add", "intermediate.obscpio"], check=True)
+    subprocess.run([git_bin, "-C", str(parent_dir), "commit", "-m", "commit 2: add intermediate"], check=True)
+
+    # Commit 3 on parent: remove intermediate LFS object
+    subprocess.run([git_bin, "-C", str(parent_dir), "rm", "intermediate.obscpio"], check=True)
+    subprocess.run([git_bin, "-C", str(parent_dir), "commit", "-m", "commit 3: remove intermediate"], check=True)
+
+    # Clone "origin" repo to another repo "local" and setup LFS as well
+    local_dir = tmp_path / "local"
+    subprocess.run([git_bin, "clone", str(origin_dir), str(local_dir)], check=True)
+    subprocess.run([git_bin, "-C", str(local_dir), "config", "user.name", "Test User"], check=True)
+    subprocess.run([git_bin, "-C", str(local_dir), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run([git_bin, "-C", str(local_dir), "lfs", "install", "--local"], check=True)
+
+    # Fetch "parent" commits into "local" and switch to "parent/leap-16.0"
+    subprocess.run([git_bin, "-C", str(local_dir), "remote", "add", "parent", str(parent_dir)], check=True)
+    subprocess.run([git_bin, "-C", str(local_dir), "fetch", "parent"], check=True)
+    subprocess.run([git_bin, "-C", str(local_dir), "switch", "-C", "leap-16.0", "parent/leap-16.0"], check=True)
+
+    # Verify that pushing now fails because intermediate.obscpio from commit 2 is missing locally
+    push_res = subprocess.run(
+        [git_bin, "-C", str(local_dir), "push", "origin", "leap-16.0"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert push_res.returncode != 0
+    assert "intermediate.obscpio" in push_res.stdout + push_res.stderr
+
+    # Use _fetch_lfs_objects to fetch missing LFS objects from parent
+    monkeypatch.chdir(local_dir)
+    submitter = auto_submit.AutoSubmitter(git_cmd_str=git_bin, dry_run=False)
+    submitter._fetch_lfs_objects("leap-16.0")
+
+    # Verify that pushing succeeds after fetching missing LFS objects via _fetch_lfs_objects
+    subprocess.run([git_bin, "-C", str(local_dir), "push", "origin", "leap-16.0"], check=True)
 
 
 def test_copy_files_to_clone(
