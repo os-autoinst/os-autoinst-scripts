@@ -149,6 +149,114 @@ def test_prepare_local_clone_dry_run_logs_fetch_first(caplog: pytest.LogCaptureF
     messages = [r.getMessage() for r in caplog.records]
     assert messages[0] == "[dry-run] Would execute: git fetch parent"
     assert messages[1] == "[dry-run] Would execute: git switch -C leap-16.0 parent/leap-16.0"
+    assert messages[2] == "[dry-run] Would execute: git merge-base origin/leap-16.0 leap-16.0"
+    assert messages[3] == "[dry-run] Would execute: git rev-list <merge-base>..HEAD"
+    assert messages[4] == "[dry-run] Would execute: git lfs fetch parent <commits>"
+    assert messages[5] == "[dry-run] Would replace files in clone with files from ../../openQA/*"
+
+
+def test_prepare_local_clone_calls_fetch_lfs(mocker: MockerFixture) -> None:
+    mock_run = mocker.patch("auto_submit.subprocess.run")
+    mock_fetch_lfs = mocker.patch("auto_submit.AutoSubmitter._fetch_lfs_objects")
+    mock_copy = mocker.patch("auto_submit.AutoSubmitter._copy_files_to_clone")
+    submitter = auto_submit.AutoSubmitter(dst_project="dst", git_cmd_str="git", dir=pathlib.Path(), dry_run=False)
+    submitter._prepare_local_clone("openQA", "leap-16.0")
+
+    git_calls = [call.args[0] for call in mock_run.call_args_list]
+    assert git_calls[0] == ["git", "fetch", "parent"]
+    assert git_calls[1] == ["git", "switch", "-C", "leap-16.0", "parent/leap-16.0"]
+    mock_fetch_lfs.assert_called_once_with("leap-16.0")
+    mock_copy.assert_called_once_with("openQA")
+
+
+def test_fetch_lfs_objects_with_merge_base(mocker: MockerFixture) -> None:
+    calls = []
+
+    def mocked_run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        if cmd[1] == "merge-base":
+            return subprocess.CompletedProcess(cmd, 0, stdout="0c9eddb\n", stderr="")
+        if cmd[1] == "rev-list":
+            return subprocess.CompletedProcess(cmd, 0, stdout="554e99\n9d1bd5\n", stderr="")
+        if cmd[1:3] == ["lfs", "fetch"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    mocker.patch("auto_submit.subprocess.run", side_effect=mocked_run)
+    submitter = auto_submit.AutoSubmitter(git_cmd_str="git", dry_run=False)
+    submitter._fetch_lfs_objects("leap-16.0")
+
+    assert calls[0] == ["git", "merge-base", "origin/leap-16.0", "leap-16.0"]
+    assert calls[1] == ["git", "rev-list", "0c9eddb..HEAD"]
+    assert calls[2] == ["git", "lfs", "fetch", "parent", "554e99", "9d1bd5"]
+
+
+def test_fetch_lfs_objects_no_new_commits(mocker: MockerFixture) -> None:
+    calls = []
+
+    def mocked_run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        if cmd[1] == "merge-base":
+            return subprocess.CompletedProcess(cmd, 0, stdout="0c9eddb\n", stderr="")
+        if cmd[1] == "rev-list":
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    mocker.patch("auto_submit.subprocess.run", side_effect=mocked_run)
+    submitter = auto_submit.AutoSubmitter(git_cmd_str="git", dry_run=False)
+    submitter._fetch_lfs_objects("leap-16.0")
+
+    assert calls[0] == ["git", "merge-base", "origin/leap-16.0", "leap-16.0"]
+    assert calls[1] == ["git", "rev-list", "0c9eddb..HEAD"]
+    assert len(calls) == 2
+
+
+def test_fetch_lfs_objects_fallback_no_origin_branch(mocker: MockerFixture) -> None:
+    calls = []
+
+    def mocked_run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        if cmd[1] == "merge-base":
+            return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="fatal: Not a valid object name")
+        if cmd[1] == "rev-list":
+            return subprocess.CompletedProcess(cmd, 0, stdout="c1\nc2\n", stderr="")
+        if cmd[1:3] == ["lfs", "fetch"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    mocker.patch("auto_submit.subprocess.run", side_effect=mocked_run)
+    submitter = auto_submit.AutoSubmitter(git_cmd_str="git", dry_run=False)
+    submitter._fetch_lfs_objects("leap-16.0")
+
+    assert calls[0] == ["git", "merge-base", "origin/leap-16.0", "leap-16.0"]
+    assert calls[1] == ["git", "rev-list", "--not", "--remotes=origin", "HEAD"]
+    assert calls[2] == ["git", "lfs", "fetch", "parent", "c1", "c2"]
+
+
+def test_fetch_lfs_objects_batching(mocker: MockerFixture) -> None:
+    calls = []
+    fake_commits = [f"commit{i:03d}" for i in range(105)]
+
+    def mocked_run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        calls.append(cmd)
+        if cmd[1] == "merge-base":
+            return subprocess.CompletedProcess(cmd, 0, stdout="base_sha\n", stderr="")
+        if cmd[1] == "rev-list":
+            return subprocess.CompletedProcess(cmd, 0, stdout="\n".join(fake_commits) + "\n", stderr="")
+        if cmd[1:3] == ["lfs", "fetch"]:
+            return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    mocker.patch("auto_submit.subprocess.run", side_effect=mocked_run)
+    submitter = auto_submit.AutoSubmitter(git_cmd_str="git", dry_run=False)
+    submitter._fetch_lfs_objects("leap-16.0")
+
+    assert calls[0] == ["git", "merge-base", "origin/leap-16.0", "leap-16.0"]
+    assert calls[1] == ["git", "rev-list", "base_sha..HEAD"]
+    assert calls[2] == ["git", "lfs", "fetch", "parent", *fake_commits[0:50]]
+    assert calls[3] == ["git", "lfs", "fetch", "parent", *fake_commits[50:100]]
+    assert calls[4] == ["git", "lfs", "fetch", "parent", *fake_commits[100:105]]
+    assert len(calls) == 5
 
 
 def test_copy_files_to_clone(
