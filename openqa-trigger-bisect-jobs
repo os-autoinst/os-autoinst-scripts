@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright SUSE LLC
-# ruff: file-ignore[missing-type-function-argument, missing-return-type-undocumented-public-function, strip-with-multi-characters, pep484-style-positional-only-parameter, request-without-timeout, hashlib-insecure-hash-function, verbose-log-message, boolean-default-value-positional-argument, uncapitalized-environment-variables]
+# ruff: file-ignore[missing-type-function-argument, missing-return-type-undocumented-public-function, strip-with-multi-characters, pep484-style-positional-only-parameter, hashlib-insecure-hash-function, verbose-log-message, boolean-default-value-positional-argument, uncapitalized-environment-variables]
 """Trigger openQA tests bisecting maintenance updates.
 
 Determine which pending operating system maintenance update, called "incident",
@@ -23,6 +23,8 @@ from functools import total_ordering
 from urllib.parse import urlparse, urlunparse
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 USER_AGENT = "openqa-trigger-bisect-jobs (https://github.com/os-autoinst/os-autoinst-scripts)"
 
@@ -31,6 +33,25 @@ log = logging.getLogger(sys.argv[0] if __name__ == "__main__" else __name__)
 GOOD = "-"
 BAD = "+"
 INCIDENT_FROM_REPO_URL_RE = re.compile(r".*PullRequest:/(\d+):/.*")
+
+
+def get_session(retries: int = 5) -> requests.Session:
+    """Create a requests Session configured with retries for transient errors and rate limits."""
+    s = requests.Session()
+    adapter = HTTPAdapter(
+        max_retries=Retry(
+            total=retries,
+            backoff_factor=0.1,
+            status_forcelist=[*list(Retry.RETRY_AFTER_STATUS_CODES), 500, 502, 503, 504],
+            raise_on_status=False,
+        ),
+    )
+    s.mount("http://", adapter)
+    s.mount("https://", adapter)
+    return s
+
+
+session = get_session()
 
 
 class CustomFormatter(argparse.ArgumentDefaultsHelpFormatter, argparse.RawDescriptionHelpFormatter):
@@ -168,7 +189,7 @@ def openqa_clone(
 def fetch_url(url, request_type="text"):
     """Fetch content from URL."""
     try:
-        content = requests.get(url, headers={"User-Agent": USER_AGENT})
+        content = session.get(url, headers={"User-Agent": USER_AGENT})
         content.raise_for_status()
     except requests.exceptions.RequestException as e:
         log.exception("Error while fetching %s: %s", url, e)

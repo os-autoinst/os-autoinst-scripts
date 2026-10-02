@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 import pytest
 import requests
+from pytest_mock import MockerFixture
 
 rootpath = pathlib.Path(__file__).parent.parent.resolve()
 
@@ -372,3 +373,23 @@ def test_issue_types() -> None:
 def test_parsing_incident_id_from_repo() -> None:
     i = Incident("http://%REPO_MIRROR_HOST%/ibs/SUSE:/SLFO:/1.2:/PullRequest:/1266:/SL-Micro/…/")
     assert i.incident_id == "1266"
+
+
+def test_get_session_configuration() -> None:
+    s = openqa.get_session(retries=3)
+    adapter = s.adapters["https://"]
+    assert adapter.max_retries.total == 3
+    assert 429 in adapter.max_retries.status_forcelist
+
+
+def test_fetch_url_success(mocker: MockerFixture) -> None:
+    mock_resp = MagicMock()
+    mock_resp.content = b'{"ok": true}'
+    mock_resp.json.return_value = {"ok": True}
+    mocker.patch.object(openqa.session, "get", return_value=mock_resp)
+
+    res_text = openqa.fetch_url("http://example.com/test", request_type="text")
+    assert res_text == mock_resp
+
+    res_json = openqa.fetch_url("http://example.com/test", request_type="json")
+    assert res_json == {"ok": True}
