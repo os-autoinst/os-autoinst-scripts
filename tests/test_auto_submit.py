@@ -136,6 +136,7 @@ def test_prepare_local_clone_fetches_before_switch(mocker: MockerFixture) -> Non
     """Fetch parent before creating the branch so a fork lacking it still works."""
     mock_run = mocker.patch("auto_submit.subprocess.run")
     mocker.patch("auto_submit.pathlib.Path.iterdir", return_value=[])
+    mocker.patch("auto_submit.diff_has_single_added_block", return_value=(True, None))
     submitter = auto_submit.AutoSubmitter(dst_project="dst", git_cmd_str="git", dir=pathlib.Path(), dry_run=False)
     submitter._prepare_local_clone("openQA", "leap-16.0")
     git_calls = [call.args[0] for call in mock_run.call_args_list]
@@ -168,6 +169,21 @@ def test_prepare_local_clone_calls_fetch_lfs(mocker: MockerFixture) -> None:
     assert git_calls[1] == ["git", "switch", "-C", "leap-16.0", "parent/leap-16.0"]
     mock_fetch_lfs.assert_called_once_with("leap-16.0")
     mock_copy.assert_called_once_with("openQA")
+
+
+def test_prepare_local_clone_diff_not_ok(mocker: MockerFixture, caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO)
+    mock_run = mocker.patch("auto_submit.subprocess.run")
+    mock_fetch_lfs = mocker.patch("auto_submit.AutoSubmitter._fetch_lfs_objects")
+    mock_copy = mocker.patch("auto_submit.AutoSubmitter._copy_files_to_clone")
+    submitter = auto_submit.AutoSubmitter(dst_project="dst", git_cmd_str="git", dir=pathlib.Path(), dry_run=False)
+    mocker.patch(
+        "auto_submit.diff_has_single_added_block",
+        return_value=(False, subprocess.CompletedProcess("", 0, stdout="diff output", stderr="")),
+    )
+    res = submitter._prepare_local_clone("pkg", "leap-16.0")
+    assert res is False
+    assert caplog.records[2].getMessage() == "git diff for pkg.changes does not look ok:\ndiff output"
 
 
 def test_fetch_lfs_objects_with_merge_base(mocker: MockerFixture) -> None:
@@ -614,6 +630,7 @@ def test_update_package(
     mocker.patch("auto_submit.AutoSubmitter._find_version", return_value="23")
     mocker.patch("auto_submit.AutoSubmitter._osc_addremove_and_filter_specs", return_value="23")
     mocker.patch("auto_submit.AutoSubmitter._commit_local_changes", return_value=auto_submit.CommitResult.SUCCESS)
+    mocker.patch("auto_submit.diff_has_single_added_block", return_value=(True, None))
     mocker.patch("auto_submit.AutoSubmitter._commit_and_push", return_value=True)
     mocker.patch("auto_submit.AutoSubmitter._create_pull_request", return_value=True)
     mocker.patch("auto_submit.AutoSubmitter.has_pending_submission", return_value=False)
@@ -645,6 +662,62 @@ def test_update_package(
     assert caplog.records[1].getMessage() == f"First 2 lines of '{changes_file}':\n{content}"
     assert res is True
     assert (tmp_path / "git-repos" / "pkg" / changes_file).exists()
+
+
+def test_handle_auto_submit_copy_files(
+    mocker: MockerFixture,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mocker.patch("auto_submit.AutoSubmitter._osc_co", return_value="23")
+    mocker.patch("auto_submit.AutoSubmitter._is_package_up_to_date", return_value=False)
+    mocker.patch("auto_submit.AutoSubmitter.update_package", return_value=True)
+    mocker.patch("auto_submit.diff_has_single_added_block", return_value=(True, None))
+
+    monkeypatch.chdir(tmp_path)
+    dstdir = tmp_path / "dst" / "pkg"
+    dstdir.mkdir(parents=True, exist_ok=True)
+    srcdir = tmp_path / "src" / "pkg"
+    srcdir.mkdir(parents=True, exist_ok=True)
+    (srcdir / "newfile").write_text("new")
+    (dstdir / "oldfile").write_text("old")
+    submitter = auto_submit.AutoSubmitter(
+        dst_project="dst",
+        src_project="src",
+        dry_run=False,
+        osc_cmd_str="osc",
+    )
+    res = submitter.handle_auto_submit("pkg")
+    assert res is True
+    assert (dstdir / "newfile").exists()
+    assert not (dstdir / "oldfile").exists()
+
+
+def test_handle_auto_submit_diff_not_ok(
+    caplog: pytest.LogCaptureFixture,
+    mocker: MockerFixture,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mocker.patch("auto_submit.AutoSubmitter._osc_co", return_value="23")
+    mocker.patch("auto_submit.AutoSubmitter._is_package_up_to_date", return_value=False)
+    mocker.patch("auto_submit.AutoSubmitter.update_package", return_value=True)
+    mocker.patch(
+        "auto_submit.diff_has_single_added_block",
+        return_value=(False, subprocess.CompletedProcess("", 0, stdout="diff output", stderr="")),
+    )
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "dst" / "pkg").mkdir(parents=True, exist_ok=True)
+    submitter = auto_submit.AutoSubmitter(
+        dst_project="dst",
+        src_project="src",
+        dry_run=False,
+        osc_cmd_str="osc",
+    )
+    res = submitter.handle_auto_submit("pkg")
+    assert res is False
+    assert caplog.records[0].getMessage() == "osc diff for pkg.changes does not look ok:\ndiff output"
 
 
 def test_cpio(tmp_path: pathlib.Path) -> None:
@@ -700,3 +773,52 @@ BuildRequires:  fdupes
     assert (
         caplog.records[0].getMessage() == "openQA.spec does not contain node_modules specific sources; no changes made."
     )
+
+
+def test_diff_has_single_added_block(mocker: MockerFixture) -> None:
+    mock_run = mocker.patch("auto_submit._run_subprocess")
+    diff_header = """
+Index: os-autoinst.changes
+===================================================================
+--- os-autoinst.changes (revision 528)
++++ os-autoinst.changes (working copy)
+@@ -1,3 +1,11 @@
++-------------------------------------------------------------------
++- Update to version 5.1790592325.87022d5:
++  * fix: one
++  * fix: two
++
+    """
+    diff = diff_header
+    mock_run.return_value = subprocess.CompletedProcess(["dummy"], 0, stdout=diff)
+    (diff_ok, res) = auto_submit.diff_has_single_added_block(["dummy"])
+    assert diff_ok is True
+
+    diff = (
+        diff_header
+        + """
+ -------------------------------------------------------------------
+
+@@ -5,6 +13,7 @@
+   * fix: three
++  * added commit
+"""
+    )
+    mock_run.return_value = subprocess.CompletedProcess(["dummy"], 0, stdout=diff)
+    (diff_ok, res) = auto_submit.diff_has_single_added_block(["dummy"])
+    assert diff_ok is False
+
+    diff = (
+        diff_header
+        + """
+ -------------------------------------------------------------------
+
+@@ -5,6 +13,7 @@
+   * fix: three
+-  * removed commit
+"""
+    )
+    mock_run.return_value = subprocess.CompletedProcess(["dummy"], 0, stdout=diff)
+    (diff_ok, res) = auto_submit.diff_has_single_added_block(["dummy"])
+    assert diff_ok is False
+    assert res is None
