@@ -280,6 +280,22 @@ def test_investigate_cmd_http_status_error(mocker: MockerFixture) -> None:
     assert mock_log.error.call_args[0][4] == "Internal Server Error"
 
 
+def test_investigate_cmd_timeout(mocker: MockerFixture) -> None:
+    mock_log = mocker.patch("llm_investigate.log")
+    client = setup_mock_client(mocker)
+    client.post.side_effect = httpx.ReadTimeout("timed out")
+
+    with pytest.raises(SystemExit) as exc:
+        llm_investigate.investigate("123")
+
+    assert exc.value.code == 1
+    mock_log.error.assert_called_once()
+    assert mock_log.error.call_args[0][0] == "LLM API %s (%s) failed: %s"
+    assert mock_log.error.call_args[0][1] == "http://localhost:8080/v1/chat/completions"
+    assert mock_log.error.call_args[0][2] == "gemma-4-26B-A4B-it"
+    assert str(mock_log.error.call_args[0][3]) == "timed out"
+
+
 def test_investigate_logging_levels(mocker: MockerFixture) -> None:
     mock_basic_config = mocker.patch("llm_investigate.logging.basicConfig")
     mocker.patch("llm_investigate.httpx.Client")
@@ -444,6 +460,62 @@ def test_retry_transport_exponential_backoff(mocker: MockerFixture) -> None:
     mock_sleep.assert_has_calls([mocker.call(1.0), mocker.call(2.0)])
     resp429_1.close.assert_called_once()
     resp429_2.close.assert_called_once()
+
+
+def test_retry_transport_retry_on_timeout(mocker: MockerFixture) -> None:
+    mock_sleep = mocker.patch("time.sleep")
+    mock_log = mocker.patch("llm_investigate.log")
+    mock_super_handle = mocker.patch("llm_investigate.httpx.HTTPTransport.handle_request")
+
+    resp200 = MagicMock(spec=httpx.Response)
+    resp200.status_code = 200
+
+    mock_super_handle.side_effect = [httpx.ReadTimeout("timed out"), resp200]
+
+    transport = llm_investigate.RetryTransport(retries=2)
+    req = httpx.Request("POST", "http://example.com")
+    res = transport.handle_request(req)
+
+    assert res == resp200
+    assert mock_super_handle.call_count == 2
+    mock_sleep.assert_called_once_with(1.0)
+    mock_log.warning.assert_called_once_with(
+        "Request timed out (%s). Retrying in %.2f seconds (%d retries left)...",
+        "ReadTimeout",
+        1.0,
+        1,
+    )
+
+
+def test_retry_transport_timeout_exhausted(mocker: MockerFixture) -> None:
+    mock_sleep = mocker.patch("time.sleep")
+    mock_log = mocker.patch("llm_investigate.log")
+    mock_super_handle = mocker.patch("llm_investigate.httpx.HTTPTransport.handle_request")
+    mock_super_handle.side_effect = httpx.ConnectTimeout("timed out")
+
+    transport = llm_investigate.RetryTransport(retries=2)
+    req = httpx.Request("POST", "http://example.com")
+
+    with pytest.raises(httpx.ConnectTimeout):
+        transport.handle_request(req)
+
+    assert mock_super_handle.call_count == 3
+    assert mock_sleep.call_count == 2
+    assert mock_log.warning.call_count == 2
+    mock_log.warning.assert_has_calls([
+        mocker.call(
+            "Request timed out (%s). Retrying in %.2f seconds (%d retries left)...",
+            "ConnectTimeout",
+            1.0,
+            1,
+        ),
+        mocker.call(
+            "Request timed out (%s). Retrying in %.2f seconds (%d retries left)...",
+            "ConnectTimeout",
+            2.0,
+            0,
+        ),
+    ])
 
 
 def test_investigate_configures_retry_transport(mocker: MockerFixture) -> None:

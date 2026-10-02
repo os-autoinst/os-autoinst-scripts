@@ -36,7 +36,7 @@ class TransientHTTPError(Exception):
 
 
 class RetryTransport(httpx.HTTPTransport):
-    """Custom HTTP transport that retries on transient errors (e.g. 429, 5xx)."""
+    """Custom HTTP transport that retries on transient errors (e.g. 429, 5xx) and timeouts."""
 
     RETRY_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
 
@@ -55,34 +55,33 @@ class RetryTransport(httpx.HTTPTransport):
 
     def _wait_strategy(self, retry_state: tenacity.RetryCallState) -> float:
         exc = retry_state.outcome.exception()
-        if not isinstance(exc, TransientHTTPError):
-            return 0.0
-        response = exc.response
-        retry_after = response.headers.get("Retry-After")
-        delay = 0.0
-        if retry_after:
-            try:
-                delay = float(retry_after)
-            except ValueError:
+        if isinstance(exc, TransientHTTPError):
+            response = exc.response
+            retry_after = response.headers.get("Retry-After")
+            if retry_after:
                 try:
-                    dt = parsedate_to_datetime(retry_after)
-                    delay = (dt - self._now()).total_seconds()
-                except Exception as e:
-                    log.debug("Failed to parse Retry-After header as date: %s", e)
+                    delay = float(retry_after)
+                    if delay > 0.0:
+                        return delay
+                except ValueError:
+                    try:
+                        dt = parsedate_to_datetime(retry_after)
+                        delay = (dt - self._now()).total_seconds()
+                        if delay > 0.0:
+                            return delay
+                    except Exception as e:
+                        log.debug("Failed to parse Retry-After header as date: %s", e)
 
-        if delay <= 0.0:
-            delay = float(2 ** (retry_state.attempt_number - 1))
-
-        return delay
+        return float(2 ** (retry_state.attempt_number - 1))
 
     def _before_sleep(self, retry_state: tenacity.RetryCallState) -> None:
         exc = retry_state.outcome.exception()
+        retries_left = self.retries - retry_state.attempt_number
+        delay = retry_state.next_action.sleep
+
         if isinstance(exc, TransientHTTPError):
             response = exc.response
             response.close()
-
-            retries_left = self.retries - retry_state.attempt_number
-            delay = retry_state.next_action.sleep
 
             log.info(
                 "Received HTTP %d. Retrying in %.2f seconds (%d retries left)...",
@@ -90,12 +89,19 @@ class RetryTransport(httpx.HTTPTransport):
                 delay,
                 retries_left,
             )
+        elif isinstance(exc, httpx.TimeoutException):
+            log.warning(
+                "Request timed out (%s). Retrying in %.2f seconds (%d retries left)...",
+                type(exc).__name__,
+                delay,
+                retries_left,
+            )
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
-        """Handle the HTTP request, retrying on transient status codes if retries are available."""
+        """Handle the HTTP request, retrying on transient status codes and timeouts if retries are available."""
         try:
             for attempt in tenacity.Retrying(
-                retry=tenacity.retry_if_exception_type(TransientHTTPError),
+                retry=tenacity.retry_if_exception_type((TransientHTTPError, httpx.TimeoutException)),
                 stop=tenacity.stop_after_attempt(self.retries + 1),
                 wait=self._wait_strategy,
                 before_sleep=self._before_sleep,
@@ -420,9 +426,9 @@ def investigate(
     timeout: Annotated[int, typer.Option("--timeout", help="Timeout for LLM API requests in seconds")] = int(
         os.environ.get("LLM_TIMEOUT", "600")
     ),
-    retries: Annotated[int, typer.Option("--retries", help="Number of retries on retry-worthy HTTP responses")] = int(
-        os.environ.get("LLM_RETRIES", "7")
-    ),
+    retries: Annotated[
+        int, typer.Option("--retries", help="Number of retries on retry-worthy HTTP responses and timeouts")
+    ] = int(os.environ.get("LLM_RETRIES", "7")),
     llm_url: Annotated[
         str, typer.Option("--llm-url", envvar="LLM_API_URL", help="URL for the LLM API endpoint")
     ] = os.environ.get("LLM_API_URL", "http://localhost:8080/v1/chat/completions"),
