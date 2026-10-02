@@ -105,6 +105,12 @@ def parse_args():
         default=100,
         help="Adds the specified value to the cloned job's priority value",
     )
+    parser.add_argument(
+        "--investigation-gid",
+        type=int,
+        default=int(os.environ.get("investigation_gid", "0")),
+        help="Group ID for investigated jobs.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Do not do any action on openQA")
     args = parser.parse_args()
     verbose_to_log = {
@@ -159,7 +165,8 @@ def openqa_clone(
 ):
     """Clone an openQA job."""
     if default_cmds is None:
-        default_cmds = ["_GROUP=0"]
+        has_group = any(c.startswith(("_GROUP=", "_GROUP_ID=")) for c in cmds)
+        default_cmds = [] if has_group else ["_GROUP=0"]
     if default_opts is None:
         default_opts = ["--skip-chained-deps", "--json-output", "--within-instance"]
     return call(["openqa-clone-job", *default_opts, *cmds, *default_cmds], dry_run)
@@ -266,6 +273,8 @@ def _trigger_bisect_job(args, base_url, job_id, test_name, line) -> str:
             "MAINT_TEST_REPO=",
         ]
     )
+    if args.investigation_gid:
+        params.append(f"_GROUP_ID={args.investigation_gid}")
 
     try:
         out = openqa_clone(params, args.dry_run)

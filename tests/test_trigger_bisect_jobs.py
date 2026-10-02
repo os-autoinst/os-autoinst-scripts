@@ -32,6 +32,7 @@ def args_factory() -> Namespace:
     args.dry_run = False
     args.verbose = 1
     args.priority_add = 100
+    args.investigation_gid = 0
     return args
 
 
@@ -106,6 +107,24 @@ def test_clone() -> None:
     openqa.call.assert_called_once_with(args, False)
 
 
+def test_clone_with_group_id() -> None:
+    openqa.call = MagicMock(side_effect=mocked_call)
+    cmds_with_group = [*cmds, "_GROUP_ID=637"]
+    openqa.openqa_clone(cmds_with_group, dry_run=False)
+    args = [
+        "openqa-clone-job",
+        "--skip-chained-deps",
+        "--json-output",
+        "--within-instance",
+        "https://openqa.opensuse.org/tests/7848818",
+        "OS_TEST_ISSUES=21770,21926,21954,22030,22077,22085,22192",
+        "TEST=foo:investigate:bisect_without_21637",
+        "OPENQA_INVESTIGATE_ORIGIN=https://openqa.opensuse.org/tests/7848818",
+        "_GROUP_ID=637",
+    ]
+    openqa.call.assert_called_once_with(args, False)
+
+
 def test_comment() -> None:
     openqa.call = MagicMock(side_effect=mocked_call)
     openqa.openqa_comment(1234567, "https://openqa.opensuse.org", "foo\nbar", dry_run=False)
@@ -144,9 +163,18 @@ def test_set_job_prio() -> None:
     openqa.call.assert_called_once_with(args, False)
 
 
-def test_triggers() -> None:
+@pytest.mark.parametrize(
+    ("investigation_gid", "expected_suffix"),
+    [
+        (0, []),
+        (637, ["_GROUP_ID=637"]),
+    ],
+    ids=["without_investigation_gid", "with_investigation_gid"],
+)
+def test_triggers(investigation_gid: int, expected_suffix: list[str]) -> None:
     args = args_factory()
     args.url = "https://openqa.opensuse.org/tests/7848818"
+    args.investigation_gid = investigation_gid
     openqa.openqa_clone = MagicMock(return_value='{"7848818": 234567}')
     openqa.openqa_comment = MagicMock(return_value="")
     openqa.openqa_set_job_prio = MagicMock(return_value="")
@@ -161,6 +189,7 @@ def test_triggers() -> None:
                 "TEST=foo:investigate:bisect_without_3",
                 "OPENQA_INVESTIGATE_ORIGIN=https://openqa.opensuse.org/tests/7848818",
                 "MAINT_TEST_REPO=",
+                *expected_suffix,
             ],
             False,
         ),
@@ -172,6 +201,7 @@ def test_triggers() -> None:
                 "TEST=foo:investigate:bisect_without_4",
                 "OPENQA_INVESTIGATE_ORIGIN=https://openqa.opensuse.org/tests/7848818",
                 "MAINT_TEST_REPO=",
+                *expected_suffix,
             ],
             False,
         ),
@@ -183,6 +213,7 @@ def test_triggers() -> None:
                 "TEST=foo:investigate:bisect_without_21637",
                 "OPENQA_INVESTIGATE_ORIGIN=https://openqa.opensuse.org/tests/7848818",
                 "MAINT_TEST_REPO=",
+                *expected_suffix,
             ],
             False,
         ),
@@ -194,6 +225,7 @@ def test_triggers() -> None:
                 "TEST=foo:investigate:bisect_without_22085",
                 "OPENQA_INVESTIGATE_ORIGIN=https://openqa.opensuse.org/tests/7848818",
                 "MAINT_TEST_REPO=",
+                *expected_suffix,
             ],
             False,
         ),
@@ -205,6 +237,7 @@ def test_triggers() -> None:
                 "TEST=foo:investigate:bisect_without_22192",
                 "OPENQA_INVESTIGATE_ORIGIN=https://openqa.opensuse.org/tests/7848818",
                 "MAINT_TEST_REPO=",
+                *expected_suffix,
             ],
             False,
         ),
