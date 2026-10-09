@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import sys
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -33,6 +34,19 @@ assert spec.loader is not None
 auto_submit = importlib.util.module_from_spec(spec)
 sys.modules["auto_submit"] = auto_submit
 spec.loader.exec_module(auto_submit)
+
+
+_FROZEN_NOW = dt.datetime(2026, 10, 9, 12, 0, tzinfo=dt.UTC)
+
+
+class _FrozenDateTime:
+    """Stand-in for the auto_submit module's `import datetime as dt` with a frozen clock."""
+
+    UTC = dt.UTC
+    datetime = SimpleNamespace(
+        now=lambda _tz=None: _FROZEN_NOW,
+        fromisoformat=dt.datetime.fromisoformat,
+    )
 
 
 def test_is_transient_osc_error() -> None:
@@ -73,9 +87,7 @@ def test_get_obs_sr_id_empty(mocker: MockerFixture) -> None:
             3,
             [
                 {
-                    "updated_at": (dt.datetime.now(dt.UTC) - dt.timedelta(days=2)).strftime(
-                        "%Y-%m-%dT%H:%M:%SZ",
-                    ),
+                    "updated_at": "2026-10-07T00:00:00Z",
                     "html_url": "https://foo/bar",
                     "user": {"login": "os-autoinst-obs-workflow"},
                     "base": {"ref": "leap-16.0"},
@@ -89,9 +101,7 @@ def test_get_obs_sr_id_empty(mocker: MockerFixture) -> None:
             1,
             [
                 {
-                    "updated_at": (dt.datetime.now(dt.UTC) - dt.timedelta(days=2)).strftime(
-                        "%Y-%m-%dT%H:%M:%SZ",
-                    ),
+                    "updated_at": "2026-10-07T00:00:00Z",
                     "html_url": "https://foo/bar",
                     "user": {"login": "os-autoinst-obs-workflow"},
                     "base": {"ref": "leap-16.0"},
@@ -111,6 +121,7 @@ def test_has_pending_submission(
     expected: bool,
 ) -> None:
     mock_run = mocker.patch("auto_submit.run_osc_cmd")
+    mocker.patch("auto_submit.dt", new=_FrozenDateTime)
     if pr_json is not None:
         mock_run.return_value = subprocess.CompletedProcess(["git-obs"], 0, stdout=auto_submit.json.dumps(pr_json))
     else:

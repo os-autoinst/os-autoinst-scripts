@@ -11,6 +11,7 @@ import pathlib
 import subprocess
 import sys
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, Mock, patch
 
@@ -37,6 +38,10 @@ sys.modules["openqa_label_known_issues"] = openqa_label_known_issues
 spec.loader.exec_module(openqa_label_known_issues)
 
 
+_FROZEN_NOW = datetime(2026, 10, 9, 12, 0, tzinfo=UTC)
+_FROZEN_DATETIME = SimpleNamespace(now=lambda _tz=None: _FROZEN_NOW, fromisoformat=datetime.fromisoformat)
+
+
 def test_setup_logging() -> None:
     openqa_label_known_issues.setup_logging(0)
     openqa_label_known_issues.setup_logging(1)
@@ -54,14 +59,14 @@ def test_extract_timeago() -> None:
     assert openqa_label_known_issues.extract_timeago(html3) is None
 
 
-def test_is_older_than_14_days() -> None:
+def test_is_older_than_14_days(mocker: MockerFixture) -> None:
+    mocker.patch("openqa_label_known_issues.datetime", new=_FROZEN_DATETIME)
     # Older than 14 days
     assert openqa_label_known_issues.is_older_than_14_days("2020-01-01T00:00:00Z") is True
     # Naive date older than 14 days (timezone None branch)
     assert openqa_label_known_issues.is_older_than_14_days("2020-01-01T00:00:00") is True
     # Not older
-    now_str = datetime.now(UTC).isoformat()
-    assert openqa_label_known_issues.is_older_than_14_days(now_str) is False
+    assert openqa_label_known_issues.is_older_than_14_days("2026-10-09T00:00:00+00:00") is False
     # Invalid date
     assert openqa_label_known_issues.is_older_than_14_days("invalid") is False
 
@@ -552,8 +557,8 @@ def test_handle_unreachable(mocker: MockerFixture, tmp_path: pathlib.Path) -> No
         )
 
     # 7. testurl downloaded, Gru not found, younger than 14 days
-    now_str = datetime.now(UTC).isoformat()
-    mock_resp_get.text = f'Result:<abbr class="timeago" title="{now_str}"></abbr>'
+    mocker.patch("openqa_label_known_issues.datetime", new=_FROZEN_DATETIME)
+    mock_resp_get.text = 'Result:<abbr class="timeago" title="2026-10-09T00:00:00+00:00"></abbr>'
     res = openqa_label_known_issues.handle_unreachable(
         "http://host.com/test", "123", mock_client, "http://host.com", []
     )
