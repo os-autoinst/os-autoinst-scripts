@@ -267,6 +267,28 @@ def empty_git_dir(path: pathlib.Path) -> None:
             item.unlink()
 
 
+def diff_has_single_added_block(diff_cmd: list[str]) -> tuple[bool, str]:
+    """Return True if the diff contains exactly one contiguous block of added lines."""
+    in_added_block = False
+    block_count = 0
+
+    res = _run_subprocess(diff_cmd)
+    for line in res.stdout.splitlines():
+        # Ignore diff header lines (e.g., '+++ os-autoinst.changes...')
+        if line.startswith(("+++", "---")):
+            continue
+        if line.startswith("-"):
+            return (False, None)
+        if line.startswith("+"):
+            if not in_added_block:
+                in_added_block = True
+                block_count += 1
+        else:
+            in_added_block = False
+
+    return (block_count == 1, res.stdout)
+
+
 @dataclass
 class AutoSubmitter:
     """Automate the preparation and submission of packages."""
@@ -414,17 +436,26 @@ class AutoSubmitter:
         # fork may lack the branch (switch-first fails "invalid reference").
         fetch_cmd = [*git_cmd, "fetch", "parent"]
         switch_cmd = [*git_cmd, "switch", "-C", branch, f"parent/{branch}"]
+        diff_cmd = [*git_cmd, "diff", f"{package}.changes"]
 
         if self.dry_run:
             log.info("[dry-run] Would execute: %s", " ".join(fetch_cmd))
             log.info("[dry-run] Would execute: %s", " ".join(switch_cmd))
             self._fetch_lfs_objects(branch)
             log.info("[dry-run] Would replace files in clone with files from ../../%s/*", package)
+            log.info("[dry-run] Would execute: %s", " ".join(diff_cmd))
         else:
             _run_cmd(fetch_cmd, check=True)
             _run_cmd(switch_cmd, check=True)
             self._fetch_lfs_objects(branch)
             self._copy_files_to_clone(package)
+
+            (diff_ok, res) = diff_has_single_added_block(diff_cmd)
+            if not diff_ok:
+                log.warning("git diff for %s.changes does not look ok:\n%s", package, res.stdout)
+                return False
+
+        return True
 
     def _fetch_lfs_objects(self, branch: str) -> None:
         """Fetch necessary Git LFS objects from parent before pushing."""
@@ -566,7 +597,8 @@ class AutoSubmitter:
         if not self.dry_run:
             os.chdir(package)
 
-        self._prepare_local_clone(package, branch)
+        if not self._prepare_local_clone(package, branch):
+            return False
         self._commit_and_push(title, branch)
         return self._create_pull_request(title, description, branch)
 
@@ -880,6 +912,13 @@ class AutoSubmitter:
 
         if not self.dry_run:
             os.chdir(dst_dir)
+
+            diff_cmd = [*shlex.split(self.osc_cmd_str), "diff", f"{package}.changes"]
+            (diff_ok, res) = diff_has_single_added_block(diff_cmd)
+            if not diff_ok:
+                log.warning("osc diff for %s.changes does not look ok:\n%s", package, res.stdout)
+                return False
+
         return self.update_package(package=package)
 
 
@@ -1043,6 +1082,7 @@ def _run_submissions(  # ruff: ignore[complex-structure, too-many-branches, too-
             os.chdir(tmpdir_path)
             success = submitter.handle_auto_submit(package=package)
             if not success:
+                submitter.failed_packages.append(package)
                 rc = 1
 
             if must_cleanup_staging:
