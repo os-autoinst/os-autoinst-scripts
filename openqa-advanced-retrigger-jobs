@@ -1,81 +1,191 @@
-#!/bin/bash -e
-host="${host:-"openqa.opensuse.org"}"
-failed_since="${failed_since:-"$(date -I)"}"
-instance_string="${INSTANCE+" and instance='$INSTANCE'"}"
-worker_string="${WORKER+"assigned_worker_id in (select id from workers where (host='$WORKER'$instance_string)) and "}"
-result="${result:-"result='incomplete'"}"
-additional_filters="${additional_filters+" and $additional_filters"}"
-comment="${comment:-""}"
-max_jobs_per_request=25
-dry_run="${dry_run:-"0"}"
+#!/usr/bin/env python3
+# Copyright SUSE LLC
+"""Retrigger openQA jobs selected by a database query over SSH."""
 
-usage() {
-    cat << EOF
-Usage: $0 [OPTIONS]
+from __future__ import annotations
 
-Retrigger openQA jobs based on database queries.
+import logging
+import shlex
+import subprocess
+import sys
+from datetime import UTC, datetime
+from typing import Annotated
 
-By default retriggers openQA jobs with '$result' since '$failed_since' on
-'$host'.
+import typer
+from openqa_client.client import OpenQA_Client
 
-Needs SSH access to the target openQA host '$host' to query the database
-unless 'JOB_IDS' is provided.
+DEFAULT_HOST = "openqa.opensuse.org"
+DEFAULT_RESULT = "result='incomplete'"
+DEFAULT_MAX_JOBS_PER_REQUEST = 25
+PSQL_USER = "geekotest"
+SQL_PREFIX = "select id from jobs where ("
+SQL_WORKER_PREFIX = "assigned_worker_id in (select id from workers where (host='"
+SQL_WORKER_SUFFIX = ")) and "
+SQL_FILTERS = " and clone_id is null and t_finished >= "
+SQL_SUFFIX = ");"
 
-Options:
- -h, --help           display this help
+app = typer.Typer(add_completion=False)
+log = logging.getLogger(__name__)
 
-Environment variables:
- host                 target openQA host (default: $host)
- failed_since         retrigger jobs finished since this date (default: $failed_since)
- result               retrigger jobs with this result (default: $result)
- additional_filters   additional SQL filters for the job query
- comment              comment to add to retriggered jobs
- dry_run              set to 1 to only print what would be done
- WORKER               restrict to jobs that ran on this worker host
- INSTANCE             restrict to jobs that ran on this worker instance
- sql_command          custom SQL command to fetch job IDs
- JOB_IDS              comma or space separated list of job IDs to retrigger
- cli_protocol         protocol for openqa-cli (e.g. https)
- cli_port             port for openqa-cli
-EOF
-    exit "$1"
-}
 
-restart-jobs() {
-    [[ ${#query_params[@]} -lt 1 ]] && return
-    [[ $comment ]] && query_params+=("comment=$comment")
-    $client_prefix openqa-cli api --host "$host" -X POST jobs/restart "${query_params[@]}"
-    query_params=()
-}
+def setup_logging(verbose: int) -> None:
+    """Configure logging on stderr according to the verbosity counter."""
+    level_map = {0: logging.WARNING, 1: logging.INFO, 2: logging.DEBUG}
+    logging.basicConfig(
+        level=level_map.get(min(verbose, 2), logging.WARNING),
+        format="%(levelname)s: %(message)s",
+        stream=sys.stderr,
+        force=True,
+    )
 
-main() {
-    opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
-    eval set -- "$opts"
-    while true; do
-        case "$1" in
-            -h | --help) usage 0 ;;
-            --)
-                shift
-                break
-                ;;
-            *) break ;;
-        esac
-    done
 
-    [ "$dry_run" = "1" ] && client_prefix="echo"
-    sql_command=${sql_command:-"select id from jobs where (${worker_string}${result} and clone_id is null and t_finished >= '$failed_since'$additional_filters);"}
-    # shellcheck disable=SC2029
-    job_ids=${JOB_IDS:-$(ssh "$host" "sudo -u geekotest psql --no-align --tuples-only --command=\"$sql_command\" openqa")}
+def build_sql_command(
+    worker: str | None, instance: str | None, result: str, failed_since: str, additional_filters: str | None
+) -> str:
+    """Assemble the SQL query selecting the job IDs to retrigger."""
+    worker_filter = ""
+    if worker:
+        instance_filter = f" and instance='{instance}'" if instance else ""
+        worker_filter = f"{SQL_WORKER_PREFIX}{worker}'{instance_filter}{SQL_WORKER_SUFFIX}"
+    extra_filters = f" and {additional_filters}" if additional_filters else ""
+    return f"{SQL_PREFIX}{worker_filter}{result}{SQL_FILTERS}'{failed_since}'{extra_filters}{SQL_SUFFIX}"
 
-    query_params=()
-    [[ $cli_protocol ]] && host=$cli_protocol://$host
-    [[ $cli_port ]] && host+=:$cli_port
 
-    for job_id in $job_ids; do
-        query_params+=("jobs=$job_id")
-        [[ ${#query_params[@]} -ge "$max_jobs_per_request" ]] && restart-jobs
-    done
-    restart-jobs
-}
+def parse_job_ids(raw: str) -> list[int]:
+    """Parse a comma or space separated list of job IDs."""
+    return [int(token) for token in raw.replace(",", " ").split()]
 
-caller 0 > /dev/null || main "$@"
+
+def fetch_job_ids(host: str, sql_command: str) -> list[int]:
+    """Query the openQA database of the given host over SSH."""
+    remote_command = shlex.join([
+        "sudo",
+        "-u",
+        PSQL_USER,
+        "psql",
+        "--no-align",
+        "--tuples-only",
+        f"--command={sql_command}",
+        "openqa",
+    ])
+    argv = ["ssh", host, remote_command]
+    completed = subprocess.run(argv, check=True, capture_output=True, text=True)
+    return [int(token) for token in completed.stdout.split()]
+
+
+def restart_job_ids(
+    client: OpenQA_Client,
+    job_ids: list[int],
+    *,
+    comment: str = "",
+    max_jobs_per_request: int = DEFAULT_MAX_JOBS_PER_REQUEST,
+    dry_run: bool = False,
+) -> None:
+    """Retrigger the jobs via the openQA API, in batches of the given size."""
+    for start in range(0, len(job_ids), max_jobs_per_request):
+        batch = job_ids[start : start + max_jobs_per_request]
+        params: dict[str, object] = {"jobs": batch}
+        if comment:
+            params["comment"] = comment
+        if dry_run:
+            log.info("Dry run: would POST jobs/restart with %s", params)
+        else:
+            client.openqa_request("POST", "jobs/restart", params=params)
+
+
+@app.command()
+def main(  # ruff: ignore[too-many-arguments]
+    *,
+    host: Annotated[
+        str,
+        typer.Option("--host", "-H", envvar="host", help="openQA host queried over SSH."),
+    ] = DEFAULT_HOST,
+    failed_since: Annotated[
+        str | None,
+        typer.Option("--failed-since", envvar="failed_since", help="Only retrigger jobs finished since this date."),
+    ] = None,
+    result: Annotated[
+        str,
+        typer.Option("--result", envvar="result", help="SQL condition selecting the job result."),
+    ] = DEFAULT_RESULT,
+    additional_filters: Annotated[
+        str | None,
+        typer.Option(
+            "--additional-filters", envvar="additional_filters", help="Additional SQL filters for the job query."
+        ),
+    ] = None,
+    comment: Annotated[
+        str,
+        typer.Option("--comment", envvar="comment", help="Comment to add to the retriggered jobs."),
+    ] = "",
+    dry_run: Annotated[
+        bool,
+        typer.Option("--dry-run", "-n", envvar="dry_run", help="Only print what would be done."),
+    ] = False,
+    worker: Annotated[
+        str | None,
+        typer.Option("--worker", envvar="WORKER", help="Only retrigger jobs that ran on this worker host."),
+    ] = None,
+    instance: Annotated[
+        str | None,
+        typer.Option("--instance", envvar="INSTANCE", help="Only retrigger jobs that ran on this worker instance."),
+    ] = None,
+    sql_command: Annotated[
+        str | None,
+        typer.Option("--sql-command", envvar="sql_command", help="Custom SQL command fetching the job IDs."),
+    ] = None,
+    job_ids: Annotated[
+        str | None,
+        typer.Option(
+            "--job-ids", envvar="JOB_IDS", help="Comma or space separated job IDs, skipping the database query."
+        ),
+    ] = None,
+    cli_protocol: Annotated[
+        str | None,
+        typer.Option("--cli-protocol", envvar="cli_protocol", help="Protocol used for the openQA API."),
+    ] = None,
+    cli_port: Annotated[
+        int | None,
+        typer.Option("--cli-port", envvar="cli_port", help="Port used for the openQA API."),
+    ] = None,
+    max_jobs_per_request: Annotated[
+        int,
+        typer.Option(
+            "--max-jobs-per-request", envvar="max_jobs_per_request", help="Maximum number of jobs per restart request."
+        ),
+    ] = DEFAULT_MAX_JOBS_PER_REQUEST,
+    verbose: Annotated[
+        int,
+        typer.Option("--verbose", "-v", count=True, help="Increase verbosity."),
+    ] = 0,
+) -> None:
+    """Retrigger openQA jobs matching the query, in batches."""
+    setup_logging(verbose)
+    if max_jobs_per_request < 1:
+        log.error("max-jobs-per-request must be at least 1")
+        raise typer.Exit(2)
+
+    since = failed_since or datetime.now(tz=UTC).date().isoformat()
+    query = sql_command or build_sql_command(worker, instance, result, since, additional_filters)
+    try:
+        selected = parse_job_ids(job_ids) if job_ids else fetch_job_ids(host, query)
+    except (OSError, subprocess.CalledProcessError, ValueError) as err:
+        log.exception("Failed to determine the job IDs to retrigger")
+        raise typer.Exit(1) from err
+
+    if not selected:
+        log.warning("No jobs to retrigger")
+        return
+
+    server = f"{host}:{cli_port}" if cli_port else host
+    restart_job_ids(
+        OpenQA_Client(server=server, scheme=cli_protocol or ""),
+        selected,
+        comment=comment,
+        max_jobs_per_request=max_jobs_per_request,
+        dry_run=dry_run,
+    )
+
+
+if __name__ == "__main__":  # pragma: no cover
+    app()
