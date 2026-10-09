@@ -24,6 +24,7 @@ main_requires:
   grep:
   jq:
   html-xml-utils:
+  obs-service-format_spec_file:
   openQA-client:  # openqa-cli
   osc:
   openssh-clients:  # ssh
