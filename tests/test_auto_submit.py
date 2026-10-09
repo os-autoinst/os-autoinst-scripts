@@ -253,21 +253,33 @@ def test_fetch_lfs_objects_batching(mocker: MockerFixture) -> None:
     assert len(calls) == 5
 
 
+def _git_binary() -> str:
+    git_bin = shutil.which("git")
+    assert git_bin is not None, "git must be installed for the LFS integration test"
+    return git_bin
+
+
 def test_fetch_lfs_objects_real_git_repo(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify that _fetch_lfs_objects downloads missing LFS objects in a real git repository."""
-    # Setup a "parent" Git repository with LFS and an initial commit
-    git_bin = shutil.which("git") or "/usr/bin/git"
+    git_bin = _git_binary()
+    for name, value in {
+        "GIT_AUTHOR_NAME": "Test User",
+        "GIT_AUTHOR_EMAIL": "test@example.com",
+        "GIT_COMMITTER_NAME": "Test User",
+        "GIT_COMMITTER_EMAIL": "test@example.com",
+    }.items():
+        monkeypatch.setenv(name, value)
     parent_dir = tmp_path / "parent"
     parent_dir.mkdir()
     subprocess.run([git_bin, "init", "-b", "leap-16.0", str(parent_dir)], check=True)
-    subprocess.run([git_bin, "-C", str(parent_dir), "config", "user.name", "Test User"], check=True)
-    subprocess.run([git_bin, "-C", str(parent_dir), "config", "user.email", "test@example.com"], check=True)
-    subprocess.run([git_bin, "-C", str(parent_dir), "config", "commit.gpgsign", "false"], check=True)
     subprocess.run([git_bin, "-C", str(parent_dir), "lfs", "install", "--local"], check=True)
     subprocess.run([git_bin, "-C", str(parent_dir), "lfs", "track", "*.obscpio"], check=True)
     (parent_dir / "base.txt").write_text("base content\n", encoding="utf-8")
     subprocess.run([git_bin, "-C", str(parent_dir), "add", ".gitattributes", "base.txt"], check=True)
-    subprocess.run([git_bin, "-C", str(parent_dir), "commit", "-m", "commit 1: initial"], check=True)
+    subprocess.run(
+        [git_bin, "-C", str(parent_dir), "-c", "commit.gpgsign=false", "commit", "-m", "commit 1: initial"],
+        check=True,
+    )
 
     # Clone the "parent" Git repo into an "origin" repo and configure this as "origin" remote in the "parent" repo
     origin_dir = tmp_path / "origin"
@@ -278,17 +290,21 @@ def test_fetch_lfs_objects_real_git_repo(tmp_path: pathlib.Path, monkeypatch: py
     # Commit 2 on parent: add intermediate LFS object
     (parent_dir / "intermediate.obscpio").write_text("intermediate lfs content\n", encoding="utf-8")
     subprocess.run([git_bin, "-C", str(parent_dir), "add", "intermediate.obscpio"], check=True)
-    subprocess.run([git_bin, "-C", str(parent_dir), "commit", "-m", "commit 2: add intermediate"], check=True)
+    subprocess.run(
+        [git_bin, "-C", str(parent_dir), "-c", "commit.gpgsign=false", "commit", "-m", "commit 2: add intermediate"],
+        check=True,
+    )
 
     # Commit 3 on parent: remove intermediate LFS object
     subprocess.run([git_bin, "-C", str(parent_dir), "rm", "intermediate.obscpio"], check=True)
-    subprocess.run([git_bin, "-C", str(parent_dir), "commit", "-m", "commit 3: remove intermediate"], check=True)
+    subprocess.run(
+        [git_bin, "-C", str(parent_dir), "-c", "commit.gpgsign=false", "commit", "-m", "commit 3: remove intermediate"],
+        check=True,
+    )
 
     # Clone "origin" repo to another repo "local" and setup LFS as well
     local_dir = tmp_path / "local"
     subprocess.run([git_bin, "clone", str(origin_dir), str(local_dir)], check=True)
-    subprocess.run([git_bin, "-C", str(local_dir), "config", "user.name", "Test User"], check=True)
-    subprocess.run([git_bin, "-C", str(local_dir), "config", "user.email", "test@example.com"], check=True)
     subprocess.run([git_bin, "-C", str(local_dir), "lfs", "install", "--local"], check=True)
 
     # Fetch "parent" commits into "local" and switch to "parent/leap-16.0"
