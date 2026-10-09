@@ -164,7 +164,7 @@ def test_extract_excerpt(tmp_path: pathlib.Path) -> None:
     assert openqa_label_known_issues.extract_excerpt(str(f)) == "    # (No log excerpt found)"
 
 
-def test_comment_on_job(mocker: MockerFixture) -> None:
+def test_comment_on_job(mocker: MockerFixture, caplog: pytest.LogCaptureFixture) -> None:
     client = openqa_label_known_issues.OpenQAClient("http://localhost")
     # 1. Success without force_result
     mock_run = mocker.patch.object(client, "run_cmd")
@@ -189,8 +189,15 @@ def test_comment_on_job(mocker: MockerFixture) -> None:
         openqa_label_known_issues.comment_on_job("123", "comment", "", client)
         mock_print.assert_called_once_with("Failed to comment on job 123: error string", file=sys.stderr)
 
+    # 4. dry run logs the would-be comment
+    dry_client = openqa_label_known_issues.OpenQAClient("http://localhost", dry_run=True)
+    mocker.patch.object(dry_client, "run_cmd")
+    with caplog.at_level(logging.INFO):
+        openqa_label_known_issues.comment_on_job("123", "dry comment", "", dry_client)
+    assert "Would comment on job 123: dry comment" in caplog.text
 
-def test_restart_job(mocker: MockerFixture) -> None:
+
+def test_restart_job(mocker: MockerFixture, caplog: pytest.LogCaptureFixture) -> None:
     client = openqa_label_known_issues.OpenQAClient("http://localhost")
     # Success
     mock_run = mocker.patch.object(client, "run_cmd")
@@ -203,6 +210,13 @@ def test_restart_job(mocker: MockerFixture) -> None:
     with patch("builtins.print") as mock_print:
         openqa_label_known_issues.restart_job("123", client)
         mock_print.assert_called_once_with("Failed to restart job 123: restart error", file=sys.stderr)
+
+    # Dry run logs the would-be restart
+    dry_client = openqa_label_known_issues.OpenQAClient("http://localhost", dry_run=True)
+    mocker.patch.object(dry_client, "run_cmd")
+    with caplog.at_level(logging.INFO):
+        openqa_label_known_issues.restart_job("123", dry_client)
+    assert "Would restart job 123" in caplog.text
 
 
 def test_search_log(tmp_path: pathlib.Path) -> None:
@@ -365,6 +379,10 @@ def test_get_default_retry_limit(mocker: MockerFixture) -> None:
     # Env override
     mocker.patch.dict("os.environ", {"auto_review_retry_limit": "4"}, clear=True)
     assert openqa_label_known_issues.get_default_retry_limit(7) == 4
+
+    # Non-numeric env value falls back to the default
+    mocker.patch.dict("os.environ", {"auto_review_retry_limit": "not-a-number"}, clear=True)
+    assert openqa_label_known_issues.get_default_retry_limit(7) == 7
 
     # Custom parameter override
     mocker.patch.dict("os.environ", {}, clear=True)
@@ -648,6 +666,14 @@ def test_handle_unreviewed(mocker: MockerFixture, tmp_path: pathlib.Path) -> Non
     )
     mock_send.assert_not_called()
 
+    # 6. Group description without MAILTO falls back to notification_address
+    mock_run_dry.return_value = Mock(stdout='[{"description": "no mail here", "name": "groupname"}]')
+    mock_send.reset_mock()
+    openqa_label_known_issues.handle_unreviewed(
+        "http://testurl", str(f), "my reason", "24", True, "from@ex.com", "notif@ex.com", {}, client_obj_dry
+    )
+    mock_send.assert_called_once_with("notif@ex.com", "multipart-email", True)
+
 
 def test_fetch_issues(mocker: MockerFixture) -> None:
     mock_client = MagicMock(spec=httpx.Client)
@@ -797,6 +823,33 @@ def test_investigate_issue(mocker: MockerFixture, tmp_path: pathlib.Path) -> Non
     openqa_label_known_issues.investigate_issue(
         "http://host/tests/123", mock_client, openqa_label_known_issues.OpenQAClient("http://host"), [], "http://host"
     )
+
+    # 11. log fetch raises, curl_output falls back to 0 and handle_unreachable returns 0
+    mock_client.get.side_effect = Exception("log fetch failed")
+    mock_sub.return_value = Mock(stdout='{"job": {"state": "done", "result": "failed", "reason": "myreason"}}')
+    openqa_label_known_issues.investigate_issue(
+        "http://host/tests/123", mock_client, openqa_label_known_issues.OpenQAClient("http://host"), [], "http://host"
+    )
+
+    # 12. log fetch 404 with a real reason falls through to the issue tracker labelling
+    mock_client.get.side_effect = None
+    mock_client.get.return_value = Mock(status_code=404, text="")
+    mock_tracker.reset_mock()
+    mock_tracker.return_value = True
+    openqa_label_known_issues.investigate_issue(
+        "http://host/tests/123", mock_client, openqa_label_known_issues.OpenQAClient("http://host"), [], "http://host"
+    )
+    mock_tracker.assert_called_once()
+
+
+def test_openqa_client_run_cmd(mocker: MockerFixture) -> None:
+    mock_run = mocker.patch("openqa_label_known_issues.subprocess.run")
+    dry_client = openqa_label_known_issues.OpenQAClient("http://localhost", dry_run=True)
+    dry_client.run_cmd(["jobs/1"])
+    assert mock_run.call_args.args[0][:2] == ["echo", "openqa-cli"]
+    live_client = openqa_label_known_issues.OpenQAClient("http://localhost")
+    live_client.run_cmd(["jobs/1"])
+    assert mock_run.call_args.args[0][0] == "openqa-cli"
 
 
 def test_main(mocker: MockerFixture) -> None:

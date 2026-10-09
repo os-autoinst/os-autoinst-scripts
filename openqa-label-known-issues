@@ -256,10 +256,7 @@ def extract_excerpt(filepath: str) -> str:
         return "    # (No log excerpt found)"
 
     ansi_escape = re.compile(r"\x1b\[[0-9;]*m")
-    clean_lines = [ansi_escape.sub("", line) for line in matched_lines]
-    if clean_lines:
-        clean_lines = clean_lines[:-1]
-
+    clean_lines = [ansi_escape.sub("", line) for line in matched_lines][:-1]
     return "\n".join(f"    # {line}" for line in clean_lines)
 
 
