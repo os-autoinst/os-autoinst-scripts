@@ -23,6 +23,8 @@ HTTP_NOT_FOUND = 404
 USER_AGENT = "openqa-investigate (https://github.com/os-autoinst/os-autoinst-scripts)"
 DEFAULT_HTTP_TIMEOUT: float = 90.0
 DEFAULT_INVESTIGATION_TIMEOUT: float = 900.0
+# Characters allowed by openQA in TEST variable: '\p{Word} _*.,:/#@'
+TEST_NAME_INVALID_CHARS = re.compile(r"[^\w _*.,:/#@]")
 
 log = logging.getLogger("openqa-investigate")
 
@@ -497,6 +499,7 @@ def _build_clone_settings(  # ruff: ignore[too-many-arguments, too-many-position
 ) -> tuple[list[str], str]:
     """Build clone settings and the full job name."""
     base_name = job_info.get("test", "")
+    name_suffix = TEST_NAME_INVALID_CHARS.sub("", name_suffix)
     suffix_str = f":{name_suffix}" if name_suffix else ""
     name = f"{base_name}:investigate{suffix_str}"
 

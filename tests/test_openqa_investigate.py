@@ -637,6 +637,33 @@ def test_build_clone_settings(mocker: MockerFixture) -> None:
     )
     assert "OPENQA_INVESTIGATE_STRICT=1" in settings_strict
 
+    # Strip invalid characters from TEST variable (suffix_str)
+    settings_invalid, name_invalid = openqa_investigate._build_clone_settings(
+        client,
+        job_info,
+        10,
+        "last_good_tests_and_build:hash+build-123!$(test)",
+        None,
+        None,
+        42,
+    )
+    assert "TEST+=:investigate:last_good_tests_and_build:hashbuild123test" in settings_invalid
+    assert name_invalid == "sample_test:investigate:last_good_tests_and_build:hashbuild123test"
+
+    # All characters allowed by openQA (\p{Word} _*.,:/#@) are preserved
+    allowed = "valid_WORD 123_*.,:/#@"
+    settings_allowed, name_allowed = openqa_investigate._build_clone_settings(
+        client,
+        job_info,
+        10,
+        allowed,
+        None,
+        None,
+        42,
+    )
+    assert f"TEST+=:investigate:{allowed}" in settings_allowed
+    assert name_allowed == f"sample_test:investigate:{allowed}"
+
 
 def test_clone(mocker: MockerFixture) -> None:
     client = openqa_investigate.OpenQAClient("https://openqa.opensuse.org")
