@@ -1,0 +1,67 @@
+{
+  "modules": [
+    {
+      "name": "boot",
+      "category": "boot",
+      "result": "passed",
+      "details": []
+    },
+    {
+      "name": "install_pkgs",
+      "category": "installation",
+      "result": "failed",
+      "details": [
+        {
+          "num": 1,
+          "display_title": "wait_serial",
+          "result": "fail",
+          "text_data": "# Command: zypper install foo\n# wait_serial expected: \"foo installed\"\n# Output: error: package not found\n"
+        }
+      ]
+    },
+    {
+      "name": "trup_install",
+      "category": null,
+      "result": "failed",
+      "details": [
+        {
+          "num": 3,
+          "display_title": "ok",
+          "result": "fail",
+          "text_data": "# Test died: trup_call returned with 1, expected 0 at /usr/lib/sle/tests/transactional/trup_install.pm line 42.\n  transactional::trup_call(\"pkg install sudo git-core vim curl\") called at /usr/lib/sle/tests/transactional/trup_install.pm line 28\n"
+        }
+      ]
+    },
+    {
+      "name": "mixed_failures",
+      "category": "console",
+      "result": "failed",
+      "details": [
+        {
+          "num": 5,
+          "display_title": "wait_serial",
+          "result": "fail",
+          "text_data": "# Command: systemctl status myservice\n# wait_serial expected: \"active (running)\"\n"
+        },
+        {
+          "num": 6,
+          "display_title": "assert_screen",
+          "result": "fail",
+          "text_data": "# Test died: command 'reboot' timed out at /usr/lib/os-autoinst/testapi.pm line 100.\n"
+        },
+        {
+          "num": 7,
+          "display_title": "needle_match",
+          "result": "fail",
+          "text_data": "Needle 'login_screen' not found within 90 seconds"
+        },
+        {
+          "num": 8,
+          "display_title": "ignored",
+          "result": "passed",
+          "text_data": "ok"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "modules": [
+    {
+      "name": "boot",
+      "category": "boot",
+      "result": "passed",
+      "details": []
+    },
+    {
+      "name": "warn_step",
+      "category": "console",
+      "result": "softfailed",
+      "details": [
+        {
+          "num": 1,
+          "display_title": "wait_serial",
+          "result": "fail",
+          "text_data": "# Command: ls /tmp/maybe-missing\n"
+        }
+      ]
+    },
+    {
+      "name": "hard_failure",
+      "category": "console",
+      "result": "failed",
+      "details": [
+        {
+          "num": 2,
+          "display_title": "wait_serial",
+          "result": "fail",
+          "text_data": "# Command: false\n"
+        }
+      ]
+    },
+    {
+      "name": "should_not_match",
+      "category": "console",
+      "result": "none",
+      "details": []
+    }
+  ]
+}
