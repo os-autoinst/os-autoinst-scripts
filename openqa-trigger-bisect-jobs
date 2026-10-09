@@ -33,6 +33,8 @@ log = logging.getLogger(sys.argv[0] if __name__ == "__main__" else __name__)
 GOOD = "-"
 BAD = "+"
 INCIDENT_FROM_REPO_URL_RE = re.compile(r".*PullRequest:/(\d+):/.*")
+# e.g. "...-Build20261007-1-Server-DVD-Updates-64bit.qcow2": image with updates already installed
+DATED_HDD_RE = re.compile(r"(?<!\d)20\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])(?!\d)")
 
 
 def get_session(retries: int = 5) -> requests.Session:
@@ -253,6 +255,10 @@ def _check_skip_bisection(job: dict) -> bool:
         return True
     if job.get("clone_id") is not None:
         log.info("Job %d already has a clone, skipping bisection", job["id"])
+        return True
+    hdd = job.get("settings", {}).get("HDD_1", "")
+    if DATED_HDD_RE.search(hdd):
+        log.info("Job %d uses HDD_1 %s with updates already installed, skipping bisection", job["id"], hdd)
         return True
 
     children = job.get("children", {})
