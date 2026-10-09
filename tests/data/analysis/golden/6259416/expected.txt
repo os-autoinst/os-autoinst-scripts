@@ -1,0 +1,107 @@
+OpenQA Job Analysis: https://openqa.opensuse.org/t6259416
+
+Fetching test details from https://openqa.opensuse.org/tests/6259416/details_ajax...
+Test: create_hdd_textmode
+Result: failed (state done)
+Settings: DISTRI=opensuse VERSION=Tumbleweed FLAVOR=NET ARCH=arm BUILD=20261007 MACHINE=aarch32 BACKEND=qemu QEMURAM=2048 UEFI=1
+Modules: 1 failed / 0 softfailed / 18 skipped
+
+Previous/next runs: previous 5 run(s): 4x failed in resolve_dependency_issues (`no candidate needle with tag(s) 'installation-settings-overview-loaded'`; `qr/login:\s*$/ui`) [job 6259175, build 20261007]; incomplete [job 6259399, build 20261007].
+Same group+build: 5 of 20 other jobs in group 143 build 20261007 failed (2 in flavor NET): create_hdd_minimalx failed in select_patterns (`no candidate needle with tag(s) 'inst-overview'`; `qr/login:\s*$/ui`) [job 6259174]; textmode failed in resolve_dependency_issues (`no candidate needle with tag(s) 'installation-settings-overview-loaded'`; `qr/login:\s*$/ui`) [job 6259186]; jeos-extra failed in diskusage, journal_check, command_not_found, java, sysstat_agnostic, gcc, valgrind, a2ps (`Unknown issue`; `Data size`) [job 6259193]; jeos failed in journal_check, postgresql_server (`Unknown issue`; `systemctl --no-pager start postgresql.service`) [job 6259196]; jeos failed in diskusage, journal_check, consoletest_setup (`Unknown issue`; `Data size`) [job 6259414]; 2 passed/softfailed.
+
+Found 1 failed module(s)
+
+================================================================================
+Failed Module: installation/resolve_dependency_issues
+================================================================================
+
+# Cmd[1]: no candidate needle with tag(s) 'installation-settings-overview-loaded'
+# Cmd[2]: qr/login:\s*$/ui
+# Cmd[3]: Failed
+(post)
+Steps: 4 failed / 0 softfailed
+
+Step context:
+  #3 [FAIL]  (screenshot: resolve_dependency_issues-3.png)
+  #4 [FAIL]  Failed  # Test died: no candidate needle with tag(s) 'installation-settings-overview-loaded' matched
+  #5  Post-fail  Entering post fail hook
+  #10  wait_serial  marker: qr/BASH:([^:]*):/u
+  #12  wait_serial  command: setterm -blank 0  exit code: 0
+
+*** TEST DIED ERROR ***
+
+Error in step #4:
+# Test died: no candidate needle with tag(s) 'installation-settings-overview-loaded' matched
+--- # stack trace
+testapi::assert_screen('installation-settings-overview-loaded', 420) called at tests/installation/resolve_dependency_issues.pm line 20
+
+--- autoinst-log.txt (searching for needle failure) ---
+[needle search: 41 no-match polls, best candidate inst-overview-install-button-not-focused-20260414 (0.10), 29 unchanged-screen polls, 13 slow-check warnings]
+[2026-10-08T11:14:17.549182+02:00] [debug] [pid:130725] considering VNC stalled, no update for 4.08 seconds
+[2026-10-08T11:14:17.804486+02:00] [debug] [pid:130725] pointer type 1 0 1024 768 -257
+[2026-10-08T11:14:17.804733+02:00] [debug] [pid:130725] led state 0 1 1 -261
+[2026-10-08T11:14:32.788550+02:00] [debug] [pid:130725] considering VNC stalled, no update for 4.05 seconds
+[2026-10-08T11:14:33.038807+02:00] [debug] [pid:130725] pointer type 1 0 1024 768 -257
+[2026-10-08T11:14:33.039090+02:00] [debug] [pid:130725] led state 0 1 1 -261
+[2026-10-08T11:14:37.593254+02:00] [debug] [pid:130725] considering VNC stalled, no update for 4.19 seconds
+[2026-10-08T11:14:37.843408+02:00] [debug] [pid:130725] pointer type 1 0 1024 768 -257
+[2026-10-08T11:14:37.843649+02:00] [debug] [pid:130725] led state 0 1 1 -261
+[2026-10-08T11:14:52.786410+02:00] [debug] [pid:130725] considering VNC stalled, no update for 4.07 seconds
+[2026-10-08T11:14:53.041396+02:00] [debug] [pid:130725] pointer type 1 0 1024 768 -257
+[2026-10-08T11:14:53.041619+02:00] [debug] [pid:130725] led state 0 1 1 -261
+[2026-10-08T11:15:09.810138+02:00] [debug] [pid:130725] no match: -1.6s, best candidate: inst-overview-install-button-not-focused-20260414 (0.10)
+[2026-10-08T11:15:10.178074+02:00] [debug] [pid:130533] >>> testapi::_check_backend_response: match=installation-settings-overview-loaded timed out after 840 (assert_screen)
+[2026-10-08T11:15:10.207535+02:00] [debug] [pid:130533] [step:installation,resolve_dependency_issues,2] tests/installation/resolve_dependency_issues.pm:20 called testapi::assert_screen
+[2026-10-08T11:15:10.232197+02:00] [debug] [pid:130533] [step:installation,resolve_dependency_issues,3] tests/installation/resolve_dependency_issues.pm:20 called testapi::assert_screen
+[2026-10-08T11:15:10.256814+02:00] [debug] [pid:130533] [step:installation,resolve_dependency_issues,4] tests/installation/resolve_dependency_issues.pm:20 called testapi::assert_screen
+>>> [2026-10-08T11:15:10.263529+02:00] [info] [pid:130533] ::: basetest::_handle_test_exception: # Test died: no candidate needle with tag(s) 'installation-settings-overview-loaded' matched
+  --- # stack trace
+  testapi::assert_screen('installation-settings-overview-loaded', 420) called at tests/installation/resolve_dependency_issues.pm line 20
+  
+[2026-10-08T11:15:10.263693+02:00] [debug] [pid:130533] [step:installation,resolve_dependency_issues,4] tests/installation/resolve_dependency_issues.pm:20 called testapi::assert_screen
+[2026-10-08T11:15:10.269089+02:00] [debug] [pid:130533] [step:installation,resolve_dependency_issues,6] tests/installation/resolve_dependency_issues.pm:35 called testapi::select_console
+[2026-10-08T11:15:10.269317+02:00] [debug] [pid:130533] <<< testapi::select_console(testapi_console="root-console")
+[2026-10-08T11:15:10.577020+02:00] [debug] [pid:130533] activate_console, console: root-console, type: console
+[2026-10-08T11:15:10.577885+02:00] [debug] [pid:130533] [step:installation,resolve_dependency_issues,6] tests/installation/resolve_dependency_issues.pm:35 called testapi::select_console -> lib/susedistribution.pm:898 called testapi::wait_still_screen
+[2026-10-08T11:15:10.578191+02:00] [debug] [pid:130533] <<< testapi::wait_still_screen(timeout=30, similarity_level=47, stilltime=1)
+[2026-10-08T11:15:11.614924+02:00] [debug] [pid:130533] >>> testapi::wait_still_screen: detected same image for 1 seconds (1.03384685516357 s elapsed), last detected similarity is 1000000
+[2026-10-08T11:15:11.615443+02:00] [debug] [pid:130533] [step:installation,resolve_dependency_issues,6] tests/installation/resolve_dependency_issues.pm:35 called testapi::select_console -> lib/susedistribution.pm:903 called testapi::assert_screen
+[2026-10-08T11:15:11.615728+02:00] [debug] [pid:130533] <<< testapi::assert_screen(mustmatch=[
+    "tty6-selected",
+    "text-logged-in-root"
+  ], timeout=90)
+[needle search: 32 no-match polls, best candidate text-logged-in-root-simple_prompt-20190301 (0.69), 24 unchanged-screen polls]
+[2026-10-08T11:15:12.767194+02:00] [debug] [pid:130533] >>> testapi::_handle_found_needle: found text-logged-in-root-simple_prompt-20190301, similarity 1.00 @ 120/144
+[2026-10-08T11:15:12.768744+02:00] [debug] [pid:130533] [step:installation,resolve_dependency_issues,7] tests/installation/resolve_dependency_issues.pm:35 called testapi::select_console -> lib/susedistribution.pm:917 called testapi::assert_screen
+[2026-10-08T11:15:12.769007+02:00] [debug] [pid:130533] <<< testapi::assert_screen(mustmatch="text-logged-in-root", timeout=60)
+[2026-10-08T11:15:14.762915+02:00] [debug] [pid:130533] >>> testapi::_handle_found_needle: found text-logged-in-root-simple_prompt-20190301, similarity 1.00 @ 120/144
+[2026-10-08T11:15:14.764721+02:00] [debug] [pid:130533] [step:installation,resolve_dependency_issues,8] tests/installation/resolve_dependency_issues.pm:35 called testapi::select_console -> lib/susedistribution.pm:920 called testapi::assert_screen
+[2026-10-08T11:15:14.765032+02:00] [debug] [pid:130533] <<< testapi::assert_screen(mustmatch="root-console", timeout=30)
+[2026-10-08T11:15:15.852270+02:00] [debug] [pid:130533] >>> testapi::_handle_found_needle: found root-console-no_color-20200130, similarity 1.00 @ 120/144
+[2026-10-08T11:15:15.856433+02:00] [debug] [pid:130533] [step:installation,resolve_dependency_issues,9] tests/installation/resolve_dependency_issues.pm:35 called testapi::select_console -> lib/susedistribution.pm:922 called susedistribution::disable_key_repeat_if_applicable -> lib/susedistribution.pm:831 called distribution::disable_key_repeat
+[2026-10-08T11:15:15.857101+02:00] [debug] [pid:130533] <<< testapi::type_string(string="kbdrate -s -d99999\n", max_interval=250, wait_screen_change=0, wait_still_screen=0, timeout=30, similarity_level=47)
+[2026-10-08T11:15:16.502593+02:00] [debug] [pid:130533] [step:installation,resolve_dependency_issues,9] tests/installation/resolve_dependency_issues.pm:35 called testapi::select_console -> lib/susedistribution.pm:978 called distribution::script_run
+[2026-10-08T11:15:16.503188+02:00] [debug] [pid:130533] <<< testapi::type_string(string="echo \"BASH:\$BASH_VERSION:\" > /dev/ttyAMA0\n", max_interval=250, wait_screen_change=0, wait_still_screen=0, timeout=30, similarity_level=47)
+[2026-10-08T11:15:18.349207+02:00] [debug] [pid:130533] [step:installation,resolve_dependency_issues,9] tests/installation/resolve_dependency_issues.pm:35 called testapi::select_console -> lib/susedistribution.pm:978 called distribution::script_run
+[2026-10-08T11:15:18.349959+02:00] [debug] [pid:130533] <<< testapi::wait_serial(quiet=undef, internal_marker=0, timeout=10, capture_name=undef, record_output=undef, regexp=qr/BASH:([^:]*):/u, no_regex=0, buffer_size=undef, record_command=undef, expect_not_found=0)
+[2026-10-08T11:15:19.476544+02:00] [debug] [pid:130533] [step:installation,resolve_dependency_issues,10] tests/installation/resolve_dependency_issues.pm:35 called testapi::select_console -> lib/susedistribution.pm:978 called distribution::script_run
+[2026-10-08T11:15:19.477067+02:00] [debug] [pid:130533] >>> testapi::wait_serial: (?^u:BASH:([^:]*):): ok
+[2026-10-08T11:15:19.477418+02:00] [debug] [pid:130533] [step:installation,resolve_dependency_issues,11] tests/installation/resolve_dependency_issues.pm:35 called testapi::select_console -> lib/susedistribution.pm:978 called distribution::script_run
+[2026-10-08T11:15:19.477823+02:00] [debug] [pid:130533] <<< testapi::type_string(string="grep -q '_OAPV=3' ~/.bashrc 2>/dev/null||{ sed -i '/_oap/d;/_OAPV=3/d' ~/.bashrc ~/.profile 2>/dev/null;echo '_OAPV=3;_oap(){ r=\$?;if [ -n \"\$_OANM\" ];then unset _OANM;else c=\$(HISTTIMEFORMAT= history 1);c=\${c#*[0-9]  };c=\${c#\${c%%[![:space:]]*}};c=\${c%\${c##*[![:space:]]}};l=\${#c};t=\$c;[ \$l -ge 4 ]&&t=\${c: -4};printf \"OA:DONE-%04x-%d-OA:%s%d%s\\nOA:START\\n\" \$RANDOM \$r \"\${c:0:4}\" \$l \"\$t\">/dev/ttyAMA0;fi;};PROMPT_COMMAND=_oap'|tee -a ~/.bashrc ~/.profile>/dev/null;};. ~/.bashrc\n", max_interval=250, wait_screen_change=0, wait_still_screen=0, timeout=30, similarity_level=47)
+[2026-10-08T11:15:38.609679+02:00] [debug] [pid:130533] [step:installation,resolve_dependency_issues,11] tests/installation/resolve_dependency_issues.pm:35 called testapi::select_console -> lib/susedistribution.pm:978 called distribution::script_run
+[2026-10-08T11:15:38.610062+02:00] [debug] [pid:130533] <<< distribution::detect_serial_marker_capability("serial_marker: console 'root-console' Level 3 detected")
+[2026-10-08T11:15:38.611437+02:00] [debug] [pid:130533] [step:installation,resolve_dependency_issues,11] tests/installation/resolve_dependency_issues.pm:35 called testapi::select_console -> lib/susedistribution.pm:978 called distribution::script_run
+[2026-10-08T11:15:38.611775+02:00] [debug] [pid:130533] <<< testapi::type_string(string="setterm -blank 0\n", max_interval=250, wait_screen_change=0, wait_still_screen=0, timeout=30, similarity_level=47)
+[2026-10-08T11:15:39.188927+02:00] [debug] [pid:130533] [step:installation,resolve_dependency_issues,11] tests/installation/resolve_dependency_issues.pm:35 called testapi::select_console -> lib/susedistribution.pm:978 called distribution::script_run
+[2026-10-08T11:15:39.189599+02:00] [debug] [pid:130533] <<< testapi::wait_serial(capture_name="Exit code", record_output=undef, regexp=qr/OA:DONE-[0-9a-f]{4}-(\d+)-OA\:sett16nk\ 0/u, no_regex=0, record_command="setterm -blank 0", buffer_size=undef, expect_not_found=0, quiet=undef, timeout=30, internal_marker=1)
+[2026-10-08T11:15:40.303436+02:00] [debug] [pid:130533] [step:installation,resolve_dependency_issues,12] tests/installation/resolve_dependency_issues.pm:35 called testapi::select_console -> lib/susedistribution.pm:978 called distribution::script_run
+[2026-10-08T11:15:40.303967+02:00] [debug] [pid:130533] >>> testapi::wait_serial: (?^u:OA:DONE-[0-9a-f]{4}-(\d+)-OA\:sett16nk\ 0): ok
+[2026-10-08T11:15:40.304533+02:00] [debug] [pid:130533] [step:installation,resolve_dependency_issues,13] tests/installation/resolve_dependency_issues.pm:35 called testapi::select_console -> lib/susedistribution.pm:1042 called testapi::assert_screen
+[2026-10-08T11:15:40.304834+02:00] [debug] [pid:130533] <<< testapi::assert_screen(mustmatch="root-console", timeout=30, no_wait=1)
+[2026-10-08T11:15:45.319794+02:00] [debug] [pid:130533] >>> testapi::_handle_found_needle: found root-console-no_color-20200130, similarity 1.00 @ 120/272
+[2026-10-08T11:15:45.322424+02:00] [debug] [pid:130533] [step:installation,resolve_dependency_issues,14] tests/installation/resolve_dependency_issues.pm:36 called Utils::Logging::upload_solvertestcase_logs -> products/opensuse/../../lib/Utils/Logging.pm:417 called testapi::script_run
+--- End of Log Section ---
+
+Secondary failure (post-fail hook) #40 wait_serial: # wait_serial expected: qr/login:\s*$/ui
+Secondary failure (post-fail hook) #41 Failed (post): Failed to wait for login prompt at opensuse/lib/serial_terminal.pm line 179, <$isotovideo> line 1.
+

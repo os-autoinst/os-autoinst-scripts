@@ -1,0 +1,182 @@
+OpenQA Job Analysis: https://openqa.opensuse.org/t6259432
+
+Fetching test details from https://openqa.opensuse.org/tests/6259432/details_ajax...
+Test: upgrade_Leap_15.2_kde
+Result: failed (state done)
+Settings: DISTRI=opensuse VERSION=Tumbleweed FLAVOR=DVD ARCH=aarch64 BUILD=20261007 MACHINE=aarch64 BACKEND=qemu QEMURAM=2048 UEFI=1 BOOTFROM=cdrom HDD_1=opensuse-15.2-aarch64-GM-kde@aarch64.qcow2
+Modules: 1 failed / 0 softfailed / 65 skipped
+
+Previous/next runs: previous 5 run(s): 2x failed in updates_packagekit_kde (`hour(s)`; `Failed (post)`) [job 6258532, build 20261007]; incomplete [job 6259017, build 20261007]; failed [job 6256909, build 20261006]; failed in opensuse_repos (`zypper -n in openSUSE-repos-NVIDIA | cat; ( exit ${PIPESTATUS[0]} )`; `Failed (post)`) [job 6253658, build 20261005].
+Same group+build: 57 of 312 other jobs in group 3 build 20261007 failed (31 in flavor DVD): 2x extra_tests_ai_ml failed in tvm (`Conflict`) [job 6258613]; extra_tests_textmode failed in mta, kdump, systemd_resolved, velociraptor_client_event_collect, sssd_389ds_functional (`Conflict`; `qr/sysrq\s*:\s+show\s+blocked\s+state/i`) [job 6258505]; remote_ssh_controller parallel_failed in disable_grub_timeout (`no candidate needle with tag(s) 'installation-settings-overview-loaded'`) [job 6258531]; remote_ssh_target failed in remote_target (`no candidate needle with tag(s) 'systemd-boot'`; `YaST2 log errors`) [job 6258533]; network_bonding_target failed in network_bonding_setup (`podman pull registry.opensuse.org/opensuse/factory/totest/containers/opensuse/k…`) [job 6258562]; extra_tests_webserver failed in rails (`rails new mycoolapp --skip-bundle --skip-test --skip-thruster --skip-brakeman -…`) [job 6258587]; +47 more; 249 passed/softfailed.
+
+Key error: firmware crash (Synchronous Exception)
+
+Found 1 failed module(s)
+
+
+================================================================================
+*** FATAL BOOT ERROR DETECTED ***
+================================================================================
+
+--- serial0.txt (searching for: boot/firmware fatal error) ---
+(2 fatal events found; showing the last unexpected)
+  00000475564C0: 0000000047556510 00000000BD178C6C 00000000BD192888 00000000BB171000
+  00000475564E0: 0000000000000000 00000000BD192978 00000000BCD801E0 0000000000000005
+  0000047556500: 00000000BD0AC000 00000000BD0A5000 0000000047556540 00000000BD1795D0
+>>> Synchronous Exception at 0x0000000047577478
+AllocatePool: failed to allocate 384 bytes
+ASSERT [HiiDatabase] Font.c(1742): GlyphBuf != ((void *) 0)
+--- End of Log Section ---
+
+================================================================================
+Failed Module: installation/grub_test
+================================================================================
+
+# Cmd[1]: no candidate needle with tag(s) 'tianocore-boot_maintenance_manager'
+# Cmd[2]: qr/login:\s*$/ui
+# Cmd[3]: Failed
+(post)
+Steps: 4 failed / 0 softfailed
+
+Step context:
+  #320 [FAIL]  (screenshot: grub_test-320.png)
+  #321 [FAIL]  Failed  # Test died: no candidate needle with tag(s) 'tianocore-boot_maintenance_manager' matched
+  #322  Post-fail  Entering post fail hook
+  #323 [FAIL]  wait_serial  marker: qr/login:\s*$/ui
+  #324 [FAIL]  Failed
+(post)  # Post fail hook died: Failed to wait for login prompt at opensuse/lib/serial_terminal.pm line 179, <$isotovideo> line 1
+
+*** TEST DIED ERROR ***
+
+Error in step #321:
+# Test died: no candidate needle with tag(s) 'tianocore-boot_maintenance_manager' matched
+--- # stack trace
+testapi::send_key_until_needlematch('tianocore-boot_maintenance_manager', 'down', 6, 5) called at products/opensuse/../../lib/opensusebasetest.pm line 333
+grub_utils::handle_installer_medium_bootup at lib/grub_utils.pm line 35
+grub_utils::grub_test at tests/installation/grub_test.pm line 20
+
+--- autoinst-log.txt (searching for needle failure) ---
+[needle search: 34 no-match polls, best candidate boot_to_desktop-tianocore-boot_maintenance_manager-20170829 (0.00), 22 unchanged-screen polls]
+[2026-10-08T11:10:49.168053+01:00] [debug] [pid:8256] no match: -0.1s, best candidate: boot_to_desktop-tianocore-boot_maintenance_manager-20170829 (0.00)
+[2026-10-08T11:10:49.332785+01:00] [debug] [pid:8225] >>> testapi::_check_backend_response: match=tianocore-boot_maintenance_manager timed out after 10 (check_screen)
+[2026-10-08T11:10:49.354561+01:00] [debug] [pid:8225] [step:installation,grub_test,312] tests/installation/grub_test.pm:20 called grub_utils::grub_test -> lib/grub_utils.pm:35 called grub_utils::handle_installer_medium_bootup -> lib/grub_utils.pm:75 called opensusebasetest::handle_uefi_boot_disk_workaround -> products/opensuse/../../lib/opensusebasetest.pm:333 called testapi::send_key_until_needlematch
+[2026-10-08T11:10:49.354945+01:00] [debug] [pid:8225] [step:installation,grub_test,312] tests/installation/grub_test.pm:20 called grub_utils::grub_test -> lib/grub_utils.pm:35 called grub_utils::handle_installer_medium_bootup -> lib/grub_utils.pm:75 called opensusebasetest::handle_uefi_boot_disk_workaround -> products/opensuse/../../lib/opensusebasetest.pm:333 called testapi::send_key_until_needlematch
+[2026-10-08T11:10:49.355193+01:00] [debug] [pid:8225] <<< testapi::wait_screen_change(timeout=10, similarity_level=50)
+[2026-10-08T11:10:49.356632+01:00] [debug] [pid:8225] [step:installation,grub_test,312] tests/installation/grub_test.pm:20 called grub_utils::grub_test -> lib/grub_utils.pm:35 called grub_utils::handle_installer_medium_bootup -> lib/grub_utils.pm:75 called opensusebasetest::handle_uefi_boot_disk_workaround -> products/opensuse/../../lib/opensusebasetest.pm:333 called testapi::send_key_until_needlematch
+[2026-10-08T11:10:49.356838+01:00] [debug] [pid:8225] <<< testapi::send_key(key="down", wait_screen_change=0)
+[2026-10-08T11:11:09.594664+01:00] [debug] [pid:8225] >>> testapi::wait_screen_change: timed out after 20.000097990036 seconds (similarity: 1000000)
+[2026-10-08T11:11:09.699736+01:00] [debug] [pid:8225] [step:installation,grub_test,313] tests/installation/grub_test.pm:20 called grub_utils::grub_test -> lib/grub_utils.pm:35 called grub_utils::handle_installer_medium_bootup -> lib/grub_utils.pm:75 called opensusebasetest::handle_uefi_boot_disk_workaround -> products/opensuse/../../lib/opensusebasetest.pm:333 called testapi::send_key_until_needlematch
+[2026-10-08T11:11:09.700047+01:00] [debug] [pid:8225] <<< testapi::check_screen(mustmatch="tianocore-boot_maintenance_manager", timeout=5)
+[2026-10-08T11:11:19.773869+01:00] [debug] [pid:8256] no match: -0.1s, best candidate: boot_to_desktop-tianocore-boot_maintenance_manager-20170829 (0.00)
+[2026-10-08T11:11:19.938327+01:00] [debug] [pid:8225] >>> testapi::_check_backend_response: match=tianocore-boot_maintenance_manager timed out after 10 (check_screen)
+[2026-10-08T11:11:19.959620+01:00] [debug] [pid:8225] [step:installation,grub_test,314] tests/installation/grub_test.pm:20 called grub_utils::grub_test -> lib/grub_utils.pm:35 called grub_utils::handle_installer_medium_bootup -> lib/grub_utils.pm:75 called opensusebasetest::handle_uefi_boot_disk_workaround -> products/opensuse/../../lib/opensusebasetest.pm:333 called testapi::send_key_until_needlematch
+[2026-10-08T11:11:19.960010+01:00] [debug] [pid:8225] [step:installation,grub_test,314] tests/installation/grub_test.pm:20 called grub_utils::grub_test -> lib/grub_utils.pm:35 called grub_utils::handle_installer_medium_bootup -> lib/grub_utils.pm:75 called opensusebasetest::handle_uefi_boot_disk_workaround -> products/opensuse/../../lib/opensusebasetest.pm:333 called testapi::send_key_until_needlematch
+[2026-10-08T11:11:19.960264+01:00] [debug] [pid:8225] <<< testapi::wait_screen_change(timeout=10, similarity_level=50)
+[2026-10-08T11:11:19.961687+01:00] [debug] [pid:8225] [step:installation,grub_test,314] tests/installation/grub_test.pm:20 called grub_utils::grub_test -> lib/grub_utils.pm:35 called grub_utils::handle_installer_medium_bootup -> lib/grub_utils.pm:75 called opensusebasetest::handle_uefi_boot_disk_workaround -> products/opensuse/../../lib/opensusebasetest.pm:333 called testapi::send_key_until_needlematch
+[2026-10-08T11:11:19.961913+01:00] [debug] [pid:8225] <<< testapi::send_key(key="down", wait_screen_change=0)
+[2026-10-08T11:11:40.429745+01:00] [debug] [pid:8225] >>> testapi::wait_screen_change: timed out after 20.2296731472015 seconds (similarity: 1000000)
+[2026-10-08T11:11:40.534835+01:00] [debug] [pid:8225] [step:installation,grub_test,315] tests/installation/grub_test.pm:20 called grub_utils::grub_test -> lib/grub_utils.pm:35 called grub_utils::handle_installer_medium_bootup -> lib/grub_utils.pm:75 called opensusebasetest::handle_uefi_boot_disk_workaround -> products/opensuse/../../lib/opensusebasetest.pm:333 called testapi::send_key_until_needlematch
+[2026-10-08T11:11:40.535120+01:00] [debug] [pid:8225] <<< testapi::check_screen(mustmatch="tianocore-boot_maintenance_manager", timeout=5)
+[2026-10-08T11:11:50.609187+01:00] [debug] [pid:8256] no match: -0.1s, best candidate: boot_to_desktop-tianocore-boot_maintenance_manager-20170829 (0.00)
+[2026-10-08T11:11:50.775632+01:00] [debug] [pid:8225] >>> testapi::_check_backend_response: match=tianocore-boot_maintenance_manager timed out after 10 (check_screen)
+[2026-10-08T11:11:50.800694+01:00] [debug] [pid:8225] [step:installation,grub_test,316] tests/installation/grub_test.pm:20 called grub_utils::grub_test -> lib/grub_utils.pm:35 called grub_utils::handle_installer_medium_bootup -> lib/grub_utils.pm:75 called opensusebasetest::handle_uefi_boot_disk_workaround -> products/opensuse/../../lib/opensusebasetest.pm:333 called testapi::send_key_until_needlematch
+[2026-10-08T11:11:50.801112+01:00] [debug] [pid:8225] [step:installation,grub_test,316] tests/installation/grub_test.pm:20 called grub_utils::grub_test -> lib/grub_utils.pm:35 called grub_utils::handle_installer_medium_bootup -> lib/grub_utils.pm:75 called opensusebasetest::handle_uefi_boot_disk_workaround -> products/opensuse/../../lib/opensusebasetest.pm:333 called testapi::send_key_until_needlematch
+[2026-10-08T11:11:50.801392+01:00] [debug] [pid:8225] <<< testapi::wait_screen_change(timeout=10, similarity_level=50)
+[2026-10-08T11:11:50.802913+01:00] [debug] [pid:8225] [step:installation,grub_test,316] tests/installation/grub_test.pm:20 called grub_utils::grub_test -> lib/grub_utils.pm:35 called grub_utils::handle_installer_medium_bootup -> lib/grub_utils.pm:75 called opensusebasetest::handle_uefi_boot_disk_workaround -> products/opensuse/../../lib/opensusebasetest.pm:333 called testapi::send_key_until_needlematch
+[2026-10-08T11:11:50.803149+01:00] [debug] [pid:8225] <<< testapi::send_key(key="down", wait_screen_change=0)
+[2026-10-08T11:12:11.249126+01:00] [debug] [pid:8225] >>> testapi::wait_screen_change: timed out after 20.2029550075531 seconds (similarity: 1000000)
+[2026-10-08T11:12:11.355007+01:00] [debug] [pid:8225] [step:installation,grub_test,317] tests/installation/grub_test.pm:20 called grub_utils::grub_test -> lib/grub_utils.pm:35 called grub_utils::handle_installer_medium_bootup -> lib/grub_utils.pm:75 called opensusebasetest::handle_uefi_boot_disk_workaround -> products/opensuse/../../lib/opensusebasetest.pm:333 called testapi::send_key_until_needlematch
+[2026-10-08T11:12:11.355327+01:00] [debug] [pid:8225] <<< testapi::check_screen(mustmatch="tianocore-boot_maintenance_manager", timeout=5)
+[2026-10-08T11:12:21.430839+01:00] [debug] [pid:8256] no match: -0.1s, best candidate: boot_to_desktop-tianocore-boot_maintenance_manager-20170829 (0.00)
+[2026-10-08T11:12:21.596569+01:00] [debug] [pid:8225] >>> testapi::_check_backend_response: match=tianocore-boot_maintenance_manager timed out after 10 (check_screen)
+[2026-10-08T11:12:21.618486+01:00] [debug] [pid:8225] [step:installation,grub_test,318] tests/installation/grub_test.pm:20 called grub_utils::grub_test -> lib/grub_utils.pm:35 called grub_utils::handle_installer_medium_bootup -> lib/grub_utils.pm:75 called opensusebasetest::handle_uefi_boot_disk_workaround -> products/opensuse/../../lib/opensusebasetest.pm:333 called testapi::send_key_until_needlematch
+[2026-10-08T11:12:21.618875+01:00] [debug] [pid:8225] [step:installation,grub_test,318] tests/installation/grub_test.pm:20 called grub_utils::grub_test -> lib/grub_utils.pm:35 called grub_utils::handle_installer_medium_bootup -> lib/grub_utils.pm:75 called opensusebasetest::handle_uefi_boot_disk_workaround -> products/opensuse/../../lib/opensusebasetest.pm:333 called testapi::send_key_until_needlematch
+[2026-10-08T11:12:21.619132+01:00] [debug] [pid:8225] <<< testapi::wait_screen_change(timeout=10, similarity_level=50)
+[2026-10-08T11:12:21.620776+01:00] [debug] [pid:8225] [step:installation,grub_test,318] tests/installation/grub_test.pm:20 called grub_utils::grub_test -> lib/grub_utils.pm:35 called grub_utils::handle_installer_medium_bootup -> lib/grub_utils.pm:75 called opensusebasetest::handle_uefi_boot_disk_workaround -> products/opensuse/../../lib/opensusebasetest.pm:333 called testapi::send_key_until_needlematch
+[2026-10-08T11:12:21.621007+01:00] [debug] [pid:8225] <<< testapi::send_key(key="down", wait_screen_change=0)
+[2026-10-08T11:12:41.946227+01:00] [debug] [pid:8225] >>> testapi::wait_screen_change: timed out after 20.0872178077698 seconds (similarity: 1000000)
+[2026-10-08T11:12:42.052146+01:00] [debug] [pid:8225] [step:installation,grub_test,319] tests/installation/grub_test.pm:20 called grub_utils::grub_test -> lib/grub_utils.pm:35 called grub_utils::handle_installer_medium_bootup -> lib/grub_utils.pm:75 called opensusebasetest::handle_uefi_boot_disk_workaround -> products/opensuse/../../lib/opensusebasetest.pm:333 called testapi::send_key_until_needlematch
+[2026-10-08T11:12:42.052467+01:00] [debug] [pid:8225] <<< testapi::assert_screen(mustmatch="tianocore-boot_maintenance_manager", timeout=1)
+[2026-10-08T11:12:44.118158+01:00] [debug] [pid:8256] no match: -0.1s, best candidate: boot_to_desktop-tianocore-boot_maintenance_manager-20170829 (0.00)
+[2026-10-08T11:12:44.369999+01:00] [debug] [pid:8225] >>> testapi::_check_backend_response: match=tianocore-boot_maintenance_manager timed out after 2 (assert_screen)
+[2026-10-08T11:12:44.395331+01:00] [debug] [pid:8225] [step:installation,grub_test,320] tests/installation/grub_test.pm:20 called grub_utils::grub_test -> lib/grub_utils.pm:35 called grub_utils::handle_installer_medium_bootup -> lib/grub_utils.pm:75 called opensusebasetest::handle_uefi_boot_disk_workaround -> products/opensuse/../../lib/opensusebasetest.pm:333 called testapi::send_key_until_needlematch
+[2026-10-08T11:12:44.414941+01:00] [debug] [pid:8225] [step:installation,grub_test,321] tests/installation/grub_test.pm:20 called grub_utils::grub_test -> lib/grub_utils.pm:35 called grub_utils::handle_installer_medium_bootup -> lib/grub_utils.pm:75 called opensusebasetest::handle_uefi_boot_disk_workaround -> products/opensuse/../../lib/opensusebasetest.pm:333 called testapi::send_key_until_needlematch
+>>> [2026-10-08T11:12:44.418211+01:00] [info] [pid:8225] ::: basetest::_handle_test_exception: # Test died: no candidate needle with tag(s) 'tianocore-boot_maintenance_manager' matched
+  --- # stack trace
+  testapi::send_key_until_needlematch('tianocore-boot_maintenance_manager', 'down', 6, 5) called at products/opensuse/../../lib/opensusebasetest.pm line 333
+  grub_utils::handle_installer_medium_bootup at lib/grub_utils.pm line 35
+  grub_utils::grub_test at tests/installation/grub_test.pm line 20
+  
+[2026-10-08T11:12:44.418404+01:00] [debug] [pid:8225] [step:installation,grub_test,321] tests/installation/grub_test.pm:20 called grub_utils::grub_test -> lib/grub_utils.pm:35 called grub_utils::handle_installer_medium_bootup -> lib/grub_utils.pm:75 called opensusebasetest::handle_uefi_boot_disk_workaround -> products/opensuse/../../lib/opensusebasetest.pm:333 called testapi::send_key_until_needlematch
+[2026-10-08T11:12:44.546705+01:00] [debug] [pid:8225] [step:installation,grub_test,323] products/opensuse/../../lib/opensusebasetest.pm:1042 called serial_terminal::select_serial_terminal -> lib/serial_terminal.pm:399 called testapi::select_console
+[2026-10-08T11:12:44.546962+01:00] [debug] [pid:8225] <<< testapi::select_console(testapi_console="root-virtio-terminal")
+[2026-10-08T11:12:44.548205+01:00] [debug] [pid:8256] <<< consoles::virtio_terminal::open_pipe(pipe_prefix="/var/lib/openqa/pool/5/virtio_console")
+[2026-10-08T11:12:44.550611+01:00] [info] [pid:8256] ::: consoles::virtio_terminal::open_pipe: Set PIPE_SZ from 65536 to 1048576
+[2026-10-08T11:12:44.550829+01:00] [info] [pid:8256] ::: consoles::virtio_terminal::open_pipe: Set PIPE_SZ from 65536 to 1048576
+[2026-10-08T11:12:44.551531+01:00] [debug] [pid:8225] activate_console, console: root-virtio-terminal, type: virtio-terminal
+[2026-10-08T11:12:44.551898+01:00] [debug] [pid:8225] [step:installation,grub_test,323] products/opensuse/../../lib/opensusebasetest.pm:1042 called serial_terminal::select_serial_terminal -> lib/serial_terminal.pm:399 called testapi::select_console -> lib/susedistribution.pm:879 called serial_terminal::login -> lib/serial_terminal.pm:170 called bmwqemu::log_call
+[2026-10-08T11:12:44.552021+01:00] [debug] [pid:8225] <<< serial_terminal::login()
+[2026-10-08T11:12:44.552365+01:00] [debug] [pid:8225] [step:installation,grub_test,323] products/opensuse/../../lib/opensusebasetest.pm:1042 called serial_terminal::select_serial_terminal -> lib/serial_terminal.pm:399 called testapi::select_console -> lib/susedistribution.pm:879 called serial_terminal::login -> lib/serial_terminal.pm:175 called testapi::wait_serial
+[2026-10-08T11:12:44.552766+01:00] [debug] [pid:8225] <<< testapi::wait_serial(timeout=3, expect_not_found=0, regexp=qr/login:\s*$/ui, record_command=undef, capture_name=undef, internal_marker=0, no_regex=0, quiet=1, buffer_size=undef, record_output=undef)
+[2026-10-08T11:12:44.554044+01:00] [debug] [pid:8256] <<< consoles::serial_screen::read_until(internal_marker=0, capture_name=undef, record_command=undef, timeout=6, json_cmd_token="****", quiet=1, no_regex=0, cmd="backend_wait_serial", regexp="(?^ui:login:\\s*\$)", pattern="(?^ui:login:\\s*\$)", expect_not_found=0, record_output=undef, buffer_size=undef)
+[2026-10-08T11:12:50.562434+01:00] [debug] [pid:8225] >>> testapi::wait_serial: (?^ui:login:\s*$): fail
+[2026-10-08T11:12:50.562982+01:00] [debug] [pid:8225] [step:installation,grub_test,323] products/opensuse/../../lib/opensusebasetest.pm:1042 called serial_terminal::select_serial_terminal -> lib/serial_terminal.pm:399 called testapi::select_console -> lib/susedistribution.pm:879 called serial_terminal::login -> lib/serial_terminal.pm:178 called testapi::send_key
+[2026-10-08T11:12:50.563292+01:00] [debug] [pid:8225] <<< testapi::send_key(key="ret", wait_screen_change=0)
+[2026-10-08T11:12:50.564478+01:00] [debug] [pid:8256] <<< consoles::serial_screen::type_string(key="ret", text="\n", json_cmd_token="****", cmd="backend_send_key")
+[2026-10-08T11:12:50.565308+01:00] [debug] [pid:8225] [step:installation,grub_test,323] products/opensuse/../../lib/opensusebasetest.pm:1042 called serial_terminal::select_serial_terminal -> lib/serial_terminal.pm:399 called testapi::select_console -> lib/susedistribution.pm:879 called serial_terminal::login -> lib/serial_terminal.pm:179 called testapi::wait_serial
+[2026-10-08T11:12:50.565725+01:00] [debug] [pid:8225] <<< testapi::wait_serial(record_command=undef, internal_marker=0, capture_name=undef, expect_not_found=0, timeout=90, regexp=qr/login:\s*$/ui, buffer_size=undef, record_output=undef, no_regex=0, quiet=undef)
+[2026-10-08T11:12:50.566997+01:00] [debug] [pid:8256] <<< consoles::serial_screen::read_until(cmd="backend_wait_serial", regexp="(?^ui:login:\\s*\$)", pattern="(?^ui:login:\\s*\$)", expect_not_found=0, record_output=undef, buffer_size=undef, internal_marker=0, capture_name=undef, record_command=undef, timeout=180, json_cmd_token="****", quiet=undef, no_regex=0)
+[2026-10-08T11:15:50.667963+01:00] [debug] [pid:8225] [step:installation,grub_test,323] products/opensuse/../../lib/opensusebasetest.pm:1042 called serial_terminal::select_serial_terminal -> lib/serial_terminal.pm:399 called testapi::select_console -> lib/susedistribution.pm:879 called serial_terminal::login -> lib/serial_terminal.pm:179 called testapi::wait_serial
+[2026-10-08T11:15:50.668581+01:00] [debug] [pid:8225] >>> testapi::wait_serial: (?^ui:login:\s*$): fail
+[2026-10-08T11:15:50.670261+01:00] [info] [pid:8225] ::: basetest::_handle_test_exception: # Post fail hook died: Failed to wait for login prompt at opensuse/lib/serial_terminal.pm line 179, <$isotovideo> line 1.
+  	serial_terminal::login("root", "# ") called at opensuse/lib/susedistribution.pm line 879
+  	testapi::select_console("root-virtio-terminal") called at opensuse/lib/serial_terminal.pm line 399
+  	serial_terminal::select_serial_terminal() called at opensuse/products/opensuse/../../lib/opensusebasetest.pm line 1042
+  
+  --- # stack trace
+  lib/serial_terminal.pm line 179
+  
+[2026-10-08T11:15:50.670444+01:00] [debug] [pid:8225] [step:installation,grub_test,324] lib/serial_terminal.pm:179
+[2026-10-08T11:15:50.671007+01:00] [debug] [pid:8225] post_fail_hook failed: Failed to wait for login prompt at opensuse/lib/serial_terminal.pm line 179, <$isotovideo> line 1.
+  	serial_terminal::login("root", "# ") called at opensuse/lib/susedistribution.pm line 879
+  	testapi::select_console("root-virtio-terminal") called at opensuse/lib/serial_terminal.pm line 399
+  	serial_terminal::select_serial_terminal() called at opensuse/products/opensuse/../../lib/opensusebasetest.pm line 1042
+  
+[2026-10-08T11:15:50.673661+01:00] [debug] [pid:8225] ||| finished grub_test installation (runtime: 617 s)
+[2026-10-08T11:15:50.673805+01:00] [debug] [pid:8225] ||| post fail hooks runtime: 186 s
+[2026-10-08T11:15:50.682+01:00] [debug] [pid:8225] scheduled stop of overall test execution after a fatal test failure
+[2026-10-08T11:15:50.682170+01:00] [debug] [pid:8225] skipping installation-first_boot (after fatal failure)
+[2026-10-08T11:15:50.683955+01:00] [debug] [pid:8225] skipping installation-opensuse_welcome (after fatal failure)
+[2026-10-08T11:15:50.685657+01:00] [debug] [pid:8225] skipping installation-system_workarounds (after fatal failure)
+[2026-10-08T11:15:50.687359+01:00] [debug] [pid:8225] skipping console-system_prepare (after fatal failure)
+[2026-10-08T11:15:50.689069+01:00] [debug] [pid:8225] skipping update-zypper_clear_repos (after fatal failure)
+[2026-10-08T11:15:50.690781+01:00] [debug] [pid:8225] skipping console-zypper_ar (after fatal failure)
+[2026-10-08T11:15:50.692457+01:00] [debug] [pid:8225] skipping console-zypper_ref (after fatal failure)
+[2026-10-08T11:15:50.694162+01:00] [debug] [pid:8225] skipping update-prepare_system_for_update_tests (after fatal failure)
+[2026-10-08T11:15:50.695850+01:00] [debug] [pid:8225] skipping update-updates_packagekit_kde (after fatal failure)
+[2026-10-08T11:15:50.697556+01:00] [debug] [pid:8225] skipping update-check_system_is_updated (after fatal failure)
+[2026-10-08T11:15:50.699256+01:00] [debug] [pid:8225] skipping console-check_network (after fatal failure)
+[2026-10-08T11:15:50.700924+01:00] [debug] [pid:8225] skipping console-system_state (after fatal failure)
+[2026-10-08T11:15:50.702647+01:00] [debug] [pid:8225] skipping console-prepare_test_data (after fatal failure)
+[2026-10-08T11:15:50.704337+01:00] [debug] [pid:8225] skipping console-consoletest_setup (after fatal failure)
+[2026-10-08T11:15:50.706050+01:00] [debug] [pid:8225] skipping locale-keymap_or_locale (after fatal failure)
+[2026-10-08T11:15:50.707812+01:00] [debug] [pid:8225] skipping console-force_scheduled_tasks (after fatal failure)
+[2026-10-08T11:15:50.709523+01:00] [debug] [pid:8225] skipping console-textinfo (after fatal failure)
+[2026-10-08T11:15:50.711210+01:00] [debug] [pid:8225] skipping console-hostname (after fatal failure)
+[2026-10-08T11:15:50.712898+01:00] [debug] [pid:8225] skipping console-opensuse_repos (after fatal failure)
+[2026-10-08T11:15:50.714613+01:00] [debug] [pid:8225] skipping console-zypper_lr (after fatal failure)
+[2026-10-08T11:15:50.716286+01:00] [debug] [pid:8225] skipping console-zypper_in (after fatal failure)
+[2026-10-08T11:15:50.717961+01:00] [debug] [pid:8225] skipping console-zypper_log (after fatal failure)
+[2026-10-08T11:15:50.719642+01:00] [debug] [pid:8225] skipping console-systemd_wo_udev (after fatal failure)
+[2026-10-08T11:15:50.721335+01:00] [debug] [pid:8225] skipping console-yast2_lan (after fatal failure)
+[2026-10-08T11:15:50.723047+01:00] [debug] [pid:8225] skipping console-curl_https (after fatal failure)
+[2026-10-08T11:15:50.724777+01:00] [debug] [pid:8225] skipping console-salt (after fatal failure)
+[2026-10-08T11:15:50.726471+01:00] [debug] [pid:8225] skipping console-glibc_tunables (after fatal failure)
+[2026-10-08T11:15:50.728156+01:00] [debug] [pid:8225] skipping console-yast2_i (after fatal failure)
+[2026-10-08T11:15:50.729899+01:00] [debug] [pid:8225] skipping console-yast2_bootloader (after fatal failure)
+[2026-10-08T11:15:50.731594+01:00] [debug] [pid:8225] skipping console-vim (after fatal failure)
+--- End of Log Section ---
+
+Secondary failure (post-fail hook) #323 wait_serial: # wait_serial expected: qr/login:\s*$/ui
+Secondary failure (post-fail hook) #324 Failed (post): Failed to wait for login prompt at opensuse/lib/serial_terminal.pm line 179, <$isotovideo> line 1.
+
