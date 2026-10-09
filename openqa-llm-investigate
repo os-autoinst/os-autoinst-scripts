@@ -90,7 +90,7 @@ class RetryTransport(httpx.HTTPTransport):
                 retries_left,
             )
         elif isinstance(exc, httpx.TimeoutException):
-            log.warning(
+            log.info(
                 "Request timed out (%s). Retrying in %.2f seconds (%d retries left)...",
                 type(exc).__name__,
                 delay,
