@@ -6,14 +6,16 @@ from __future__ import annotations
 import datetime
 import importlib.machinery
 import importlib.util
+import json
 import logging
 import pathlib
 import sys
 from typing import TYPE_CHECKING, Any
-from unittest.mock import MagicMock, Mock
+from unittest.mock import MagicMock, Mock, call
 
 import httpx
 import pytest
+from typer.testing import CliRunner
 
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture
@@ -59,33 +61,6 @@ def test_fetch_json_failure() -> None:
     # Passing explicit default
     res = llm_investigate.fetch_json(mock_client, "http://example.com/api/v1/jobs/123/comments", default=[])
     assert res == []
-
-
-def test_fetch_text_success() -> None:
-    mock_client = MagicMock(spec=httpx.Client)
-    mock_response = MagicMock()
-    mock_response.iter_lines.return_value = [f"line {i}" for i in range(300)]
-    mock_client.stream.return_value.__enter__.return_value = mock_response
-
-    res = llm_investigate.fetch_text(mock_client, "http://example.com", max_lines=200)
-    lines = res.splitlines()
-    assert len(lines) == 200
-    assert lines[-1] == "line 299"
-    assert lines[0] == "line 100"
-
-    # With explicit timeout
-    mock_client.stream.reset_mock()
-    res_timeout = llm_investigate.fetch_text(mock_client, "http://example.com", max_lines=200, timeout=45.0)
-    assert res_timeout == res
-    mock_client.stream.assert_called_once_with("GET", "http://example.com", timeout=45.0)
-
-
-def test_fetch_text_failure() -> None:
-    mock_client = MagicMock(spec=httpx.Client)
-    mock_client.stream.side_effect = httpx.RequestError("error")
-
-    res = llm_investigate.fetch_text(mock_client, "http://example.com")
-    assert not res
 
 
 def test_post_comment(mocker: MockerFixture) -> None:
@@ -135,6 +110,18 @@ def setup_mock_client(mocker: MockerFixture, overrides: dict[str, Any] | None = 
             }
         },
         "investigation_ajax": {"diff_to_last_good": {}},
+        "details_ajax": {
+            "modules": [
+                {
+                    "name": "isosize",
+                    "category": "installation",
+                    "result": "failed",
+                    "details": [
+                        {"num": 1, "result": "fail", "display_title": "Failed", "text_data": "# Test died: boom"}
+                    ],
+                }
+            ]
+        },
         "autoinst-log.txt": "failed log",
     }
     if overrides:
@@ -144,10 +131,18 @@ def setup_mock_client(mocker: MockerFixture, overrides: dict[str, Any] | None = 
         _ = params, kwargs
         for pattern, val in responses.items():
             if pattern in url:
-                return Mock(json=Mock(return_value=val), text=val if isinstance(val, str) else "")
-        return Mock(json=Mock(return_value={}))
+                return Mock(json=Mock(return_value=val), text=val if isinstance(val, str) else json.dumps(val))
+        return Mock(json=Mock(return_value={}), text="")
 
     mock_client.get.side_effect = mock_get
+
+    def mock_stream(method: str, url: str, **kwargs: Any) -> MagicMock:
+        _ = method, kwargs
+        ctx = MagicMock()
+        ctx.__enter__.return_value.iter_bytes.return_value = [mock_get(url).text.encode()]
+        return ctx
+
+    mock_client.stream.side_effect = mock_stream
 
     def mock_post_call(url: str, json: dict[str, Any] | None = None, *args: Any, **kwargs: Any) -> Mock:
         _ = url, json, args, kwargs
@@ -540,4 +535,248 @@ def test_investigate_configures_timeouts(mocker: MockerFixture) -> None:
 
     assert mock_client_class.call_args[1]["timeout"] == pytest.approx(45.0)
     mock_perform.assert_called_once()
-    assert mock_perform.call_args[1]["investigation_timeout"] == pytest.approx(60.0)
+    assert mock_perform.call_args[0][3].investigation_timeout == pytest.approx(60.0)
+
+
+def _prompt_sent(client: MagicMock) -> str:
+    return client.post.call_args[1]["json"]["messages"][0]["content"]
+
+
+def test_investigate_prompt_contains_analysis_and_instructions(mocker: MockerFixture) -> None:
+    mocker.patch("llm_investigate.post_comment")
+    mocker.patch("builtins.print")
+    client = setup_mock_client(mocker)
+
+    llm_investigate.investigate("123")
+
+    prompt = _prompt_sent(client)
+    assert "OpenQA Job Analysis: https://openqa.opensuse.org/t123" in prompt
+    assert "Failed Module: installation/isosize" in prompt
+    assert "context window of 100 lines" in prompt
+    assert "- Classification: Product bug | Test issue | Infrastructure problem" in prompt
+    assert "BISECT: YES" in prompt
+
+
+def test_investigate_passes_context_lines_to_analysis(mocker: MockerFixture) -> None:
+    mocker.patch("llm_investigate.post_comment")
+    mocker.patch("builtins.print")
+    analyze = mocker.patch("llm_investigate.analyze_job", return_value="the analysis")
+    client = setup_mock_client(mocker)
+
+    llm_investigate.investigate("123", context_lines=7)
+
+    assert analyze.call_args[1]["context_lines"] == 7
+    assert analyze.call_args[1]["include_softfailed"] is False
+    assert analyze.call_args[1]["job"]["test"] == "my_test"
+    assert "the analysis" in _prompt_sent(client)
+    assert "context window of 7 lines" in _prompt_sent(client)
+
+
+def test_investigate_forced_softfailed_job_includes_softfailed_modules(mocker: MockerFixture) -> None:
+    mocker.patch("llm_investigate.post_comment")
+    mocker.patch("builtins.print")
+    analyze = mocker.patch("llm_investigate.analyze_job", return_value="the analysis")
+    setup_mock_client(mocker, overrides={"api/v1/jobs": {"job": {"id": 123, "result": "softfailed"}}})
+
+    llm_investigate.investigate("123", force=True)
+
+    assert analyze.call_args[1]["include_softfailed"] is True
+
+
+def test_investigate_no_failed_modules_skips(mocker: MockerFixture) -> None:
+    mocker.patch("llm_investigate.analyze_job", side_effect=llm_investigate.NoFailedModulesError("none", "partial"))
+    client = setup_mock_client(mocker)
+
+    with pytest.raises(SystemExit) as exc:
+        llm_investigate.investigate("123")
+
+    assert exc.value.code == 0
+    client.post.assert_not_called()
+
+
+def test_investigate_no_failed_modules_forced_uses_partial_output(mocker: MockerFixture) -> None:
+    mocker.patch("llm_investigate.post_comment")
+    mocker.patch("builtins.print")
+    mocker.patch(
+        "llm_investigate.analyze_job", side_effect=llm_investigate.NoFailedModulesError("none", "partial text")
+    )
+    client = setup_mock_client(mocker)
+
+    llm_investigate.investigate("123", force=True)
+
+    assert "partial text" in _prompt_sent(client)
+
+
+def test_investigate_analysis_failure_exits(mocker: MockerFixture) -> None:
+    mock_log = mocker.patch("llm_investigate.log")
+    mocker.patch("llm_investigate.analyze_job", side_effect=llm_investigate.AnalyzerError("no details"))
+    client = setup_mock_client(mocker)
+
+    with pytest.raises(SystemExit) as exc:
+        llm_investigate.investigate("123")
+
+    assert exc.value.code == 1
+    assert "no details" in str(mock_log.error.call_args[0][2])
+    client.post.assert_not_called()
+
+
+def test_investigate_custom_prompt_template(mocker: MockerFixture, tmp_path: pathlib.Path) -> None:
+    mocker.patch("llm_investigate.post_comment")
+    mocker.patch("builtins.print")
+    mocker.patch("llm_investigate.analyze_job", return_value="the analysis")
+    client = setup_mock_client(mocker)
+    template = tmp_path / "prompt.txt"
+    template.write_text("{test_name}: {analysis} ({context_lines})")
+
+    llm_investigate.investigate("123", prompt_template_file=str(template))
+
+    assert _prompt_sent(client) == "my_test: the analysis (100)"
+
+
+def test_investigate_unexpected_analysis_error_exits(mocker: MockerFixture) -> None:
+    mock_log = mocker.patch("llm_investigate.log")
+    mocker.patch("llm_investigate.analyze_job", side_effect=IndexError("boom"))
+    client = setup_mock_client(mocker)
+
+    with pytest.raises(SystemExit) as exc:
+        llm_investigate.investigate("123")
+
+    assert exc.value.code == 1
+    mock_log.exception.assert_called_once()
+    client.post.assert_not_called()
+
+
+def test_investigate_log_lines_caps_analysis(mocker: MockerFixture) -> None:
+    mocker.patch("llm_investigate.post_comment")
+    mocker.patch("builtins.print")
+    mocker.patch("llm_investigate.analyze_job", return_value="".join(f"line{i}\n" for i in range(10)))
+    client = setup_mock_client(mocker)
+
+    llm_investigate.investigate("123", log_lines=3)
+
+    prompt = _prompt_sent(client)
+    assert "line2\n[... 7 lines omitted: --log-lines cap of 3 reached ...]" in prompt
+    assert "line3" not in prompt
+    assert "truncated to the first 3 lines" in prompt
+
+
+def test_investigate_short_analysis_is_not_marked_truncated(mocker: MockerFixture) -> None:
+    mocker.patch("llm_investigate.post_comment")
+    mocker.patch("builtins.print")
+    mocker.patch("llm_investigate.analyze_job", return_value="short\n")
+    client = setup_mock_client(mocker)
+
+    llm_investigate.investigate("123")
+
+    assert "context window of 100 lines):\nshort\n" in _prompt_sent(client)
+
+
+def test_investigate_legacy_template_placeholders(mocker: MockerFixture, tmp_path: pathlib.Path) -> None:
+    mocker.patch("llm_investigate.post_comment")
+    mocker.patch("builtins.print")
+    mocker.patch("llm_investigate.analyze_job", return_value="the analysis")
+    client = setup_mock_client(mocker)
+    template = tmp_path / "prompt.txt"
+    template.write_text("{log_lines}: {log_text}")
+
+    llm_investigate.investigate("123", prompt_template_file=str(template))
+
+    assert _prompt_sent(client) == "500: the analysis"
+
+
+def test_investigate_unknown_template_placeholder_exits(mocker: MockerFixture, tmp_path: pathlib.Path) -> None:
+    mock_log = mocker.patch("llm_investigate.log")
+    mocker.patch("llm_investigate.analyze_job", return_value="the analysis")
+    client = setup_mock_client(mocker)
+    template = tmp_path / "prompt.txt"
+    template.write_text("{nope}")
+
+    with pytest.raises(SystemExit) as exc:
+        llm_investigate.investigate("123", prompt_template_file=str(template))
+
+    assert exc.value.code == 1
+    assert "'nope'" in str(mock_log.error.call_args[0][1])
+    client.post.assert_not_called()
+
+
+@pytest.mark.parametrize("text", ["{", "{test_name:invalid}"])
+def test_investigate_malformed_template_exits(mocker: MockerFixture, tmp_path: pathlib.Path, text: str) -> None:
+    mock_log = mocker.patch("llm_investigate.log")
+    mocker.patch("llm_investigate.analyze_job", return_value="the analysis")
+    client = setup_mock_client(mocker)
+    template = tmp_path / "prompt.txt"
+    template.write_text(text)
+    with pytest.raises(SystemExit) as exc:
+        llm_investigate.investigate("123", prompt_template_file=str(template))
+    assert exc.value.code == 1
+    assert mock_log.error.call_args[0][0].startswith("Invalid prompt template: %s")
+    client.post.assert_not_called()
+
+
+def test_investigate_redacts_investigation_info(mocker: MockerFixture) -> None:
+    mocker.patch("llm_investigate.post_comment")
+    mocker.patch("builtins.print")
+    mocker.patch("llm_investigate.analyze_job", return_value="the analysis")
+    client = setup_mock_client(mocker, {"investigation_ajax": {"diff_to_last_good": {"REPO": "http://u:pw@h/r"}}})
+
+    llm_investigate.investigate("123")
+
+    assert "u:pw@" not in _prompt_sent(client)
+
+
+@pytest.mark.parametrize(
+    ("response", "printed"),
+    [
+        ("Summary.\n**BISECT: YES** \u2014 isolated\n", True),
+        ("Summary.\n- bisect: yes \u2014 isolated", True),
+        ("Other jobs: BISECT: YES would be wrong.\nBISECT: NO \u2014 widespread", False),
+        ("BISECT: YES?\nBISECT: NO", False),
+        ("Summary.\nBISECT: YES \u2014 isolated\n```\n", True),
+        ("BISECT: YES \u2014 isolated\n\nHope this helps.", True),
+        ("Summary.\n`BISECT: NO` \u2014 widespread\n", False),
+        ("No verdict at all", False),
+    ],
+)
+def test_investigate_bisect_gate_uses_last_verdict(mocker: MockerFixture, response: str, *, printed: bool) -> None:
+    mocker.patch("llm_investigate.post_comment")
+    mock_print = mocker.patch("builtins.print")
+    mocker.patch("llm_investigate.analyze_job", return_value="the analysis")
+    client = setup_mock_client(mocker)
+    client.post.side_effect = None
+    client.post.return_value = Mock(json=Mock(return_value={"choices": [{"message": {"content": response}}]}))
+
+    llm_investigate.investigate("123")
+
+    assert (call("https://openqa.opensuse.org/tests/123") in mock_print.call_args_list) is printed
+
+
+@pytest.mark.parametrize("text", ["{test_name.nope}", "{analysis[x]}"])
+def test_investigate_template_attribute_errors_exit_cleanly(
+    mocker: MockerFixture, tmp_path: pathlib.Path, text: str
+) -> None:
+    mock_log = mocker.patch("llm_investigate.log")
+    mocker.patch("llm_investigate.analyze_job", return_value="the analysis")
+    client = setup_mock_client(mocker)
+    template = tmp_path / "prompt.txt"
+    template.write_text(text)
+    with pytest.raises(SystemExit) as exc:
+        llm_investigate.investigate("123", prompt_template_file=str(template))
+    assert exc.value.code == 1
+    assert "unknown placeholder" in mock_log.error.call_args[0][0]
+    client.post.assert_not_called()
+
+
+def test_investigate_warns_when_analysis_is_cut(mocker: MockerFixture) -> None:
+    mock_log = mocker.patch("llm_investigate.log")
+    mocker.patch("llm_investigate.post_comment")
+    mocker.patch("builtins.print")
+    mocker.patch("llm_investigate.analyze_job", return_value="a\nb\nc\n")
+    setup_mock_client(mocker)
+    llm_investigate.investigate("123", log_lines=1)
+    assert "--log-lines=%d" in mock_log.warning.call_args[0][0]
+
+
+@pytest.mark.parametrize("option", ["--context-lines", "--log-lines"])
+def test_negative_line_options_are_rejected(option: str) -> None:
+    result = CliRunner().invoke(llm_investigate.app, ["123", option, "-1"])
+    assert result.exit_code == 2

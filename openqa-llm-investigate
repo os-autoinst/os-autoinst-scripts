@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 # Copyright SUSE LLC
-# ruff: file-ignore[any-type, blind-except, complex-structure, line-too-long, boolean-type-hint-positional-argument, reimplemented-operator, too-many-arguments, too-many-locals, too-many-statements, too-many-positional-arguments, magic-value-comparison, print, error-instead-of-exception]
+# ruff: file-ignore[any-type, blind-except, boolean-type-hint-positional-argument, error-instead-of-exception, magic-value-comparison, too-many-arguments, too-many-positional-arguments]
 """Investigates an openQA job failure using an LLM."""
 
 import datetime
@@ -8,10 +8,12 @@ import json
 import logging
 import os
 import pathlib
+import re
 import subprocess
 import sys
-from collections import deque
+from dataclasses import dataclass
 from email.utils import parsedate_to_datetime
+from operator import itemgetter
 from typing import Annotated, Any
 from urllib.parse import urlparse, urlunparse
 
@@ -19,9 +21,65 @@ import httpx
 import tenacity
 import typer
 
+from openqa_llm_investigate.analysis import analyze_job
+from openqa_llm_investigate.http import AnalyzerError, NoFailedModulesError, OpenQA
+from openqa_llm_investigate.text import redact
+
 USER_AGENT = "openqa-llm-investigate (https://github.com/os-autoinst/os-autoinst-scripts)"
 DEFAULT_OPENQA_TIMEOUT: float = 90.0
 DEFAULT_INVESTIGATION_TIMEOUT: float = 900.0
+COMMENT_MARKER = "**LLM Investigation summary:**"
+OUTAGE_HINT = (
+    "\n(Note: {build_failures} failures across this build strongly implies a backend infrastructure outage"
+    " or a widespread environment issue rather than a specific product bug.)"
+)
+DEFAULT_PROMPT_TEMPLATE = """You are analyzing an openQA test run failure.
+Job details:
+- Test: {test_name}
+- Failed module(s): {failed_modules}
+- Group: {group}
+- Build: {build}
+- Distri: {distri}
+- Version: {version}
+- Arch: {arch}
+- Flavor: {flavor}
+- Result: {result}
+- Total failed jobs in this build (across all tests): {build_failures}{hint}
+- Other jobs in this build failing in the exact same module(s): {same_module_failures}
+- Consecutive recent failures for this specific test (same name, arch, flavor): {consecutive_failures}
+
+Investigation info (diff to last good):
+{investigation_info}
+
+Failure analysis (context window of {context_lines} lines{truncated}):
+{analysis}{prompt_extension_text}
+
+Answer in exactly this order and nothing else.
+
+1. One line per failed module of the analysis, formatted `* module_name: #N \u2014 REASON`. N is the number of the
+   failing command, taken from the `# Cmd[N]: COMMAND (exit CODE)` lines of that module. If the module has a single
+   command, write `* module_name: REASON` instead. REASON has at most 20 words in plain language: name the failing
+   component first, then the cause. Write `analysis unavailable` as REASON if the data is not sufficient.
+
+2. A brief Markdown summary: at most 2 sentences, then optionally `**Likely cause:**` with 2-4 bullets and
+   `**Suggested actions:**` as a numbered list. Every bullet is one sentence of at most 20 words. Use backticks for
+   commands, files and errors. Do not invent causes and never ask for more data.
+
+3. The bullet `- Classification: Product bug | Test issue | Infrastructure problem`, choosing exactly one value.
+   Product bug: the software under test is wrong. Test issue: test code, needle or test data is wrong.
+   Infrastructure problem: network, worker or external service.
+
+4. A last line starting EXACTLY with "BISECT: YES" or "BISECT: NO" followed by `\u2014 reason`, deciding whether
+   'openqa-investigate' should be triggered to schedule further bisect tests.
+   - If other jobs in the same build are failing in the exact same module, this is a widespread issue. You MUST answer
+     BISECT: NO to prevent redundant and costly bisections, as another job has likely already triggered it.
+   - If the failure is isolated to ONLY this job in the current build, AND the analysis contains an explicit product
+     error or test assertion failure (e.g., 'actual size fits X: fail', 'command not found', 'segmentation fault'),
+     it strongly points to a new regression. In this isolated case, you MUST answer BISECT: YES.
+"""
+
+TRUNCATED_NOTE = ", truncated to the first {log_lines} lines; do not guess about the omitted tail"
+_BISECT_RE = re.compile(r"^[\s*_`>-]*BISECT:\s*(YES|NO)\b", re.IGNORECASE)
 
 log = logging.getLogger(__name__)
 
@@ -119,6 +177,24 @@ class RetryTransport(httpx.HTTPTransport):
 app = typer.Typer(add_completion=False)
 
 
+@dataclass(frozen=True)
+class Options:
+    """Settings of one investigation."""
+
+    llm_url: str
+    llm_model: str
+    llm_token: str | None
+    llm_timeout: int
+    context_lines: int
+    log_lines: int
+    history_limit: int
+    build_failure_threshold: int
+    prompt_template_file: str | None
+    investigation_timeout: float = DEFAULT_INVESTIGATION_TIMEOUT
+    force: bool = False
+    dry: bool = False
+
+
 def fetch_json(
     client: httpx.Client,
     url: str,
@@ -136,22 +212,6 @@ def fetch_json(
     except Exception as e:
         log.warning("Failed to fetch JSON from %s with params %s: %s", url, params, e)
         return default if default is not None else {}
-
-
-def fetch_text(client: httpx.Client, url: str, max_lines: int = 200, timeout: float | None = None) -> str:
-    lines: deque[str] = deque(maxlen=max_lines)
-    kwargs: dict[str, Any] = {}
-    if timeout is not None:
-        kwargs["timeout"] = timeout
-    try:
-        with client.stream("GET", url, **kwargs) as response:
-            response.raise_for_status()
-            for line in response.iter_lines():
-                lines.append(line)
-        return "\n".join(lines)
-    except Exception as e:
-        log.warning("Failed to fetch text from %s: %s", url, e)
-        return ""
 
 
 def post_comment(base_url: str, job_id: str, comment: str) -> None:
@@ -203,14 +263,8 @@ def _shares_failed_modules(other_job: dict[str, Any], target_modules: set[str]) 
     return bool(target_modules.intersection(other_failed))
 
 
-def _call_llm_api(
-    client: httpx.Client,
-    llm_url: str,
-    llm_model: str,
-    llm_token: str | None,
-    timeout: int,
-    prompt: str,
-) -> str:
+def _call_llm_api(client: httpx.Client, opts: Options, prompt: str) -> str:
+    llm_url, llm_model, llm_token, timeout = opts.llm_url, opts.llm_model, opts.llm_token, opts.llm_timeout
     req = {
         "model": llm_model,
         "messages": [{"role": "user", "content": prompt}],
@@ -224,7 +278,8 @@ def _call_llm_api(
         return res_json["choices"][0]["message"]["content"]
     except httpx.ConnectError:
         log.error(
-            "Could not connect to LLM server at %s. Please check if the server is running or the LLM_API_URL environment variable is correct.",
+            "Could not connect to LLM server at %s. Please check if the server is running"
+            " or the LLM_API_URL environment variable is correct.",
             llm_url,
         )
         sys.exit(1)
@@ -236,29 +291,7 @@ def _call_llm_api(
         sys.exit(1)
 
 
-def _perform_investigation(
-    client: httpx.Client,
-    base_url: str,
-    job_id: str,
-    force: bool,
-    dry: bool,
-    llm_url: str,
-    llm_model: str,
-    timeout: int,
-    llm_token: str | None,
-    log_lines: int,
-    history_limit: int,
-    build_failure_threshold: int,
-    prompt_template_file: str | None,
-    investigation_timeout: float = DEFAULT_INVESTIGATION_TIMEOUT,
-) -> None:
-    # Check for existing LLM investigation comments
-    comments = fetch_json(client, f"{base_url}/api/v1/jobs/{job_id}/comments", default=[])
-    if not force and any(c.get("text", "").startswith("**LLM Investigation summary:**") for c in comments):
-        log.info("Job %s already has an LLM investigation summary, skipping.", job_id)
-        sys.exit(0)
-
-    # Fetch job details
+def _fetch_job(client: httpx.Client, base_url: str, job_id: str) -> dict[str, Any]:
     job_data = fetch_json(client, f"{base_url}/api/v1/jobs/{job_id}/details")
     if not job_data or "job" not in job_data:
         # Fallback for openQA versions/configurations where /details might fail
@@ -266,145 +299,160 @@ def _perform_investigation(
     if not job_data or "job" not in job_data:
         log.error("Could not retrieve job data for job %s from %s", job_id, base_url)
         sys.exit(1)
-    job = job_data["job"]
+    return job_data["job"]
 
-    if not force and job.get("result") in {"passed", "softfailed"}:
+
+def _analyze(client: httpx.Client, base_url: str, job_id: str, job: dict[str, Any], opts: Options) -> str:
+    """Return the failure analysis; exit when there is nothing to analyze unless forced."""
+    oqa = OpenQA(client, base_url)
+    softfailed = job.get("result") == "softfailed"
+    try:
+        return analyze_job(oqa, job_id, context_lines=opts.context_lines, include_softfailed=softfailed, job=job)
+    except NoFailedModulesError as e:
+        if not opts.force:
+            log.info("Job %s: %s", job_id, e)
+            sys.exit(0)
+        return e.partial_output
+    except AnalyzerError as e:
+        log.error("Could not analyze job %s: %s", job_id, e)
+        sys.exit(1)
+    except Exception:
+        log.exception("Unexpected error analyzing job %s", job_id)
+        sys.exit(1)
+
+
+def _bisect_recommended(response: str) -> bool:
+    """Return True if the last `BISECT: YES|NO` verdict line of the response is YES."""
+    for ln in reversed(response.splitlines()):
+        if m := _BISECT_RE.match(ln):
+            return m.group(1).upper() == "YES"
+    return False
+
+
+def _cap_lines(text: str, max_lines: int) -> tuple[str, bool]:
+    """Keep the first `max_lines` lines of `text` behind an omission note; return it and whether it was cut."""
+    lines = text.splitlines()
+    if len(lines) <= max_lines:
+        return text, False
+    note = f"[... {len(lines) - max_lines} lines omitted: --log-lines cap of {max_lines} reached ...]"
+    return "\n".join([*lines[:max_lines], note]) + "\n", True
+
+
+def _consecutive_failures(client: httpx.Client, base_url: str, job_id: str, job: dict[str, Any], limit: int) -> int:
+    """Count the failures in a row of the same test (name, arch, flavor) up to this job."""
+    settings = job.get("settings", {})
+    params = {
+        "test": job.get("test", "unknown"),
+        "distri": settings.get("DISTRI", "unknown"),
+        "version": settings.get("VERSION", "unknown"),
+        "arch": settings.get("ARCH", "unknown"),
+        "flavor": settings.get("FLAVOR", "unknown"),
+        "limit": limit,
+    }
+    test_jobs = fetch_json(client, f"{base_url}/api/v1/jobs", params=params).get("jobs", [])
+    target = int(job_id)
+    if not any(j["id"] == target for j in test_jobs):
+        log.warning("Job %s not found in recent history (limit %s). Streak count may be inaccurate.", job_id, limit)
+    relevant = sorted((j for j in test_jobs if j["id"] <= target), key=itemgetter("id"), reverse=True)
+    relevant = [
+        j for j in relevant if j.get("state") == "done" and j.get("result") in {"passed", "softfailed", "failed"}
+    ]
+    return next((i for i, j in enumerate(relevant) if j.get("result") != "failed"), len(relevant))
+
+
+def _build_failures(client: httpx.Client, base_url: str, job_id: str, job: dict[str, Any]) -> tuple[int, int]:
+    """Return the failed jobs of this build and those among them failing in the same module(s)."""
+    settings = job.get("settings", {})
+    params = {k.lower(): settings.get(k, "unknown") for k in ("BUILD", "DISTRI", "VERSION")} | {"result": "failed"}
+    failed_jobs = fetch_json(client, f"{base_url}/api/v1/jobs", params=params).get("jobs", [])
+    modules = {m.get("name", "unknown") for m in job.get("testresults", []) if m.get("result") == "failed"}
+    similar = sum(1 for j in failed_jobs if str(j.get("id")) != str(job_id) and _shares_failed_modules(j, modules))
+    return len(failed_jobs), similar if modules else 0
+
+
+def _build_prompt(job: dict[str, Any], analysis: str, stats: dict[str, Any], opts: Options) -> str:
+    settings = job.get("settings", {})
+    failed_modules = [m.get("name", "unknown") for m in job.get("testresults", []) if m.get("result") == "failed"]
+    hint = (
+        OUTAGE_HINT.format(build_failures=stats["build_failures"])
+        if stats["build_failures"] > opts.build_failure_threshold
+        else ""
+    )
+    extension = settings.get("LLM_PROMPT_EXTENSION")
+    extension_text = f"\n\nTest-specific instructions from openQA variables:\n{extension}\n" if extension else ""
+    template = DEFAULT_PROMPT_TEMPLATE
+    if opts.prompt_template_file:
+        try:
+            template = pathlib.Path(opts.prompt_template_file).read_text(encoding="utf-8")
+        except OSError as e:
+            log.error("Could not read prompt template file %s: %s", opts.prompt_template_file, e)
+            sys.exit(1)
+    analysis, truncated = _cap_lines(analysis, opts.log_lines)
+    if truncated:
+        log.warning("Failure analysis cut to --log-lines=%d; raise it if the cut-off tail matters", opts.log_lines)
+    fields = dict(
+        test_name=job.get("test", "unknown"),
+        failed_modules=", ".join(failed_modules) or "unknown",
+        group=job.get("group", "unknown"),
+        build=settings.get("BUILD", "unknown"),
+        distri=settings.get("DISTRI", "unknown"),
+        version=settings.get("VERSION", "unknown"),
+        arch=settings.get("ARCH", "unknown"),
+        flavor=settings.get("FLAVOR", "unknown"),
+        result=job.get("result", "unknown"),
+        context_lines=opts.context_lines,
+        analysis=analysis,
+        truncated=TRUNCATED_NOTE.format(log_lines=opts.log_lines) if truncated else "",
+        log_lines=opts.log_lines,
+        log_text=analysis,
+        hint=hint,
+        prompt_extension_text=extension_text,
+        **stats,
+    )
+    try:
+        return template.format(**fields)
+    except (KeyError, IndexError, AttributeError, TypeError) as e:
+        log.error("Prompt template uses unknown placeholder %s; available: %s", e, ", ".join(sorted(fields)))
+        sys.exit(1)
+    except ValueError as e:
+        log.error("Invalid prompt template: %s (escape literal braces as {{ and }})", e)
+        sys.exit(1)
+
+
+def _perform_investigation(client: httpx.Client, base_url: str, job_id: str, opts: Options) -> None:
+    comments = fetch_json(client, f"{base_url}/api/v1/jobs/{job_id}/comments", default=[])
+    if not opts.force and any(c.get("text", "").startswith(COMMENT_MARKER) for c in comments):
+        log.info("Job %s already has an LLM investigation summary, skipping.", job_id)
+        sys.exit(0)
+
+    job = _fetch_job(client, base_url, job_id)
+    if not opts.force and job.get("result") in {"passed", "softfailed"}:
         log.info("Job %s %s, skipping investigation.", job_id, job.get("result"))
         sys.exit(0)
 
-    failed_modules = [m.get("name", "unknown") for m in job.get("testresults", []) if m.get("result") == "failed"]
-
-    log_text = fetch_text(client, f"{base_url}/tests/{job_id}/file/autoinst-log.txt", max_lines=log_lines)
-    investigation = fetch_json(client, f"{base_url}/tests/{job_id}/investigation_ajax", timeout=investigation_timeout)
-
-    test_name = job.get("test", "unknown")
-    settings = job.get("settings", {})
-    build, distri, version, arch, flavor = (
-        settings.get(k, "unknown") for k in ("BUILD", "DISTRI", "VERSION", "ARCH", "FLAVOR")
+    analysis = _analyze(client, base_url, job_id, job, opts)
+    investigation = fetch_json(
+        client, f"{base_url}/tests/{job_id}/investigation_ajax", timeout=opts.investigation_timeout
     )
-
-    # Search for similar failures in same build (across all tests)
-    build_params = {"build": build, "distri": distri, "version": version, "result": "failed"}
-    build_history_data = fetch_json(client, f"{base_url}/api/v1/jobs", params=build_params)
-    build_failed_jobs = build_history_data.get("jobs", [])
-    build_failures = len(build_failed_jobs)
-
-    failed_modules_set = set(failed_modules)
-
-    def is_similar(j: dict[str, Any]) -> bool:
-        return str(j.get("id")) != str(job_id) and _shares_failed_modules(j, failed_modules_set)
-
-    same_module_failures = sum(1 for j in build_failed_jobs if is_similar(j)) if failed_modules else 0
-
-    # Search for consecutive failures of the same test (across all builds)
-    test_params = {
-        "test": test_name,
-        "distri": distri,
-        "version": version,
-        "arch": arch,
-        "flavor": flavor,
-        "limit": history_limit,
+    build_failures, same_module_failures = _build_failures(client, base_url, job_id, job)
+    stats = {
+        "build_failures": build_failures,
+        "same_module_failures": same_module_failures,
+        "consecutive_failures": _consecutive_failures(client, base_url, job_id, job, opts.history_limit),
+        "investigation_info": redact(json.dumps(investigation.get("diff_to_last_good", "None available"))),
     }
-    test_history_data = fetch_json(client, f"{base_url}/api/v1/jobs", params=test_params)
-    test_jobs = sorted(test_history_data.get("jobs", []), key=lambda x: x["id"], reverse=True)
-
-    target_id_int = int(job_id)
-    valid_results = {"passed", "softfailed", "failed"}
-    found_target = any(j["id"] == target_id_int for j in test_jobs)
-    relevant_jobs = [
-        j
-        for j in test_jobs
-        if j["id"] <= target_id_int and j.get("state") == "done" and j.get("result") in valid_results
-    ]
-    consecutive_failures = next(
-        (i for i, j in enumerate(relevant_jobs) if j.get("result") != "failed"), len(relevant_jobs)
-    )
-
-    if not found_target:
-        log.warning(
-            "Job %s not found in recent history (limit %s). Streak count may be inaccurate.",
-            job_id,
-            test_params["limit"],
-        )
-
-    hint = ""
-    if build_failures > build_failure_threshold:
-        hint = f"\n(Note: {build_failures} failures across this build strongly implies a backend infrastructure outage or a widespread environment issue rather than a specific product bug.)"
-
-    prompt_extension = settings.get("LLM_PROMPT_EXTENSION")
-    prompt_extension_text = (
-        f"\n\nTest-specific instructions from openQA variables:\n{prompt_extension}\n" if prompt_extension else ""
-    )
-
-    default_prompt_template = """You are analyzing an openQA test run failure.
-Job details:
-- Test: {test_name}
-- Failed module(s): {failed_modules}
-- Group: {group}
-- Build: {build}
-- Distri: {distri}
-- Version: {version}
-- Arch: {arch}
-- Flavor: {flavor}
-- Result: {result}
-- Total failed jobs in this build (across all tests): {build_failures}{hint}
-- Other jobs in this build failing in the exact same module(s): {same_module_failures}
-- Consecutive recent failures for this specific test (same name, arch, flavor): {consecutive_failures}
-
-Investigation info (diff to last good):
-{investigation_info}
-
-Log tail (last {log_lines} lines):
-{log_text}{prompt_extension_text}
-
-Provide exactly 3 sentences answering:
-1. Is it a new or existing issue? Is it likely a product regression, test regression, or infrastructure problem?
-2. Does the same issue appear in other tests in the same build, and did it appear in the history of the same build?
-3. Should 'openqa-investigate' be triggered to schedule further bisect tests? Start your 3rd sentence EXACTLY with "BISECT: YES" or "BISECT: NO" followed by the reason.
-   - If other jobs in the same build are failing in the exact same module, this is a widespread issue. You MUST answer BISECT: NO to prevent redundant and costly bisections, as another job has likely already triggered it.
-   - If the failure is isolated to ONLY this job in the current build, AND the log contains an explicit product error or test assertion failure (e.g., 'actual size fits X: fail', 'command not found', 'segmentation fault'), it strongly points to a new regression. In this isolated case, you MUST answer BISECT: YES.
-"""
-
-    if prompt_template_file:
-        try:
-            prompt_template = pathlib.Path(prompt_template_file).read_text(encoding="utf-8")
-        except OSError as e:
-            log.error("Could not read prompt template file %s: %s", prompt_template_file, e)
-            sys.exit(1)
-    else:
-        prompt_template = default_prompt_template
-
-    prompt = prompt_template.format(
-        test_name=test_name,
-        failed_modules=", ".join(failed_modules) if failed_modules else "unknown",
-        group=job.get("group", "unknown"),
-        build=build,
-        distri=distri,
-        version=version,
-        arch=arch,
-        flavor=flavor,
-        result=job.get("result", "unknown"),
-        build_failures=build_failures,
-        hint=hint,
-        same_module_failures=same_module_failures,
-        consecutive_failures=consecutive_failures,
-        investigation_info=json.dumps(investigation.get("diff_to_last_good", "None available")),
-        log_lines=log_lines,
-        log_text=log_text,
-        prompt_extension_text=prompt_extension_text,
-    )
-
-    llm_response = _call_llm_api(client, llm_url, llm_model, llm_token, timeout, prompt)
+    prompt = _build_prompt(job, analysis, stats, opts)
+    llm_response = _call_llm_api(client, opts, prompt)
 
     # Print the job URL to stdout ONLY if BISECT: YES is recommended
     # This makes the script act as a gatekeeper, similar to `openqa-label-known-issues`
-    if "BISECT: YES" in llm_response.upper():
-        print(f"{base_url}/tests/{job_id}")
+    if _bisect_recommended(llm_response):
+        print(f"{base_url}/tests/{job_id}")  # ruff: ignore[print]
 
-    if dry:
-        print(f"**LLM Investigation summary:**\n\n{llm_response}")
+    if opts.dry:
+        print(f"{COMMENT_MARKER}\n\n{llm_response}")  # ruff: ignore[print]
     else:
-        post_comment(base_url, job_id, f"**LLM Investigation summary:**\n\n{llm_response}")
+        post_comment(base_url, job_id, f"{COMMENT_MARKER}\n\n{llm_response}")
 
 
 @app.command()
@@ -447,10 +495,21 @@ def investigate(
         str | None,
         typer.Option("--llm-token", envvar="LLM_API_TOKEN", help="API token for authentication"),
     ] = None,
+    context_lines: Annotated[
+        int,
+        typer.Option(
+            "--context-lines", envvar="LLM_CONTEXT_LINES", min=0, help="Lines of log context around each failure"
+        ),
+    ] = 100,
     log_lines: Annotated[
         int,
-        typer.Option("--log-lines", envvar="LLM_LOG_LINES", help="Number of log lines to fetch"),
-    ] = 200,
+        typer.Option(
+            "--log-lines",
+            envvar="LLM_LOG_LINES",
+            min=0,
+            help="Maximum lines of failure analysis sent to the LLM (formerly the autoinst log tail length)",
+        ),
+    ] = 500,
     history_limit: Annotated[
         int,
         typer.Option("--history-limit", envvar="LLM_HISTORY_LIMIT", help="Limit for consecutive failure lookup"),
@@ -468,7 +527,7 @@ def investigate(
         typer.Option(
             "--prompt-template-file",
             envvar="LLM_PROMPT_TEMPLATE_FILE",
-            help="File containing the prompt template to use",
+            help="File containing the prompt template to use; escape literal braces as {{ and }}",
         ),
     ] = None,
     openqa_timeout: Annotated[
@@ -495,24 +554,23 @@ def investigate(
         log.error("Invalid job ID: %s", job_id)
         sys.exit(1)
 
+    opts = Options(
+        llm_url=llm_url,
+        llm_model=llm_model,
+        llm_token=llm_token,
+        llm_timeout=timeout,
+        context_lines=context_lines,
+        log_lines=log_lines,
+        history_limit=history_limit,
+        build_failure_threshold=build_failure_threshold,
+        prompt_template_file=prompt_template_file,
+        investigation_timeout=investigation_timeout,
+        force=force,
+        dry=dry,
+    )
     transport = RetryTransport(retries=retries)
     with httpx.Client(transport=transport, headers={"User-Agent": USER_AGENT}, timeout=openqa_timeout) as client:
-        _perform_investigation(
-            client,
-            base_url,
-            job_id,
-            force,
-            dry,
-            llm_url,
-            llm_model,
-            timeout,
-            llm_token,
-            log_lines,
-            history_limit,
-            build_failure_threshold,
-            prompt_template_file,
-            investigation_timeout=investigation_timeout,
-        )
+        _perform_investigation(client, base_url, job_id, opts)
 
 
 if __name__ == "__main__":
