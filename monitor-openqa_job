@@ -230,7 +230,7 @@ def monitor_single_job(
     sleep_time_val: int,
 ) -> tuple[int, str, str]:
     """Poll openQA job status until complete. Returns (final_id, result, version)."""
-    log.info("Waiting for job %d to finish", job_id)
+    log.info("Waiting for %s/t%d to finish", client.baseurl, job_id)
     endpoint = f"jobs/{job_id}"
     params = {"follow": 1}
     current_id = job_id
