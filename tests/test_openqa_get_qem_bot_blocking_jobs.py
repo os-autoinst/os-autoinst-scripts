@@ -243,3 +243,16 @@ def test_main_flow(mocker: MockerFixture, side_effect: Any, expected_exception: 
 def test_setup_logging(verbose: int, expected_level: int) -> None:
     blocking_jobs.setup_logging(verbose)
     assert logging.getLogger().getEffectiveLevel() == expected_level
+
+
+def test_main_entrypoint(mocker: MockerFixture) -> None:
+    mocker.patch.object(typer.Typer, "__call__")
+    main_spec = importlib.util.spec_from_file_location(
+        "__main__",
+        path,
+        loader=importlib.machinery.SourceFileLoader("__main__", str(path)),
+    )
+    assert main_spec
+    assert main_spec.loader
+    main_mod = importlib.util.module_from_spec(main_spec)
+    main_spec.loader.exec_module(main_mod)
