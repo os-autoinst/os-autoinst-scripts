@@ -50,12 +50,17 @@ def test_logging(caplog: pytest.LogCaptureFixture) -> None:
         ('{"ids": [100]}', True, [100]),
         (None, False, typer.Exit),
         ("bad json", True, typer.Exit),
+        ('{"scheduled_product_id": 42}', True, [7, 8]),
     ],
 )
-def test_load_job_ids(tmp_path: pathlib.Path, content: str | None, exists: bool, expected: Any) -> None:
+def test_load_job_ids(
+    tmp_path: pathlib.Path, mocker: MockerFixture, content: str | None, exists: bool, expected: Any
+) -> None:
     f = tmp_path / "job_post_response"
     if exists and content is not None:
         f.write_text(content)
+    mocker.patch("monitor_job.OpenQA_Client")
+    mocker.patch("monitor_job._poll_scheduled_product", return_value=[7, 8])
     if expected is typer.Exit:
         with pytest.raises(typer.Exit) as exc:
             monitor_job.load_job_ids(str(f) if exists else "missing")
@@ -299,6 +304,7 @@ def test_get_product_status_and_job_ids(
     [
         (("scheduled", [123, 456]), [123, 456], None),
         ([("scheduling", []), ("scheduling", []), ("scheduled", [123, 456])], [123, 456], None),
+        (("scheduled", []), None, 2),
         (("failed", []), None, 2),
         (RuntimeError("something failed"), None, 2),
     ],
