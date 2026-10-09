@@ -94,7 +94,7 @@ check-code-health: ## Run code health checks (vulture)
 
 .PHONY: test-with-coverage
 test-with-coverage:
-	$(RUNNER) pytest --cov=src/os-autoinst-scripts tests/
+	$(RUNNER) pytest --cov=openqa_llm_investigate tests/
 
 .PHONY: install-python-deps
 install-python-deps:
