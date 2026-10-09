@@ -5,9 +5,15 @@ from __future__ import annotations
 
 import json
 import pathlib
+from collections.abc import Callable, Mapping
 from typing import Any
 
+import httpx
 import pytest
+
+from openqa_llm_investigate.http import OpenQA
+
+Route = str | Callable[[httpx.Request], str]
 
 DATA_DIR = pathlib.Path(__file__).parent / "data" / "analysis"
 
@@ -30,3 +36,34 @@ def sample_details_softfailed() -> Any:
 @pytest.fixture
 def sample_details_no_modules() -> Any:
     return _load("details_ajax_no_modules.json")
+
+
+@pytest.fixture
+def sample_serial_log() -> str:
+    return _load("serial_terminal.txt")
+
+
+@pytest.fixture
+def sample_serial0_panic() -> str:
+    return _load("serial0_kernel_panic.txt")
+
+
+@pytest.fixture
+def sample_autoinst_log() -> str:
+    return _load("autoinst_log_sample.txt")
+
+
+@pytest.fixture
+def make_openqa() -> Callable[[Mapping[str, Route]], OpenQA]:
+    """Build an `OpenQA` serving `routes` by exact URL path (a callable gets the request); other paths are 404."""
+
+    def make(routes: Mapping[str, Route]) -> OpenQA:
+        def handler(request: httpx.Request) -> httpx.Response:
+            route = routes.get(request.url.path)
+            if route is None:
+                return httpx.Response(404, text="<html>not found</html>")
+            return httpx.Response(200, text=route if isinstance(route, str) else route(request))
+
+        return OpenQA(httpx.Client(transport=httpx.MockTransport(handler)), "https://srv")
+
+    return make

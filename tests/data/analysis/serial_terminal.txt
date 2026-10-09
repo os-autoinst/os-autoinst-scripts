@@ -1,0 +1,39 @@
+[   0.000000] Linux version 6.4.0-150700.1-default
+[   0.123456] Booting kernel
+Welcome to openSUSE Tumbleweed
+localhost login: root
+Password:
+Last login: Sun Jun 14 12:00:00 UTC 2026 on tty1
+localhost:~ # cat /etc/os-release
+NAME="openSUSE Tumbleweed"
+VERSION="20260601"
+ID="opensuse-tumbleweed"
+localhost:~ # zypper install foo
+Loading repository data...
+Reading installed packages...
+'foo' not found in package names. Trying capabilities.
+No provider of 'foo' found.
+Resolving package dependencies...
+Nothing to do.
+localhost:~ # echo "test marker: registration code INTERNAL-USE-ONLY-abcd-1234 here"
+test marker: registration code INTERNAL-USE-ONLY-abcd-1234 here
+localhost:~ # systemctl status myservice
+Unit myservice.service could not be found.
+localhost:~ # systemctl status myservice
+Unit myservice.service could not be found.
+localhost:~ # systemd-analyze
+Startup finished in 1.234s (kernel) + 4.567s (userspace) = 5.801s
+multi-user.target reached after 4.123s in userspace.
+localhost:~ # uname -a
+Linux localhost 6.4.0-150700.1-default #1 SMP PREEMPT_DYNAMIC Sun Jun 14 00:00:00 UTC 2026 x86_64 GNU/Linux
+localhost:~ # dmesg | tail -5
+[   5.000000] systemd[1]: Started Multi-User System.
+[   5.001000] systemd[1]: Reached target Graphical Interface.
+[   5.002000] systemd[1]: Started Update UTMP about System Runlevel Changes.
+[   5.003000] systemd[1]: Startup finished in 5.801s.
+[   5.004000] systemd[1]: All systems nominal.
+localhost:~ # df -h /
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/vda3        50G  3.2G   47G   7% /
+localhost:~ # exit
+logout

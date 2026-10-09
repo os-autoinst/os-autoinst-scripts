@@ -1,0 +1,18 @@
+[2025-01-01T00:00:01] Starting test module cluster_test
+[2025-01-01T00:00:02] Step 1: assert_screen
+[2025-01-01T00:00:03] echo step1
+[2025-01-01T00:00:04] Step 2: assert_screen
+[2025-01-01T00:00:05] echo step2
+[2025-01-01T00:00:06] Step 3: wait_serial
+[2025-01-01T00:00:07] zypper install foo
+[2025-01-01T00:00:08] error: package not found
+[2025-01-01T00:00:09] Step 5: assert_screen
+[2025-01-01T00:00:10] echo step5
+[2025-01-01T00:00:11] Step 7: wait_serial
+[2025-01-01T00:00:12] systemctl start myservice
+[2025-01-01T00:00:13] XMark-0-
+[2025-01-01T00:00:14] Step 10: assert_screen
+[2025-01-01T00:00:15] echo step10
+[2025-01-01T00:00:16] Step 15: test died
+[2025-01-01T00:00:17] reboot
+[2025-01-01T00:00:18] Finished test module cluster_test

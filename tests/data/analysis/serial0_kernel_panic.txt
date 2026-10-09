@@ -1,0 +1,35 @@
+[   0.000000] Linux version 6.4.0-150700.1-default
+[   0.123456] Command line: BOOT_IMAGE=/boot/vmlinuz-6.4.0-150700.1
+[   1.000000] Booting kernel...
+[   2.000000] Memory: 8192MB available
+[   3.000000] systemd[1]: Starting Multi-User System
+[   4.000000] sshd: server listening on 0.0.0.0 port 22
+[   5.000000] systemd[1]: Started Multi-User System.
+localhost login: root
+Password:
+localhost:~ # uname -a
+Linux localhost 6.4.0-150700.1-default
+localhost:~ # echo "registration: INTERNAL-USE-ONLY-cafe-beef"
+registration: INTERNAL-USE-ONLY-cafe-beef
+localhost:~ # echo "triggering panic now"
+triggering panic now
+localhost:~ # echo c > /proc/sysrq-trigger
+[  100.000000] sysrq: Trigger a crash
+[  100.000100] Kernel panic - not syncing: sysrq triggered crash
+[  100.000200] CPU: 0 PID: 1234 Comm: bash Not tainted 6.4.0-150700.1-default #1
+[  100.000300] Hardware name: QEMU Standard PC (i440FX + PIIX, 1996)
+[  100.000400] Call Trace:
+[  100.000500]  <TASK>
+[  100.000600]  dump_stack_lvl+0x47/0x60
+[  100.000700]  panic+0x117/0x2e0
+[  100.000800]  sysrq_handle_crash+0x16/0x20
+[  100.000900]  __handle_sysrq+0xf5/0x230
+[  100.001000]  write_sysrq_trigger+0x29/0x40
+[  100.001100]  proc_reg_write+0x57/0xa0
+[  100.001200]  vfs_write+0xc4/0x440
+[  100.001300]  ksys_write+0x6b/0xf0
+[  100.001400]  do_syscall_64+0x59/0x90
+[  100.001500]  entry_SYSCALL_64_after_hwframe+0x72/0xdc
+[  100.001600]  </TASK>
+[  100.001700] Kernel Offset: disabled
+[  100.001800] ---[ end Kernel panic - not syncing: sysrq triggered crash ]---
