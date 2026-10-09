@@ -359,16 +359,14 @@ def test_exclude_investigated() -> None:
     openqa.openqa_clone.assert_not_called()
 
 
-def test_network_problems() -> None:
+def test_network_problems(mocker: MockerFixture) -> None:
     args = args_factory()
     args.url = "http://doesnotexist.openqa.opensuse.org/tests/12345"
     openqa.openqa_clone = MagicMock(return_value="")
     openqa.fetch_url = MagicMock(side_effect=orig_fetch_url)
-    try:
+    mocker.patch.object(openqa.session, "get", side_effect=requests.exceptions.ConnectionError("offline"))
+    with pytest.raises(requests.exceptions.ConnectionError):
         openqa.main(args)
-        raise AssertionError
-    except requests.exceptions.ConnectionError:
-        assert True
 
 
 def test_issue_types() -> None:
@@ -521,3 +519,110 @@ def test_trigger_bisect_job_404_handled_gracefully(caplog: pytest.LogCaptureFixt
     assert not res
     assert "Skipping bisecting as job 7848818 has been deleted." in caplog.text
     assert not any(r.levelno >= logging.WARNING for r in caplog.records)
+
+
+def test_fetch_url_invalid_json(mocker: MockerFixture) -> None:
+    mock_resp = MagicMock()
+    mock_resp.content = b"not json"
+    mock_resp.json.side_effect = json.decoder.JSONDecodeError("Expecting value", "not json", 0)
+    mocker.patch.object(openqa.session, "get", return_value=mock_resp)
+    with pytest.raises(json.decoder.JSONDecodeError):
+        openqa.fetch_url("http://example.com/test", request_type="json")
+
+
+def test_incident_comparisons_and_repr() -> None:
+    assert (Incident("1") == "not-an-incident") is False
+    with pytest.raises(TypeError):
+        _ = Incident("1") > "not-an-incident"
+    assert repr(Incident("42")) == "<Incident -> 42"
+
+
+@pytest.mark.parametrize(
+    ("argv", "expected_verbose", "expected_gid"),
+    [
+        (["prog", "--url", "http://host/tests/1", "-vv"], 3, 0),
+        (["prog", "-vvvvv", "--url", "http://host/tests/1", "--investigation-gid", "7"], 6, 7),
+    ],
+)
+def test_parse_args(mocker: MockerFixture, argv: list[str], expected_verbose: int, expected_gid: int) -> None:
+    mocker.patch("sys.argv", argv)
+    args = openqa.parse_args()
+    assert args.verbose == expected_verbose
+    assert args.url == "http://host/tests/1"
+    assert args.investigation_gid == expected_gid
+
+
+def test_openqa_clone_explicit_defaults(mocker: MockerFixture) -> None:
+    mock_call = mocker.patch.object(openqa, "call", side_effect=mocked_call)
+    orig_openqa_clone(["url"], False, ["--custom-opt"], ["_GROUP=9"])
+    mock_call.assert_called_once_with(["openqa-clone-job", "--custom-opt", "url", "_GROUP=9"], False)
+
+
+def test_check_exclude_regex_no_match() -> None:
+    job = {"test": "foo", "group": "some-group"}
+    with patch.dict("os.environ", {"exclude_group_regex": "nomatch"}):
+        assert openqa._check_exclude_regex(job) is False
+
+
+def test_main_missing_diff_to_last_good(mocker: MockerFixture) -> None:
+    args = args_factory()
+    args.url = "http://openqa.opensuse.org/tests/999999"
+
+    def fake_fetch(url: str, request_type: str = "text") -> dict:
+        if "investigation_ajax" in url:
+            return {"unrelated": "payload"}
+        return {"job": {"id": 999999, "result": "failed", "test": "foo", "settings": {"TEST": "foo"}, "priority": "10"}}
+
+    openqa.fetch_url = MagicMock(side_effect=fake_fetch)
+    openqa.openqa_clone = MagicMock(return_value="")
+    openqa.main(args)
+    openqa.openqa_clone.assert_not_called()
+
+
+def test_main_no_changes(mocker: MockerFixture) -> None:
+    args = args_factory()
+    args.url = "http://openqa.opensuse.org/tests/999999"
+
+    def fake_fetch(url: str, request_type: str = "text") -> dict:
+        if "investigation_ajax" in url:
+            return {"diff_to_last_good": "no relevant changes"}
+        return {"job": {"id": 999999, "result": "failed", "test": "foo", "settings": {"TEST": "foo"}, "priority": "10"}}
+
+    openqa.fetch_url = MagicMock(side_effect=fake_fetch)
+    openqa.openqa_clone = MagicMock(return_value="")
+    openqa.main(args)
+    openqa.openqa_clone.assert_not_called()
+
+
+def test_main_no_created_jobs(mocker: MockerFixture) -> None:
+    args = args_factory()
+    args.url = "http://openqa.opensuse.org/tests/999999"
+
+    def fake_fetch(url: str, request_type: str = "text") -> dict:
+        if "investigation_ajax" in url:
+            return {"diff_to_last_good": '- "OS_TEST_ISSUES": "1,2,3,4",\n+ "OS_TEST_ISSUES": "1,2,3,4,5",\n'}
+        return {"job": {"id": 999999, "result": "failed", "test": "foo", "settings": {"TEST": "foo"}, "priority": "10"}}
+
+    openqa.fetch_url = MagicMock(side_effect=fake_fetch)
+    openqa.openqa_clone = MagicMock(return_value="not json")
+    openqa.openqa_comment = MagicMock()
+    openqa.openqa_set_job_prio = MagicMock()
+    openqa.main(args)
+    openqa.openqa_comment.assert_not_called()
+
+
+def test_main_entrypoint(mocker: MockerFixture) -> None:
+    mocker.patch("sys.argv", ["openqa-trigger-bisect-jobs", "--url", "http://host/tests/1"])
+    mock_session = mocker.patch("requests.Session")
+    mock_session.return_value.get.side_effect = requests.exceptions.ConnectionError("offline")
+    script = f"{rootpath}/openqa-trigger-bisect-jobs"
+    main_spec = importlib.util.spec_from_file_location(
+        "__main__",
+        script,
+        loader=importlib.machinery.SourceFileLoader("__main__", script),
+    )
+    assert main_spec
+    assert main_spec.loader
+    main_mod = importlib.util.module_from_spec(main_spec)
+    with pytest.raises(requests.exceptions.ConnectionError):
+        main_spec.loader.exec_module(main_mod)
