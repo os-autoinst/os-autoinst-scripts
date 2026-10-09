@@ -1,11 +1,13 @@
 #!/usr/bin/python3
 # Copyright SUSE LLC
-# ruff: file-ignore[any-type, blind-except, complex-structure, line-too-long, boolean-type-hint-positional-argument, reimplemented-operator, too-many-arguments, too-many-locals, too-many-statements, too-many-positional-arguments, magic-value-comparison, print, error-instead-of-exception]
 """Investigates an openQA job failure using an LLM."""
+
+from __future__ import annotations
 
 import datetime
 import json
 import logging
+import operator
 import os
 import pathlib
 import subprocess
@@ -40,7 +42,7 @@ class RetryTransport(httpx.HTTPTransport):
 
     RETRY_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
 
-    def __init__(self, retries: int = 1, **kwargs: Any) -> None:
+    def __init__(self, retries: int = 1, **kwargs: Any) -> None:  # ruff: ignore[any-type]
         """Initialize the RetryTransport with a configurable number of retries."""
         super().__init__(**kwargs)
         self.retries = retries
@@ -69,7 +71,7 @@ class RetryTransport(httpx.HTTPTransport):
                         delay = (dt - self._now()).total_seconds()
                         if delay > 0.0:
                             return delay
-                    except Exception as e:
+                    except (ValueError, TypeError) as e:
                         log.debug("Failed to parse Retry-After header as date: %s", e)
 
         return float(2 ** (retry_state.attempt_number - 1))
@@ -123,9 +125,10 @@ def fetch_json(
     client: httpx.Client,
     url: str,
     params: dict[str, Any] | None = None,
-    default: Any = None,
+    default: Any = None,  # ruff: ignore[any-type]
     timeout: float | None = None,
-) -> Any:
+) -> Any:  # ruff: ignore[any-type]
+    """Fetch JSON from a URL and return it, or the default if it fails."""
     try:
         kwargs: dict[str, Any] = {"params": params}
         if timeout is not None:
@@ -133,12 +136,13 @@ def fetch_json(
         response = client.get(url, **kwargs)
         response.raise_for_status()
         return response.json()
-    except Exception as e:
+    except (httpx.RequestError, httpx.HTTPStatusError, ValueError) as e:
         log.warning("Failed to fetch JSON from %s with params %s: %s", url, params, e)
         return default if default is not None else {}
 
 
 def fetch_text(client: httpx.Client, url: str, max_lines: int = 200, timeout: float | None = None) -> str:
+    """Fetch text from a URL and return up to max_lines lines."""
     lines: deque[str] = deque(maxlen=max_lines)
     kwargs: dict[str, Any] = {}
     if timeout is not None:
@@ -149,12 +153,13 @@ def fetch_text(client: httpx.Client, url: str, max_lines: int = 200, timeout: fl
             for line in response.iter_lines():
                 lines.append(line)
         return "\n".join(lines)
-    except Exception as e:
+    except (httpx.RequestError, httpx.HTTPStatusError) as e:
         log.warning("Failed to fetch text from %s: %s", url, e)
         return ""
 
 
 def post_comment(base_url: str, job_id: str, comment: str) -> None:
+    """Post a comment to an openQA job."""
     cmd = [
         "openqa-cli",
         "api",
@@ -171,13 +176,14 @@ def post_comment(base_url: str, job_id: str, comment: str) -> None:
         res = subprocess.run(cmd, check=True, capture_output=True, text=True)
         log.debug("Posted comment to %s/t%s: %s", base_url, job_id, res.stdout)
     except subprocess.CalledProcessError as e:
-        log.error("Failed to post comment: %s", e.stderr)
+        log.exception("Failed to post comment: %s", e.stderr)
 
 
-def setup_logging(verbose: int, quiet: bool) -> None:
+def setup_logging(verbose: int, *, quiet: bool) -> None:
+    """Configure logging level based on verbosity."""
     if quiet:
         level = logging.ERROR
-    elif verbose >= 2:
+    elif verbose >= 2:  # ruff: ignore[magic-value-comparison]
         level = logging.DEBUG
     elif verbose >= 1:
         level = logging.INFO
@@ -187,6 +193,7 @@ def setup_logging(verbose: int, quiet: bool) -> None:
 
 
 def parse_job_url(job_url: str) -> tuple[str, str]:
+    """Parse a job URL or ID into a base URL and job ID."""
     parsed_url = urlparse(job_url)
     if parsed_url.scheme:
         base_url = urlunparse((parsed_url.scheme, parsed_url.netloc, "", "", "", ""))
@@ -199,11 +206,12 @@ def parse_job_url(job_url: str) -> tuple[str, str]:
 
 def _shares_failed_modules(other_job: dict[str, Any], target_modules: set[str]) -> bool:
     """Check if the given job has failures in any of the target modules."""
+    """Check if the given job has failures in any of the target modules."""
     other_failed = (m.get("name") for m in other_job.get("modules", []) if m.get("result") == "failed")
     return bool(target_modules.intersection(other_failed))
 
 
-def _call_llm_api(
+def _call_llm_api(  # ruff: ignore[too-many-arguments, too-many-positional-arguments]
     client: httpx.Client,
     llm_url: str,
     llm_model: str,
@@ -211,6 +219,7 @@ def _call_llm_api(
     timeout: int,
     prompt: str,
 ) -> str:
+    """Call the LLM API and return the response text."""
     req = {
         "model": llm_model,
         "messages": [{"role": "user", "content": prompt}],
@@ -223,23 +232,27 @@ def _call_llm_api(
         res_json = res.json()
         return res_json["choices"][0]["message"]["content"]
     except httpx.ConnectError:
-        log.error(
-            "Could not connect to LLM server at %s. Please check if the server is running or the LLM_API_URL environment variable is correct.",
+        log.exception(
+            (
+                "Could not connect to LLM server at %s. Please check if the server is running or the "
+                "LLM_API_URL environment variable is correct."
+            ),
             llm_url,
         )
         sys.exit(1)
     except httpx.HTTPStatusError as e:
-        log.error("LLM API %s (%s) status %d: %s", llm_url, llm_model, e.response.status_code, e.response.text)
+        log.exception("LLM API %s (%s) status %d: %s", llm_url, llm_model, e.response.status_code, e.response.text)
         sys.exit(1)
-    except Exception as e:
-        log.error("LLM API %s (%s) failed: %s", llm_url, llm_model, e)
+    except Exception:
+        log.exception("LLM API %s (%s) failed", llm_url, llm_model)
         sys.exit(1)
 
 
-def _perform_investigation(
+def _perform_investigation(  # ruff: ignore[too-many-arguments, too-many-locals, too-many-statements, complex-structure]
     client: httpx.Client,
     base_url: str,
     job_id: str,
+    *,
     force: bool,
     dry: bool,
     llm_url: str,
@@ -252,6 +265,7 @@ def _perform_investigation(
     prompt_template_file: str | None,
     investigation_timeout: float = DEFAULT_INVESTIGATION_TIMEOUT,
 ) -> None:
+    """Perform the LLM investigation."""
     # Check for existing LLM investigation comments
     comments = fetch_json(client, f"{base_url}/api/v1/jobs/{job_id}/comments", default=[])
     if not force and any(c.get("text", "").startswith("**LLM Investigation summary:**") for c in comments):
@@ -306,7 +320,7 @@ def _perform_investigation(
         "limit": history_limit,
     }
     test_history_data = fetch_json(client, f"{base_url}/api/v1/jobs", params=test_params)
-    test_jobs = sorted(test_history_data.get("jobs", []), key=lambda x: x["id"], reverse=True)
+    test_jobs = sorted(test_history_data.get("jobs", []), key=operator.itemgetter("id"), reverse=True)
 
     target_id_int = int(job_id)
     valid_results = {"passed", "softfailed", "failed"}
@@ -329,7 +343,10 @@ def _perform_investigation(
 
     hint = ""
     if build_failures > build_failure_threshold:
-        hint = f"\n(Note: {build_failures} failures across this build strongly implies a backend infrastructure outage or a widespread environment issue rather than a specific product bug.)"
+        hint = (
+            f"\n(Note: {build_failures} failures across this build strongly implies a backend "
+            "infrastructure outage or a widespread environment issue rather than a specific product bug.)"
+        )
 
     prompt_extension = settings.get("LLM_PROMPT_EXTENSION")
     prompt_extension_text = (
@@ -360,16 +377,20 @@ Log tail (last {log_lines} lines):
 Provide exactly 3 sentences answering:
 1. Is it a new or existing issue? Is it likely a product regression, test regression, or infrastructure problem?
 2. Does the same issue appear in other tests in the same build, and did it appear in the history of the same build?
-3. Should 'openqa-investigate' be triggered to schedule further bisect tests? Start your 3rd sentence EXACTLY with "BISECT: YES" or "BISECT: NO" followed by the reason.
-   - If other jobs in the same build are failing in the exact same module, this is a widespread issue. You MUST answer BISECT: NO to prevent redundant and costly bisections, as another job has likely already triggered it.
-   - If the failure is isolated to ONLY this job in the current build, AND the log contains an explicit product error or test assertion failure (e.g., 'actual size fits X: fail', 'command not found', 'segmentation fault'), it strongly points to a new regression. In this isolated case, you MUST answer BISECT: YES.
+3. Should 'openqa-investigate' be triggered to schedule further bisect tests? Start your 3rd sentence EXACTLY with \
+"BISECT: YES" or "BISECT: NO" followed by the reason.
+   - If other jobs in the same build are failing in the exact same module, this is a widespread issue. You MUST \
+answer BISECT: NO to prevent redundant and costly bisections, as another job has likely already triggered it.
+   - If the failure is isolated to ONLY this job in the current build, AND the log contains an explicit product \
+error or test assertion failure (e.g., 'actual size fits X: fail', 'command not found', 'segmentation fault'), \
+it strongly points to a new regression. In this isolated case, you MUST answer BISECT: YES.
 """
 
     if prompt_template_file:
         try:
             prompt_template = pathlib.Path(prompt_template_file).read_text(encoding="utf-8")
-        except OSError as e:
-            log.error("Could not read prompt template file %s: %s", prompt_template_file, e)
+        except OSError:
+            log.exception("Could not read prompt template file %s", prompt_template_file)
             sys.exit(1)
     else:
         prompt_template = default_prompt_template
@@ -399,16 +420,16 @@ Provide exactly 3 sentences answering:
     # Print the job URL to stdout ONLY if BISECT: YES is recommended
     # This makes the script act as a gatekeeper, similar to `openqa-label-known-issues`
     if "BISECT: YES" in llm_response.upper():
-        print(f"{base_url}/tests/{job_id}")
+        typer.echo(f"{base_url}/tests/{job_id}")
 
     if dry:
-        print(f"**LLM Investigation summary:**\n\n{llm_response}")
+        typer.echo(f"**LLM Investigation summary:**\n\n{llm_response}")
     else:
         post_comment(base_url, job_id, f"**LLM Investigation summary:**\n\n{llm_response}")
 
 
 @app.command()
-def investigate(
+def investigate(  # ruff: ignore[too-many-arguments, too-many-positional-arguments]
     job_url: str = typer.Argument(..., help="The openQA test URL or job ID for which to trigger LLM investigation"),
     verbose: Annotated[int, typer.Option("--verbose", "-v", count=True, help="Increase verbosity")] = 0,
     quiet: Annotated[bool, typer.Option("--quiet", "-q", help="Quiet mode")] = False,  # ruff: ignore[boolean-default-value-positional-argument]
@@ -488,7 +509,8 @@ def investigate(
         ),
     ] = DEFAULT_INVESTIGATION_TIMEOUT,
 ) -> None:
-    setup_logging(verbose, quiet)
+    """CLI entry point to investigate a failed openQA job."""
+    setup_logging(verbose, quiet=quiet)
     base_url, job_id = parse_job_url(job_url)
 
     if not job_id.isdigit():
@@ -501,16 +523,16 @@ def investigate(
             client,
             base_url,
             job_id,
-            force,
-            dry,
-            llm_url,
-            llm_model,
-            timeout,
-            llm_token,
-            log_lines,
-            history_limit,
-            build_failure_threshold,
-            prompt_template_file,
+            force=force,
+            dry=dry,
+            llm_url=llm_url,
+            llm_model=llm_model,
+            timeout=timeout,
+            llm_token=llm_token,
+            log_lines=log_lines,
+            history_limit=history_limit,
+            build_failure_threshold=build_failure_threshold,
+            prompt_template_file=prompt_template_file,
             investigation_timeout=investigation_timeout,
         )
 
