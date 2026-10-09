@@ -479,7 +479,7 @@ def test_retry_transport_retry_on_timeout(mocker: MockerFixture) -> None:
     assert res == resp200
     assert mock_super_handle.call_count == 2
     mock_sleep.assert_called_once_with(1.0)
-    mock_log.warning.assert_called_once_with(
+    mock_log.info.assert_called_once_with(
         "Request timed out (%s). Retrying in %.2f seconds (%d retries left)...",
         "ReadTimeout",
         1.0,
@@ -501,8 +501,8 @@ def test_retry_transport_timeout_exhausted(mocker: MockerFixture) -> None:
 
     assert mock_super_handle.call_count == 3
     assert mock_sleep.call_count == 2
-    assert mock_log.warning.call_count == 2
-    mock_log.warning.assert_has_calls([
+    assert mock_log.info.call_count == 2
+    mock_log.info.assert_has_calls([
         mocker.call(
             "Request timed out (%s). Retrying in %.2f seconds (%d retries left)...",
             "ConnectTimeout",
