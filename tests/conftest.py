@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import pathlib
 from collections.abc import Callable, Mapping
@@ -55,11 +56,11 @@ def sample_autoinst_log() -> str:
 
 @pytest.fixture
 def make_openqa() -> Callable[[Mapping[str, Route]], OpenQA]:
-    """Build an `OpenQA` serving `routes` by exact URL path (a callable gets the request); other paths are 404."""
+    """Build an `OpenQA` serving `routes` by URL path glob (a callable gets the request); other paths are 404."""
 
     def make(routes: Mapping[str, Route]) -> OpenQA:
         def handler(request: httpx.Request) -> httpx.Response:
-            route = routes.get(request.url.path)
+            route = next((r for pattern, r in routes.items() if fnmatch.fnmatch(request.url.path, pattern)), None)
             if route is None:
                 return httpx.Response(404, text="<html>not found</html>")
             return httpx.Response(200, text=route if isinstance(route, str) else route(request))
