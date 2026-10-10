@@ -16,6 +16,7 @@ import sys
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
+import httpx
 import pytest
 
 if TYPE_CHECKING:
@@ -728,3 +729,149 @@ BuildRequires:  fdupes
     assert (
         caplog.records[0].getMessage() == "openQA.spec does not contain node_modules specific sources; no changes made."
     )
+
+
+def test_is_transient_osc_error_non_process_error() -> None:
+    assert auto_submit.is_transient_osc_error(ValueError("boom")) is False
+
+
+@pytest.mark.parametrize(
+    ("target", "stdout", "raise_exc", "expected"),
+    [
+        ("openSUSE:Backports:SLE-15-SP7:Update", '<collection><request id="7"/></collection>', None, "7"),
+        ("openSUSE:Factory", "", None, ""),
+        ("openSUSE:Factory", None, subprocess.CalledProcessError(1, "osc"), ""),
+    ],
+)
+def test_get_obs_sr_id_edges(
+    mocker: MockerFixture,
+    target: str,
+    stdout: str | None,
+    raise_exc: BaseException | None,
+    expected: str,
+) -> None:
+    mock_run = mocker.patch("auto_submit.run_osc_cmd")
+    if raise_exc is not None:
+        mock_run.side_effect = raise_exc
+    else:
+        mock_run.return_value = subprocess.CompletedProcess(["osc"], 0, stdout=stdout)
+    assert auto_submit.get_obs_sr_id(target, "proj", "pkg", "osc", dry_run=False) == expected
+
+
+def test_run_osc_cmd_dry_run_mutating(mocker: MockerFixture) -> None:
+    mock_run = mocker.patch("auto_submit.subprocess.run")
+    res = auto_submit.run_osc_cmd(["osc", "sr"], dry_run=True, mutating=True)
+    assert res.returncode == 0
+    mock_run.assert_not_called()
+
+
+def test_run_osc_cmd_dry_run_fallback(caplog: pytest.LogCaptureFixture, mocker: MockerFixture) -> None:
+    mocker.patch("auto_submit.subprocess.run", side_effect=subprocess.CalledProcessError(1, ["osc", "sr"]))
+    with caplog.at_level("WARNING"):
+        res = auto_submit.run_osc_cmd(["osc", "sr"], dry_run=True, mutating=False)
+    assert res.returncode == 0
+    assert any("falling back to dummy success" in r.getMessage() for r in caplog.records)
+
+
+def test_run_osc_cmd_error_without_streams(caplog: pytest.LogCaptureFixture, mocker: MockerFixture) -> None:
+    mocker.patch("auto_submit.subprocess.run", side_effect=subprocess.CalledProcessError(1, ["osc", "sr"]))
+    with caplog.at_level("ERROR"), pytest.raises(subprocess.CalledProcessError):
+        auto_submit.run_osc_cmd(["osc", "sr"], dry_run=False, mutating=True)
+    messages = [r.getMessage() for r in caplog.records]
+    assert len(messages) == 1
+    assert "Command 'osc sr' failed with exit code 1" in messages[0]
+
+
+def _http_client(mocker: MockerFixture, responses: list[object]) -> None:
+    client = mocker.MagicMock(spec=httpx.Client)
+    mocker.patch("auto_submit.httpx.Client", return_value=client)
+    client.__enter__.return_value = client
+
+    def _get(*_args: Any, **_kwargs: Any) -> Any:
+        item = responses.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return SimpleNamespace(text=item, raise_for_status=lambda: None)
+
+    client.get.side_effect = _get
+
+
+@pytest.mark.parametrize(
+    ("dry_run", "tries", "responses", "expected"),
+    [
+        (True, 0, [], True),
+        (False, 90, ["building", "successful", "successful"], True),
+        (False, 1, ["successful", "successful", "successful", "successful"], True),
+        (False, 90, ["building", "building", "successful", "failed"], False),
+        (
+            False,
+            90,
+            [
+                httpx.ConnectError("boom"),
+                "building",
+                httpx.ConnectError("boom"),
+                "successful",
+                httpx.ConnectError("boom"),
+            ],
+            True,
+        ),
+    ],
+)
+def test_wait_for_package_build(
+    mocker: MockerFixture,
+    dry_run: bool,
+    tries: int,
+    responses: list[object],
+    expected: bool,
+) -> None:
+    _http_client(mocker, responses)
+    submitter = auto_submit.AutoSubmitter(
+        dst_project="proj",
+        dry_run=dry_run,
+        osc_poll_interval=0,
+        osc_build_start_poll_tries=tries,
+    )
+    assert submitter.wait_for_package_build("openSUSE:Factory", "openQA") is expected
+
+
+@pytest.mark.parametrize(
+    ("target", "days", "pr_json", "sr_stdout", "raise_exc"),
+    [
+        ("openSUSE:Leap:16.0", 1, None, "", subprocess.CalledProcessError(1, "git-obs")),
+        ("openSUSE:Leap:16.0", 1, None, "", None),
+        (
+            "openSUSE:Leap:16.0",
+            1,
+            [{"base": {"ref": "other"}, "user": {"login": "someone"}, "updated_at": "2026-10-07T00:00:00Z"}],
+            "",
+            None,
+        ),
+        ("openSUSE:Factory", 1, None, "", subprocess.CalledProcessError(1, "osc")),
+    ],
+)
+def test_has_pending_submission_edges(
+    mocker: MockerFixture,
+    target: str,
+    days: int,
+    pr_json: list[dict[str, Any]] | None,
+    sr_stdout: str,
+    raise_exc: BaseException | None,
+) -> None:
+    mock_run = mocker.patch("auto_submit.run_osc_cmd")
+    mocker.patch("auto_submit.datetime", new=_FrozenDateTime)
+    if raise_exc is not None:
+        mock_run.side_effect = raise_exc
+    elif pr_json is not None:
+        mock_run.return_value = subprocess.CompletedProcess(["git-obs"], 0, stdout=auto_submit.json.dumps(pr_json))
+    else:
+        mock_run.return_value = subprocess.CompletedProcess(["osc"], 0, stdout=sr_stdout)
+    submitter = auto_submit.AutoSubmitter(
+        dst_project="proj",
+        throttle_days=days,
+        throttle_days_leap_16=days,
+        git_user="os-autoinst-obs-workflow",
+        osc_cmd_str="osc",
+        git_obs_cmd_str="git-obs",
+        dry_run=False,
+    )
+    assert submitter.has_pending_submission(package="openQA", target=target) is False
