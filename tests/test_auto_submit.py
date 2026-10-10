@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-import datetime
+import datetime as dt
 import importlib.machinery
 import importlib.util
 import logging
@@ -73,7 +73,7 @@ def test_get_obs_sr_id_empty(mocker: MockerFixture) -> None:
             3,
             [
                 {
-                    "updated_at": (datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=2)).strftime(
+                    "updated_at": (dt.datetime.now(dt.UTC) - dt.timedelta(days=2)).strftime(
                         "%Y-%m-%dT%H:%M:%SZ",
                     ),
                     "html_url": "https://foo/bar",
@@ -89,7 +89,7 @@ def test_get_obs_sr_id_empty(mocker: MockerFixture) -> None:
             1,
             [
                 {
-                    "updated_at": (datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=2)).strftime(
+                    "updated_at": (dt.datetime.now(dt.UTC) - dt.timedelta(days=2)).strftime(
                         "%Y-%m-%dT%H:%M:%SZ",
                     ),
                     "html_url": "https://foo/bar",

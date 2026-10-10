@@ -10,7 +10,7 @@ Usage example: ./openqa-get-job-runtime-stats https://openqa.opensuse.org/tests/
 from __future__ import annotations
 
 import argparse
-import datetime
+import datetime as dt
 import sys
 import time
 
@@ -18,14 +18,14 @@ import numpy as np
 import requests
 
 
-def parse_t(dt_str: str | None) -> datetime.datetime | None:
+def parse_t(dt_str: str | None) -> dt.datetime | None:
     """Parse openQA timestamp string."""
     if dt_str is None:
         return None
     dt_str = dt_str.strip()
     if not dt_str:
         return None
-    return datetime.datetime.strptime(dt_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=datetime.UTC)
+    return dt.datetime.strptime(dt_str, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=dt.UTC)
 
 
 class Job:

@@ -3,7 +3,7 @@
 # ruff: file-ignore[any-type, blind-except, complex-structure, line-too-long, boolean-type-hint-positional-argument, reimplemented-operator, too-many-arguments, too-many-locals, too-many-statements, too-many-positional-arguments, magic-value-comparison, print, error-instead-of-exception]
 """Investigates an openQA job failure using an LLM."""
 
-import datetime
+import datetime as dt
 import json
 import logging
 import os
@@ -46,8 +46,8 @@ class RetryTransport(httpx.HTTPTransport):
         self.retries = retries
 
     @staticmethod
-    def _now() -> datetime.datetime:
-        return datetime.datetime.now(datetime.UTC)
+    def _now() -> dt.datetime:
+        return dt.datetime.now(dt.UTC)
 
     def _check_and_raise(self, response: httpx.Response) -> None:
         if response.status_code in self.RETRY_STATUS_CODES:
@@ -65,8 +65,8 @@ class RetryTransport(httpx.HTTPTransport):
                         return delay
                 except ValueError:
                     try:
-                        dt = parsedate_to_datetime(retry_after)
-                        delay = (dt - self._now()).total_seconds()
+                        retry_dt = parsedate_to_datetime(retry_after)
+                        delay = (retry_dt - self._now()).total_seconds()
                         if delay > 0.0:
                             return delay
                     except Exception as e:

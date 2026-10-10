@@ -1062,8 +1062,8 @@ def test_main_configures_timeout(mocker: MockerFixture) -> None:
     assert res.exit_code == 0
 
     mock_client_class.assert_called_once()
-    assert mock_client_class.call_args[1]["timeout"] == 90.0
-    assert mock_fetch.call_args[1]["timeout"] == 90.0
+    assert mock_client_class.call_args[1]["timeout"] == pytest.approx(90.0)
+    assert mock_fetch.call_args[1]["timeout"] == pytest.approx(90.0)
 
 
 def test_main_configures_custom_timeout_and_retries(mocker: MockerFixture) -> None:
@@ -1081,8 +1081,8 @@ def test_main_configures_custom_timeout_and_retries(mocker: MockerFixture) -> No
     mock_client_class.assert_called_once()
     transport = mock_client_class.call_args[1]["transport"]
     assert transport.retries == 5
-    assert mock_client_class.call_args[1]["timeout"] == 30.0
-    assert mock_fetch.call_args[1]["timeout"] == 15.0
+    assert mock_client_class.call_args[1]["timeout"] == pytest.approx(30.0)
+    assert mock_fetch.call_args[1]["timeout"] == pytest.approx(15.0)
 
 
 def test_main_configures_timeout_from_env(mocker: MockerFixture) -> None:
@@ -1096,8 +1096,8 @@ def test_main_configures_timeout_from_env(mocker: MockerFixture) -> None:
     assert res.exit_code == 0
 
     mock_client_class.assert_called_once()
-    assert mock_client_class.call_args[1]["timeout"] == 45.0
-    assert mock_fetch.call_args[1]["timeout"] == 20.0
+    assert mock_client_class.call_args[1]["timeout"] == pytest.approx(45.0)
+    assert mock_fetch.call_args[1]["timeout"] == pytest.approx(20.0)
 
 
 def test_fetch_issues_with_timeout(mocker: MockerFixture) -> None:
