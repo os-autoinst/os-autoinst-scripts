@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-import datetime
+import datetime as dt
 import difflib
 import json
 import logging
@@ -215,7 +215,7 @@ def generate_changelog(dir_path: str, package: str, submit_target: str, osc_cmd_
         elif is_remove:
             parsed_diff_lines.append(f"- Removed {content}")
 
-    now_str = datetime.datetime.now(datetime.UTC).strftime("%a %b %d %H:%M:%S UTC %Y")
+    now_str = dt.datetime.now(dt.UTC).strftime("%a %b %d %H:%M:%S UTC %Y")
     changelog_content = (
         "-------------------------------------------------------------------\n"
         f"{now_str} - Dominik Heidler <dheidler@suse.de>\n\n" + "\n".join(parsed_diff_lines) + "\n\n" + factory_changes
@@ -604,9 +604,9 @@ class AutoSubmitter:
                     if pr.get("base", {}).get("ref") == git_branch and pr.get("user", {}).get("login") == self.git_user:
                         updated_at_str = pr.get("updated_at", "")
                         dt_str = updated_at_str.replace("Z", "+00:00")
-                        dt = datetime.datetime.fromisoformat(dt_str)
-                        now = datetime.datetime.now(datetime.UTC)
-                        diff = now - dt
+                        updated_dt = dt.datetime.fromisoformat(dt_str)
+                        now = dt.datetime.now(dt.UTC)
+                        diff = now - updated_dt
                         if diff.total_seconds() < throttle_days_value * 86400:
                             log.info(
                                 "Skipping submission, there is the still pending PR '%s' by %s targeting %s "

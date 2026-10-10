@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-import datetime
+import datetime as dt
 import importlib.machinery
 import importlib.util
 import logging
@@ -419,7 +419,7 @@ def test_retry_transport_retry_after_http_date(mocker: MockerFixture) -> None:
     transport = llm_investigate.RetryTransport(retries=2)
 
     # Mock _now method to return static now (Oct 21 2015 07:27:50 UTC)
-    static_now = datetime.datetime(2015, 10, 21, 7, 27, 50, tzinfo=datetime.UTC)
+    static_now = dt.datetime(2015, 10, 21, 7, 27, 50, tzinfo=dt.UTC)
     mocker.patch.object(transport, "_now", return_value=static_now)
 
     req = httpx.Request("GET", "http://example.com")

@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-import datetime
+import datetime as dt
 import importlib.machinery
 import importlib.util
 import logging
@@ -355,7 +355,7 @@ def test_retry_transport_retry_after_http_date(mocker: MockerFixture) -> None:
     mock_super_handle.side_effect = [resp429, resp200]
 
     transport = openqa_investigate.RetryTransport(retries=2)
-    static_now = datetime.datetime(2015, 10, 21, 7, 27, 50, tzinfo=datetime.UTC)
+    static_now = dt.datetime(2015, 10, 21, 7, 27, 50, tzinfo=dt.UTC)
     mocker.patch.object(transport, "_now", return_value=static_now)
 
     req = httpx.Request("GET", "http://example.com")
@@ -439,7 +439,7 @@ def test_retry_transport_exhausted_retries(mocker: MockerFixture) -> None:
 
 
 def test_retry_transport_now() -> None:
-    assert openqa_investigate.RetryTransport._now().tzinfo == datetime.UTC
+    assert openqa_investigate.RetryTransport._now().tzinfo == dt.UTC
 
 
 def test_retry_transport_wait_strategy_non_transient() -> None:
