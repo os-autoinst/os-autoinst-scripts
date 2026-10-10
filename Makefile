@@ -1,6 +1,7 @@
 SH_FILES ?= $(shell file --mime-type $$(git ls-files) test/*.t | sed -n 's/^\(.*\):.*text\/x-shellscript.*$$/\1/p')
 SH_SHELLCHECK_FILES ?= $(shell file --mime-type * | sed -n 's/^\(.*\):.*text\/x-shellscript.*$$/\1/p')
 PY_FILES ?= $(shell set -o pipefail; file --mime-type $$(git ls-files) | grep -E 'text/x-script\.python|text/x-python' | cut -d: -f1)
+COV_MODULES ?= $(shell grep -hoE 'SourceFileLoader.".[a-z0-9][a-z_0-9]*' tests/*.py | cut -d'"' -f2 | sort -u)
 RUNNER ?= uv run
 
 ifndef CI
@@ -93,8 +94,8 @@ check-code-health: ## Run code health checks (vulture)
 	@$(RUNNER) vulture $$(git ls-files "**.py") --min-confidence 80
 
 .PHONY: test-with-coverage
-test-with-coverage:
-	$(RUNNER) pytest --cov=src/os-autoinst-scripts tests/
+test-with-coverage: ## Run python tests with coverage of the loaded root scripts
+	$(RUNNER) pytest $(foreach m,$(COV_MODULES),--cov=$(m)) --cov-report=term-missing tests/
 
 .PHONY: install-python-deps
 install-python-deps:
@@ -119,6 +120,8 @@ clean: ## Clean up generated files
 	$(RM) job_post_response
 	$(RM) -r $(BPAN)
 	$(RM) -r .pytest_cache/
+	$(RM) .coverage
+	$(RM) -r htmlcov/
 	find . -name __pycache__ | xargs -r $(RM) -r
 
 install-systemd-local: ## Install contained systemd units for local use (not meant for packaging)

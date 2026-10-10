@@ -1,5 +1,7 @@
 /.bpan/
 /tests/__pycache__/
 /__pycache__/
+/.coverage
+/htmlcov/
 .*.swp
 /uv.lock
