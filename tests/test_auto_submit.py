@@ -875,3 +875,146 @@ def test_has_pending_submission_edges(
         dry_run=False,
     )
     assert submitter.has_pending_submission(package="openQA", target=target) is False
+
+
+@pytest.mark.parametrize("stderr", ["bad cpio", None])
+def test_extract_obscpio_failure(tmp_path: pathlib.Path, mocker: MockerFixture, stderr: str | None) -> None:
+    archive = tmp_path / "a.cpio"
+    archive.write_bytes(b"")
+    mocker.patch("auto_submit.subprocess.run", side_effect=subprocess.CalledProcessError(2, ["cpio"], stderr=stderr))
+    with pytest.raises(subprocess.CalledProcessError):
+        auto_submit.extract_obscpio(archive, tmp_path / "out")
+
+
+@pytest.mark.parametrize(
+    ("dry_run", "fork_stdout", "fork_raises", "clone_raises", "existing_dir", "expected"),
+    [
+        (True, "", None, None, False, "pool/pkg"),
+        (False, "Fork pool/pkg: owner/pkg\n", None, None, False, "owner/pkg"),
+        (False, "no match here", None, None, False, ""),
+        (False, "", subprocess.CalledProcessError(1, "fork"), None, False, ""),
+        (False, "Fork pool/pkg: owner/pkg\n", None, subprocess.CalledProcessError(1, "clone"), False, ""),
+        (True, "", None, None, True, "pool/pkg"),
+    ],
+)
+def test_fork_and_clone_repo(
+    mocker: MockerFixture,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    dry_run: bool,
+    fork_stdout: str,
+    fork_raises: BaseException | None,
+    clone_raises: BaseException | None,
+    existing_dir: bool,
+    expected: str,
+) -> None:
+    def _fork_run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        if "fork" in cmd:
+            if fork_raises is not None:
+                raise fork_raises
+            return subprocess.CompletedProcess(cmd, 0, stdout=fork_stdout, stderr="")
+        if "clone" in cmd and clone_raises is not None:
+            raise clone_raises
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    mocker.patch("auto_submit._run_cmd", side_effect=_fork_run)
+    if existing_dir:
+        (tmp_path / "pkg").mkdir()
+    monkeypatch.chdir(tmp_path)
+    submitter = auto_submit.AutoSubmitter(git_obs_cmd_str="git-obs", dry_run=dry_run)
+    assert submitter._fork_and_clone_repo("pkg") == expected
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_commit_and_push(mocker: MockerFixture, dry_run: bool) -> None:
+    mock_run = mocker.patch("auto_submit._run_cmd")
+    submitter = auto_submit.AutoSubmitter(git_cmd_str="git", dry_run=dry_run)
+    submitter._commit_and_push("Update to 1.0", "leap-16.0")
+    if dry_run:
+        assert mock_run.call_count == 0
+    else:
+        assert [c.args[0] for c in mock_run.call_args_list] == [
+            ["git", "add", "--all"],
+            ["git", "commit", "--message", "Update to 1.0"],
+            ["git", "push", "-f", "-u", "origin", "leap-16.0"],
+        ]
+
+
+@pytest.mark.parametrize(
+    ("dry_run", "results", "expected"),
+    [
+        (True, [], True),
+        (False, [subprocess.CompletedProcess(["git-obs"], 0, stdout="", stderr="")], True),
+        (
+            False,
+            [subprocess.CompletedProcess(["git-obs"], 1, stdout="", stderr="pull request already exists for branch")],
+            True,
+        ),
+        (
+            False,
+            [subprocess.CompletedProcess(["git-obs"], 1, stdout="err", stderr="boom") for _ in range(4)],
+            False,
+        ),
+    ],
+)
+def test_create_pull_request(
+    mocker: MockerFixture,
+    dry_run: bool,
+    results: list[subprocess.CompletedProcess[str]],
+    expected: bool,
+) -> None:
+    mocker.patch("auto_submit.time.sleep")
+    mock_run = mocker.patch("auto_submit._run_cmd", side_effect=results)
+    submitter = auto_submit.AutoSubmitter(git_obs_no_retry_cmd_str="git-obs", dry_run=dry_run)
+    assert submitter._create_pull_request("Update to 1.0", "desc", "leap-16.0") is expected
+    if dry_run:
+        assert mock_run.call_count == 0
+
+
+@pytest.mark.parametrize(
+    ("dry_run", "forked", "expected"),
+    [(True, "owner/pkg", True), (False, "", False)],
+)
+def test_make_git_submit_request(mocker: MockerFixture, dry_run: bool, forked: str, expected: bool) -> None:
+    mocker.patch("auto_submit.AutoSubmitter._fork_and_clone_repo", return_value=forked)
+    mocker.patch("auto_submit.AutoSubmitter._prepare_local_clone")
+    mocker.patch("auto_submit.AutoSubmitter._commit_and_push")
+    mocker.patch("auto_submit.AutoSubmitter._create_pull_request", return_value=True)
+    submitter = auto_submit.AutoSubmitter(dry_run=dry_run)
+    assert submitter.make_git_submit_request("pkg", "1.0", "leap-16.0") is expected
+
+
+def test_copy_files_to_clone_spec(
+    mocker: MockerFixture,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mocker.patch("auto_submit.extract_obscpio")
+    mock_replace = mocker.patch("auto_submit.replace_node_modules_handling")
+    sourcedir = tmp_path / "dst" / "pkg"
+    clonedir = tmp_path / "git"
+    sourcedir.mkdir(parents=True)
+    clonedir.mkdir()
+    (sourcedir / "pkg.spec").touch()
+    monkeypatch.chdir(clonedir)
+    submitter = auto_submit.AutoSubmitter(dir=tmp_path, dst_project="dst")
+    submitter._copy_files_to_clone("pkg")
+    mock_replace.assert_called_once_with(pathlib.Path("pkg.spec"))
+    assert (clonedir / "pkg.spec").exists()
+
+
+def test_fetch_lfs_objects_non_text_revlist(mocker: MockerFixture) -> None:
+    def _run(cmd: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[Any]:
+        if cmd[1] == "merge-base":
+            return subprocess.CompletedProcess(cmd, 0, stdout="base\n", stderr="")
+        if cmd[1] == "rev-list":
+            return subprocess.CompletedProcess(cmd, 0, stdout=b"", stderr=b"")
+        return subprocess.CompletedProcess(cmd, 0)
+
+    mock_run = mocker.patch("auto_submit.subprocess.run", side_effect=_run)
+    submitter = auto_submit.AutoSubmitter(git_cmd_str="git", dry_run=False)
+    submitter._fetch_lfs_objects("leap-16.0")
+    assert [c.args[0] for c in mock_run.call_args_list] == [
+        ["git", "merge-base", "origin/leap-16.0", "leap-16.0"],
+        ["git", "rev-list", "base..HEAD"],
+    ]
