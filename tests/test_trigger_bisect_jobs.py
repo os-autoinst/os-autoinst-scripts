@@ -426,3 +426,16 @@ def test_fetch_url_success(mocker: MockerFixture) -> None:
 
     res_json = openqa.fetch_url("http://example.com/test", request_type="json")
     assert res_json == {"ok": True}
+
+
+@pytest.mark.parametrize(
+    ("hdd", "skipped"),
+    [
+        ("SLES-12-SP5-x86_64-mru-install-minimal-with-addons-Build20261007-1-Server-DVD-Updates-64bit.qcow2", True),
+        ("SLES-15-SP6-x86_64-Build1.2-minimal.qcow2", False),
+        ("", False),
+    ],
+)
+def test_skip_dated_hdd(hdd: str, skipped: bool) -> None:
+    job = {"id": 1, "test": "foo", "result": "failed", "settings": {"HDD_1": hdd}}
+    assert openqa._check_skip_bisection(job) is skipped
