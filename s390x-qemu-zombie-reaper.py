@@ -42,6 +42,7 @@ HYPERVISORS = {
 
 RET_SUCCESS = 0
 SSH_ERR_CONNECT = 255
+FAILED_JOB_RESULTS = frozenset({"failed", "incomplete", "parallel_failed", "timeout_exceeded"})
 
 
 @dataclass(frozen=True)
@@ -99,6 +100,45 @@ def get_running_jobs(hypervisor_host: str, *, verbose: bool = False) -> list[int
     return list(set(jobs_to_restart))
 
 
+def get_job_info(job_id: int, *, verbose: bool = False) -> dict[str, Any] | None:
+    """Fetch job details from openQA."""
+    output = run_cmd(f"openqa-cli api --osd -X GET jobs/{job_id}", verbose=verbose)
+    if not output:
+        return None
+    try:
+        data: dict[str, Any] = json.loads(output)
+        return data.get("job")
+    except json.JSONDecodeError as e:
+        print(f"Failed to fetch job info for {job_id}: {e}")
+        return None
+
+
+def should_restart_job(job_id: int, *, verbose: bool = False) -> bool:
+    """Check whether a job has failed and needs to be restarted."""
+    job = get_job_info(job_id, verbose=verbose)
+    if not job:
+        print(f"Could not retrieve info for job {job_id}. Skipping restart.")
+        return False
+
+    state = job.get("state")
+    result = job.get("result")
+    clone_id = job.get("clone_id")
+
+    if clone_id:
+        print(f"Job {job_id} already cloned as job {clone_id}. Skipping restart.")
+        return False
+
+    if state != "done":
+        print(f"Job {job_id} is in state '{state}' (not done). Skipping restart.")
+        return False
+
+    if result not in FAILED_JOB_RESULTS:
+        print(f"Job {job_id} completed with result '{result}'. Skipping restart.")
+        return False
+
+    return True
+
+
 def wait_for_host(host: str, config: ReaperConfig) -> bool:
     """Wait until the host is responsive over SSH."""
     print(f"Waiting for {host} to become responsive over SSH...")
@@ -128,6 +168,19 @@ def wait_for_host(host: str, config: ReaperConfig) -> bool:
 
     print(f"Timeout waiting for {host} to become responsive after {config.max_wait_minutes} minutes.")
     return False
+
+
+def restart_failed_jobs(jobs: list[int], config: ReaperConfig) -> None:
+    """Restart jobs that have failed."""
+    for job_id in jobs:
+        if not should_restart_job(job_id, verbose=config.verbose):
+            continue
+        retrigger_cmd = f"openqa-cli api --osd -X POST jobs/{job_id}/restart"
+        if config.dry_run:
+            print(f"[DRY-RUN] Would execute: {retrigger_cmd}")
+        else:
+            print(f"Retriggering job {job_id}...")
+            run_cmd(retrigger_cmd, verbose=config.verbose)
 
 
 def trigger_actions(
@@ -165,13 +218,7 @@ def trigger_actions(
             print(f"Waiting {config.stability_delay_minutes} minutes for host stability before restarting jobs...")
             time.sleep(config.stability_delay_minutes * 60)
 
-    for job_id in jobs:
-        retrigger_cmd = f"openqa-cli api --osd -X POST jobs/{job_id}/restart"
-        if config.dry_run:
-            print(f"[DRY-RUN] Would execute: {retrigger_cmd}")
-        else:
-            print(f"Retriggering job {job_id}...")
-            run_cmd(retrigger_cmd, verbose=config.verbose)
+    restart_failed_jobs(jobs, config)
 
 
 def check_libvirt_health(host: str, config: ReaperConfig) -> bool:
@@ -246,7 +293,7 @@ def handle_host(
         print(f"Identifying jobs which ran on {host}...")
         jobs = get_running_jobs(host, verbose=config.verbose)
         print(
-            f"Affected jobs to be retriggered: {', '.join(map(str, jobs))}"
+            f"Active jobs on {host} to check after reboot: {', '.join(map(str, jobs))}"
             if jobs
             else f"No active jobs found using {host}."
         )
