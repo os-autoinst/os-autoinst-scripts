@@ -11,6 +11,7 @@ import logging
 import pathlib
 import subprocess
 import sys
+import urllib.parse
 from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock, Mock, call
 
@@ -170,9 +171,11 @@ def setup_mock_client(mocker: MockerFixture, overrides: dict[str, Any] | None = 
         responses.update(overrides)
 
     def mock_get(url: str, params: Any = None, **kwargs: Any) -> Mock:
-        _ = params, kwargs
+        _ = kwargs
+        query_str = f"?{urllib.parse.urlencode(params)}" if params else ""
+        full_url = f"{url}{query_str}"
         for pattern, val in responses.items():
-            if pattern in url:
+            if pattern in full_url:
                 return Mock(json=Mock(return_value=val), text=val if isinstance(val, str) else json.dumps(val))
         return Mock(json=Mock(return_value={}), text="")
 
@@ -1082,3 +1085,114 @@ def test_build_prompt_ignores_empty_additional_instructions(extension: str | Non
     prompt = _prompt(extension)
     assert "Additional instructions" not in prompt
     assert "- Result: unknown\n\nInvestigation info" in prompt
+
+
+def test_consecutive_failures_found() -> None:
+    mock_client = MagicMock()
+    mock_response = Mock()
+    mock_response.json.return_value = {
+        "jobs": [
+            {"id": 10, "state": "done", "result": "passed"},
+            {"id": 11, "state": "done", "result": "failed"},
+            {"id": 12, "state": "done", "result": "failed"},
+        ]
+    }
+    mock_client.get.return_value = mock_response
+    count, found = llm_investigate._consecutive_failures(
+        mock_client, "http://example.com", "12", {"test": "t", "settings": {}}, limit=10
+    )
+    assert count == 2
+    assert found is True
+
+
+def test_consecutive_failures_not_found(caplog: pytest.LogCaptureFixture) -> None:
+    mock_client = MagicMock()
+    mock_response = Mock()
+    mock_response.json.return_value = {
+        "jobs": [
+            {"id": 10, "state": "done", "result": "passed"},
+            {"id": 11, "state": "done", "result": "failed"},
+        ]
+    }
+    mock_client.get.return_value = mock_response
+    with caplog.at_level(logging.INFO):
+        count, found = llm_investigate._consecutive_failures(
+            mock_client, "http://example.com", "12", {"test": "t", "settings": {}}, limit=10
+        )
+    assert count == 1
+    assert found is False
+    assert not any(record.levelno >= logging.WARNING for record in caplog.records)
+    assert "Job 12 not found in recent history (limit 10). Streak count may be inaccurate." in caplog.text
+
+
+def test_investigate_job_not_found_in_history_appends_note_and_logs_info(mocker: MockerFixture) -> None:
+    mock_log = mocker.patch("llm_investigate.log")
+    mock_post = mocker.patch("llm_investigate.post_comment")
+    mocker.patch("llm_investigate.typer.echo")
+    setup_mock_client(
+        mocker,
+        overrides={
+            "test=": {
+                "jobs": [
+                    {"id": 120, "state": "done", "result": "failed"},
+                    {"id": 121, "state": "done", "result": "failed"},
+                ]
+            }
+        },
+    )
+    llm_investigate.investigate("123", history_limit=50)
+
+    mock_log.warning.assert_not_called()
+    mock_log.info.assert_any_call(
+        "Job %s not found in recent history (limit %s). Streak count may be inaccurate.", "123", 50
+    )
+
+    mock_post.assert_called_once()
+    comment = mock_post.call_args[0][2]
+    expected_note = "*Note: Job not found in recent history (limit 50). Streak count may be inaccurate.*"
+    assert comment.endswith(expected_note)
+
+
+def test_investigate_job_not_found_in_history_informs_llm_prompt(mocker: MockerFixture) -> None:
+    mock_print = mocker.patch("llm_investigate.typer.echo")
+    setup_mock_client(
+        mocker,
+        overrides={
+            "test=": {
+                "jobs": [
+                    {"id": 120, "state": "done", "result": "failed"},
+                    {"id": 121, "state": "done", "result": "failed"},
+                ]
+            }
+        },
+    )
+    llm_investigate.investigate("123", history_limit=20, print_prompt=True)
+    output = mock_print.call_args[0][0]
+    assert (
+        "- Consecutive recent failures for this specific test (same name, arch, flavor): 2 "
+        "(streak count may be inaccurate: job not found in recent history, limit 20)"
+    ) in output
+
+
+def test_investigate_dry_run_includes_streak_note_when_job_not_found(mocker: MockerFixture) -> None:
+    mock_post = mocker.patch("llm_investigate.post_comment")
+    mock_print = mocker.patch("llm_investigate.typer.echo")
+    client = setup_mock_client(
+        mocker,
+        overrides={
+            "test=": {
+                "jobs": [
+                    {"id": 120, "state": "done", "result": "failed"},
+                ]
+            }
+        },
+    )
+    client.post.side_effect = lambda *_, **__: Mock(
+        json=Mock(return_value={"choices": [{"message": {"content": "BISECT: NO. Already known."}}]})
+    )
+
+    llm_investigate.investigate("123", dry=True, history_limit=15)
+
+    mock_post.assert_not_called()
+    printed = mock_print.call_args[0][0]
+    assert "*Note: Job not found in recent history (limit 15). Streak count may be inaccurate.*" in printed

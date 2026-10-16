@@ -491,8 +491,13 @@ def _enforce_bisect_rule(verdict: str, same_module_failures: int) -> str:
     return "\n".join(no if _BISECT_RE.match(ln) else ln for ln in verdict.splitlines())
 
 
-def _consecutive_failures(client: httpx.Client, base_url: str, job_id: str, job: dict[str, Any], limit: int) -> int:
-    """Count the failures in a row of the same test (name, arch, flavor) up to this job."""
+def _consecutive_failures(
+    client: httpx.Client, base_url: str, job_id: str, job: dict[str, Any], limit: int
+) -> tuple[int, bool]:
+    """Count the failures in a row of the same test (name, arch, flavor) up to this job.
+
+    Returns the failure count and whether the target job was found in the recent history.
+    """
     settings = job.get("settings", {})
     params = {
         "test": job.get("test", "unknown"),
@@ -504,13 +509,14 @@ def _consecutive_failures(client: httpx.Client, base_url: str, job_id: str, job:
     }
     test_jobs = fetch_json(client, f"{base_url}/api/v1/jobs", params=params).get("jobs", [])
     target = int(job_id)
-    if not any(j["id"] == target for j in test_jobs):
-        log.warning("Job %s not found in recent history (limit %s). Streak count may be inaccurate.", job_id, limit)
+    job_found = any(j["id"] == target for j in test_jobs)
+    if not job_found:
+        log.info("Job %s not found in recent history (limit %s). Streak count may be inaccurate.", job_id, limit)
     relevant = sorted((j for j in test_jobs if j["id"] <= target), key=itemgetter("id"), reverse=True)
     relevant = [
         j for j in relevant if j.get("state") == "done" and j.get("result") in {"passed", "softfailed", "failed"}
     ]
-    return next((i for i, j in enumerate(relevant) if j.get("result") != "failed"), len(relevant))
+    return next((i for i, j in enumerate(relevant) if j.get("result") != "failed"), len(relevant)), job_found
 
 
 def _build_failures(client: httpx.Client, base_url: str, job_id: str, job: dict[str, Any]) -> tuple[int, int]:
@@ -559,6 +565,29 @@ def _build_prompt(job: dict[str, Any], analysis: str, stats: dict[str, Any], opt
     return INTRO_TEMPLATE.format(**(_fit_context(fields, opts) if opts.context_tokens else fields))
 
 
+def _gather_stats(
+    client: httpx.Client, base_url: str, job_id: str, job: dict[str, Any], opts: Options
+) -> tuple[dict[str, Any], bool]:
+    """Gather failure statistics and investigation diff for the prompt."""
+    build_failures, same_module_failures = _build_failures(client, base_url, job_id, job)
+    consecutive_failures, job_found = _consecutive_failures(client, base_url, job_id, job, opts.history_limit)
+    investigation = fetch_json(
+        client, f"{base_url}/tests/{job_id}/investigation_ajax", timeout=opts.investigation_timeout
+    )
+    limit = opts.history_limit
+    consecutive_str = (
+        str(consecutive_failures)
+        if job_found
+        else f"{consecutive_failures} (streak count may be inaccurate: job not found in recent history, limit {limit})"
+    )
+    return {
+        "build_failures": build_failures,
+        "same_module_failures": same_module_failures,
+        "consecutive_failures": consecutive_str,
+        "investigation_info": redact(json.dumps(investigation.get("diff_to_last_good", "None available"))),
+    }, job_found
+
+
 def _perform_investigation(client: httpx.Client, base_url: str, job_id: str, opts: Options) -> None:
     comments = [] if opts.print_prompt else fetch_json(client, f"{base_url}/api/v1/jobs/{job_id}/comments", default=[])
     if (
@@ -575,16 +604,7 @@ def _perform_investigation(client: httpx.Client, base_url: str, job_id: str, opt
         sys.exit(0)
 
     analysis = _analyze(client, base_url, job_id, job, opts)
-    investigation = fetch_json(
-        client, f"{base_url}/tests/{job_id}/investigation_ajax", timeout=opts.investigation_timeout
-    )
-    build_failures, same_module_failures = _build_failures(client, base_url, job_id, job)
-    stats = {
-        "build_failures": build_failures,
-        "same_module_failures": same_module_failures,
-        "consecutive_failures": _consecutive_failures(client, base_url, job_id, job, opts.history_limit),
-        "investigation_info": redact(json.dumps(investigation.get("diff_to_last_good", "None available"))),
-    }
+    stats, job_found = _gather_stats(client, base_url, job_id, job, opts)
     if opts.print_prompt:
         prompts = [_build_prompt(job, analysis, stats, opts), BRIEF_QUESTION, _verdict_question(stats, opts)]
         typer.echo("\n\n".join(f"===== Prompt {i}/3 =====\n{p}" for i, p in enumerate(prompts, 1)))
@@ -601,10 +621,16 @@ def _perform_investigation(client: httpx.Client, base_url: str, job_id: str, opt
     if _bisect_recommended(llm_response):
         typer.echo(f"{base_url}/tests/{job_id}")
 
+    comment = f"{COMMENT_MARKER}\n\n{llm_response}"
+    if not job_found:
+        comment += (
+            f"\n\n*Note: Job not found in recent history (limit {opts.history_limit}). Streak count may be inaccurate.*"
+        )
+
     if opts.dry:
-        typer.echo(f"{COMMENT_MARKER}\n\n{llm_response}")
+        typer.echo(comment)
     else:
-        post_comment(base_url, job_id, f"{COMMENT_MARKER}\n\n{llm_response}")
+        post_comment(base_url, job_id, comment)
 
 
 @app.command()
