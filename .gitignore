@@ -7,3 +7,6 @@
 /uv.lock
 /.coverage
 __pycache__/
+
+# Local settings with HMC credentials
+.env
