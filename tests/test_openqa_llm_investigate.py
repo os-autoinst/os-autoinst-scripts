@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, Mock, call
 
 import httpx
 import pytest
+import typer
 from typer.testing import CliRunner
 
 if TYPE_CHECKING:
@@ -1198,3 +1199,153 @@ def test_investigate_dry_run_includes_streak_note_when_job_not_found(mocker: Moc
     mock_post.assert_not_called()
     printed = mock_print.call_args[0][0]
     assert "*Note: Job not found in recent history (limit 15). Streak count may be inaccurate.*" in printed
+
+
+def test_parse_job_url_with_scheme() -> None:
+    base_url, job_id = llm_investigate.parse_job_url("https://openqa.opensuse.org/tests/123")
+    assert base_url == "https://openqa.opensuse.org"
+    assert job_id == "123"
+
+
+def test_post_comment_failure(mocker: MockerFixture) -> None:
+    mock_run = mocker.patch("llm_investigate.subprocess.run")
+    mock_run.side_effect = subprocess.CalledProcessError(1, "openqa-cli", stderr="post error")
+    mock_log = mocker.patch("llm_investigate.log")
+    llm_investigate.post_comment("http://base", "123", "comment")
+    mock_log.exception.assert_called_once_with("Failed to post comment: %s", "post error")
+
+
+def test_retry_transport_now() -> None:
+    assert llm_investigate.RetryTransport._now().tzinfo == dt.UTC
+
+
+def test_retry_transport_retry_after_zero_seconds(mocker: MockerFixture) -> None:
+    mock_sleep = mocker.patch("time.sleep")
+    mock_super_handle = mocker.patch("llm_investigate.httpx.HTTPTransport.handle_request")
+
+    resp429 = MagicMock(spec=httpx.Response)
+    resp429.status_code = 429
+    resp429.headers = httpx.Headers({"Retry-After": "0"})
+
+    resp200 = MagicMock(spec=httpx.Response)
+    resp200.status_code = 200
+
+    mock_super_handle.side_effect = [resp429, resp200]
+
+    transport = llm_investigate.RetryTransport(retries=2)
+    res = transport.handle_request(httpx.Request("GET", "http://example.com"))
+
+    assert res == resp200
+    assert mock_super_handle.call_count == 2
+    mock_sleep.assert_called_once_with(1.0)
+    resp429.close.assert_called_once()
+
+
+def test_retry_transport_retry_after_past_date(mocker: MockerFixture) -> None:
+    mock_sleep = mocker.patch("time.sleep")
+    mock_super_handle = mocker.patch("llm_investigate.httpx.HTTPTransport.handle_request")
+
+    resp429 = MagicMock(spec=httpx.Response)
+    resp429.status_code = 429
+    resp429.headers = httpx.Headers({"Retry-After": "Wed, 21 Oct 2015 07:28:00 GMT"})
+
+    resp200 = MagicMock(spec=httpx.Response)
+    resp200.status_code = 200
+
+    mock_super_handle.side_effect = [resp429, resp200]
+
+    transport = llm_investigate.RetryTransport(retries=2)
+    res = transport.handle_request(httpx.Request("GET", "http://example.com"))
+
+    assert res == resp200
+    assert mock_super_handle.call_count == 2
+    mock_sleep.assert_called_once_with(1.0)
+    resp429.close.assert_called_once()
+
+
+def test_retry_transport_retry_after_invalid(mocker: MockerFixture) -> None:
+    mock_sleep = mocker.patch("time.sleep")
+    mock_log = mocker.patch("llm_investigate.log")
+    mock_super_handle = mocker.patch("llm_investigate.httpx.HTTPTransport.handle_request")
+
+    resp429 = MagicMock(spec=httpx.Response)
+    resp429.status_code = 429
+    resp429.headers = httpx.Headers({"Retry-After": "not-a-date"})
+
+    resp200 = MagicMock(spec=httpx.Response)
+    resp200.status_code = 200
+
+    mock_super_handle.side_effect = [resp429, resp200]
+
+    transport = llm_investigate.RetryTransport(retries=2)
+    res = transport.handle_request(httpx.Request("GET", "http://example.com"))
+
+    assert res == resp200
+    assert mock_super_handle.call_count == 2
+    mock_sleep.assert_called_once_with(1.0)
+    mock_log.debug.assert_called_once()
+    assert "Failed to parse Retry-After header as date" in mock_log.debug.call_args[0][0]
+    resp429.close.assert_called_once()
+
+
+def test_retry_transport_exhausted_retries(mocker: MockerFixture) -> None:
+    mocker.patch("time.sleep")
+    mock_super_handle = mocker.patch("llm_investigate.httpx.HTTPTransport.handle_request")
+
+    resp429 = MagicMock(spec=httpx.Response)
+    resp429.status_code = 429
+    resp429.headers = httpx.Headers({})
+
+    mock_super_handle.return_value = resp429
+
+    transport = llm_investigate.RetryTransport(retries=1)
+    res = transport.handle_request(httpx.Request("GET", "http://example.com"))
+
+    assert res == resp429
+    assert mock_super_handle.call_count == 2
+
+
+def test_retry_transport_before_sleep_non_transient() -> None:
+    transport = llm_investigate.RetryTransport()
+    fake_state = MagicMock()
+    fake_state.outcome.exception.return_value = ValueError("not transient")
+    transport._before_sleep(fake_state)
+
+
+def test_investigate_cmd_invalid_job_id(mocker: MockerFixture) -> None:
+    mock_log = mocker.patch("llm_investigate.log")
+    with pytest.raises(SystemExit) as exc:
+        llm_investigate.investigate("not-a-number")
+    assert exc.value.code == 1
+    mock_log.error.assert_called_once_with("Invalid job ID: %s", "not-a-number")
+
+
+def test_investigate_cmd_missing_job_data(mocker: MockerFixture) -> None:
+    mock_log = mocker.patch("llm_investigate.log")
+    setup_mock_client(mocker, overrides={"api/v1/jobs": {}})
+    with pytest.raises(SystemExit) as exc:
+        llm_investigate.investigate("123")
+    assert exc.value.code == 1
+    mock_log.error.assert_called_once()
+    assert "Could not retrieve job data" in mock_log.error.call_args[0][0]
+
+
+def test_cap_chars_fits_all() -> None:
+    text = "first\nsecond\n"
+    assert (
+        llm_investigate._cap_chars(text, 100) == text + "[... 0 lines omitted: --context-tokens budget reached ...]\n"
+    )
+
+
+def test_main_entrypoint(mocker: MockerFixture) -> None:
+    mocker.patch.object(typer.Typer, "__call__")
+    script = f"{rootpath}/openqa-llm-investigate"
+    main_spec = importlib.util.spec_from_file_location(
+        "__main__",
+        script,
+        loader=importlib.machinery.SourceFileLoader("__main__", script),
+    )
+    assert main_spec
+    assert main_spec.loader
+    main_mod = importlib.util.module_from_spec(main_spec)
+    main_spec.loader.exec_module(main_mod)
