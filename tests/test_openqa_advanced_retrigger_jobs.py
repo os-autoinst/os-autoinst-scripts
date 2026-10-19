@@ -25,7 +25,7 @@ script_path = rootpath / "openqa-advanced-retrigger-jobs"
 spec = importlib.util.spec_from_file_location(
     MODULE_NAME,
     script_path,
-    loader=importlib.machinery.SourceFileLoader(MODULE_NAME, str(script_path)),
+    loader=importlib.machinery.SourceFileLoader("openqa_advanced_retrigger_jobs", str(script_path)),
 )
 assert spec is not None
 assert spec.loader is not None

@@ -506,6 +506,46 @@ def test_comment_and_prio_404_handled_gracefully(caplog: pytest.LogCaptureFixtur
     assert not any(r.levelno >= logging.WARNING for r in caplog.records)
 
 
+def test_comment_and_prio_non_404_raises() -> None:
+    err_proc = subprocess.CompletedProcess(args=[], returncode=1, stderr=b"500 Internal Server Error\n", stdout=b"")
+    openqa.call = orig_call
+    with patch("subprocess.run", return_value=err_proc), pytest.raises(subprocess.CalledProcessError):
+        openqa.openqa_comment(12345, "https://openqa.opensuse.org", "comment", dry_run=False)
+    with patch("subprocess.run", return_value=err_proc), pytest.raises(subprocess.CalledProcessError):
+        openqa.openqa_set_job_prio(12345, "https://openqa.opensuse.org", 50, dry_run=False)
+
+
+def test_fetch_url_non_404_http_error(mocker: MockerFixture, caplog: pytest.LogCaptureFixture) -> None:
+    mock_resp = MagicMock()
+    mock_resp.status_code = 500
+    mock_resp.raise_for_status.side_effect = requests.exceptions.HTTPError(response=mock_resp)
+    mocker.patch.object(openqa.session, "get", return_value=mock_resp)
+    with caplog.at_level(logging.ERROR), pytest.raises(requests.exceptions.HTTPError):
+        openqa.fetch_url("http://example.com/fail")
+    assert "Error while fetching http://example.com/fail" in caplog.text
+
+
+def test_main_job_and_investigation_non_404_raises(mocker: MockerFixture) -> None:
+    args = args_factory()
+    args.url = "http://host/tests/123"
+    mock_resp = MagicMock()
+    mock_resp.status_code = 500
+    mock_err = requests.exceptions.HTTPError(response=mock_resp)
+    mocker.patch.object(openqa, "fetch_url", side_effect=mock_err)
+    with pytest.raises(requests.exceptions.HTTPError):
+        openqa.main(args)
+    mocker.patch.object(
+        openqa,
+        "fetch_url",
+        side_effect=[
+            {"job": {"id": 123, "test": "some_test", "result": "failed", "settings": {}, "priority": 10}},
+            mock_err,
+        ],
+    )
+    with pytest.raises(requests.exceptions.HTTPError):
+        openqa.main(args)
+
+
 def test_trigger_bisect_job_404_handled_gracefully(caplog: pytest.LogCaptureFixture) -> None:
     args = args_factory()
     args.url = "https://openqa.opensuse.org/tests/7848818"
