@@ -6,10 +6,12 @@ from __future__ import annotations
 
 import importlib.machinery
 import importlib.util
+import json
 import os
 import pathlib
 import subprocess
 import sys
+import time
 from typing import TYPE_CHECKING
 
 import pytest
@@ -877,3 +879,126 @@ def test_reap_missing_explicit_env_file_is_rejected(mocker: MockerFixture, tmp_p
     assert result.exit_code == 2
     assert "file not found" in result.output
     mock_reap.assert_not_called()
+
+
+def test_run_ssh_success_and_verbose(mocker: MockerFixture, capsys: pytest.CaptureFixture[str]) -> None:
+    mocker.patch("subprocess.run", return_value=mocker.MagicMock(returncode=0, stdout="output\n"))
+    config = reaper.ReaperConfig(verbose=True)
+    assert reaper.run_ssh(HOST, "echo 1", config, timeout=5) == "output"
+    assert "Executing: ssh" in capsys.readouterr().out
+
+
+def test_run_cmd_verbose(mocker: MockerFixture, capsys: pytest.CaptureFixture[str]) -> None:
+    mocker.patch("subprocess.run", return_value=mocker.MagicMock(returncode=0, stdout="cmd output\n"))
+    assert reaper.run_cmd("echo hello", verbose=True) == "cmd output"
+    assert "Executing: echo hello" in capsys.readouterr().out
+
+
+def test_get_running_jobs_unmatched_or_null_jobid(mocker: MockerFixture) -> None:
+    payload = json.dumps({
+        "workers": [
+            {"properties": {"WORKER_CLASS": "other_host"}, "jobid": 10},
+            {"properties": {"WORKER_CLASS": "s390zl13"}, "jobid": None},
+        ]
+    })
+    mocker.patch("reaper.run_cmd", return_value=payload)
+    assert reaper.get_running_jobs(HOST) == []
+
+
+@pytest.mark.parametrize("verbose", [True, False])
+def test_wait_for_host_verbose_and_error(
+    mocker: MockerFixture, capsys: pytest.CaptureFixture[str], verbose: bool
+) -> None:
+    mocker.patch("subprocess.run", side_effect=[OSError("ssh failed"), mocker.MagicMock(returncode=0)])
+    mocker.patch("time.sleep")
+    config = reaper.ReaperConfig(verbose=verbose)
+    assert reaper.wait_for_host(HOST, config, deadline=time.time() + 10) is True
+    out = capsys.readouterr().out
+    assert ("Checking host availability:" in out) is verbose
+    assert ("SSH check failed: ssh failed" in out) is verbose
+
+
+def test_hmc_session_logon_no_body(mocker: MockerFixture) -> None:
+    session = reaper.HmcSession(HMC_BASE_URL, "user", "secret", verify_tls=False)
+    mocker.patch.object(session, "request", return_value=(200, None))
+    with pytest.raises(reaper.HmcError, match="logon returned no body"), session:
+        pass
+
+
+def test_hmc_session_get_empty_body(mocker: MockerFixture) -> None:
+    session = reaper.HmcSession(HMC_BASE_URL, "user", "secret", verify_tls=False)
+    mocker.patch.object(session, "request", return_value=(200, None))
+    assert session.get("/some/path") == {}
+
+
+def test_hmc_session_operate_no_content(mocker: MockerFixture) -> None:
+    session = reaper.HmcSession(HMC_BASE_URL, "user", "secret", verify_tls=False)
+    mocker.patch.object(session, "request", return_value=(204, None))
+    session.operate("/some/path", {})
+
+
+def test_hmc_session_wait_for_job_timeout(mocker: MockerFixture) -> None:
+    session = reaper.HmcSession(HMC_BASE_URL, "user", "secret", verify_tls=False)
+    mocker.patch.object(session, "get", return_value={"status": "running"})
+    mocker.patch("time.time", side_effect=[0, 0, reaper.HMC_JOB_TIMEOUT + 1])
+    mocker.patch("time.sleep")
+    with pytest.raises(reaper.HmcError, match="job did not complete within"):
+        session._wait_for_job("/jobs/1", "load")
+
+
+def test_recover_for_jobs_dry_run_variants(capsys: pytest.CaptureFixture[str]) -> None:
+    config = reaper.ReaperConfig(dry_run=True, hmc_fallback=False)
+    assert reaper.recover_for_jobs(HOST, [], config, host_down=True) is True
+    out = capsys.readouterr().out
+    assert "Would wait for" not in out
+    assert "Would force reset" not in out
+
+
+def test_trigger_actions_recovery_failure(mocker: MockerFixture, capsys: pytest.CaptureFixture[str]) -> None:
+    mocker.patch("reaper.issue_reboot")
+    mocker.patch("reaper.recover_host", return_value=False)
+    mock_run_cmd = mocker.patch("reaper.run_cmd")
+    reaper.trigger_actions(HOST, [123], reaper.ReaperConfig(dry_run=False))
+    assert f"Host {HOST} did not come back online. Skipping job retriggering." in capsys.readouterr().out
+    mock_run_cmd.assert_not_called()
+
+
+def test_check_libvirt_health_verbose_and_failed_output(
+    mocker: MockerFixture, capsys: pytest.CaptureFixture[str]
+) -> None:
+    mocker.patch("subprocess.run", return_value=mocker.MagicMock(returncode=1, stdout="virsh connection refused\n"))
+    config = reaper.ReaperConfig(verbose=True)
+    assert reaper.check_libvirt_health(HOST, config) is False
+    out = capsys.readouterr().out
+    assert f"Checking libvirt health on {HOST}..." in out
+    assert "output: virsh connection refused" in out
+
+
+@pytest.mark.parametrize("verbose", [True, False])
+def test_find_critical_transient_zombies_verbose(
+    mocker: MockerFixture, capsys: pytest.CaptureFixture[str], verbose: bool
+) -> None:
+    mocker.patch("reaper.run_ssh", side_effect=["100 Fri Jul 17 2026 Z\n", "999 Fri Jul 17 2026 Z\n"])
+    mocker.patch("reaper.check_libvirt_health", return_value=True)
+    mocker.patch("time.sleep")
+    config = reaper.ReaperConfig(verbose=verbose)
+    assert reaper.find_critical(HOST, config) is None
+    out = capsys.readouterr().out
+    assert (f"Zombies on {HOST} were transient or PIDs were reused." in out) is verbose
+
+
+def test_main_entrypoint(mocker: MockerFixture) -> None:
+    mocker.patch("sys.argv", ["s390x-qemu-zombie-reaper.py", "--dry-run", "--no-lock", "--no-state"])
+    mocker.patch("reaper.reap_all_hosts")
+    script = f"{rootpath}/s390x-qemu-zombie-reaper.py"
+    main_spec = importlib.util.spec_from_file_location(
+        "__main__",
+        script,
+        loader=importlib.machinery.SourceFileLoader("__main__", script),
+    )
+    assert main_spec
+    assert main_spec.loader
+    main_mod = importlib.util.module_from_spec(main_spec)
+    with pytest.raises(SystemExit) as exc:
+        main_spec.loader.exec_module(main_mod)
+    assert exc.value.code == 0
