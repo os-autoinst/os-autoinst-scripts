@@ -8,6 +8,7 @@ import datetime as dt
 import importlib.machinery
 import importlib.util
 import logging
+import os
 import pathlib
 import re
 import shutil
@@ -18,6 +19,9 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 import pytest
+import typer
+
+from common.error_handling import decode_output, is_404, is_404_str
 
 if TYPE_CHECKING:
     from pytest_mock import MockerFixture
@@ -35,6 +39,15 @@ assert spec.loader is not None
 auto_submit = importlib.util.module_from_spec(spec)
 sys.modules["auto_submit"] = auto_submit
 spec.loader.exec_module(auto_submit)
+
+
+@pytest.fixture(autouse=True)
+def _restore_cwd() -> Any:
+    orig = pathlib.Path.cwd()
+    try:
+        yield
+    finally:
+        os.chdir(orig)
 
 
 _FROZEN_NOW = dt.datetime(2026, 10, 9, 12, 0, tzinfo=dt.UTC)
@@ -858,7 +871,7 @@ def test_has_pending_submission_edges(
     raise_exc: BaseException | None,
 ) -> None:
     mock_run = mocker.patch("auto_submit.run_osc_cmd")
-    mocker.patch("auto_submit.datetime", new=_FrozenDateTime)
+    mocker.patch("auto_submit.dt", new=_FrozenDateTime)
     if raise_exc is not None:
         mock_run.side_effect = raise_exc
     elif pr_json is not None:
@@ -1018,3 +1031,521 @@ def test_fetch_lfs_objects_non_text_revlist(mocker: MockerFixture) -> None:
         ["git", "merge-base", "origin/leap-16.0", "leap-16.0"],
         ["git", "rev-list", "base..HEAD"],
     ]
+
+
+def test_error_handling_helpers() -> None:
+    assert decode_output(b"hello") == "hello"
+    assert decode_output(None) == "None"
+    assert is_404_str("404 Not Found") is True
+    assert is_404_str("200 OK") is False
+    assert is_404(b"404 Not Found") is True
+    assert is_404(b"500 Server Error") is False
+
+
+@pytest.mark.parametrize(
+    ("project", "submit_target", "stdout", "side_effect", "expected"),
+    [
+        (
+            "proj",
+            "target",
+            "--------------------\nUpdate to version 1.0.abc:\n",
+            None,
+            "abc",
+        ),
+        (
+            "proj",
+            "target",
+            "--------------------\nUpdate to version 1.0\n",
+            None,
+            "",
+        ),
+        (
+            "target",
+            "target",
+            "No matching line\n",
+            None,
+            "",
+        ),
+        (
+            "proj",
+            "target",
+            "",
+            subprocess.CalledProcessError(1, "osc"),
+            "",
+        ),
+    ],
+    ids=["service_obs_scm_found", "no_regex_match", "target_nomatch", "osc_cat_error"],
+)
+def test_last_revision_variants(
+    mocker: MockerFixture,
+    project: str,
+    submit_target: str,
+    stdout: str,
+    side_effect: Exception | None,
+    expected: str,
+) -> None:
+    mock_run = mocker.patch("auto_submit.run_osc_cmd")
+    if side_effect:
+        mock_run.side_effect = side_effect
+    else:
+        mock_run.return_value = subprocess.CompletedProcess(["osc"], 0, stdout=stdout)
+    assert auto_submit.last_revision(project, "pkg", submit_target, "osc") == expected
+
+
+def test_get_spec_changes_in_requirements(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert auto_submit.get_spec_changes_in_requirements("pkg", str(tmp_path)) == ""
+
+    factory_spec = tmp_path / "pkg-factory.spec"
+    project_dir = tmp_path / "pkg"
+    project_dir.mkdir()
+    project_spec = project_dir / "_service:obs_scm:pkg.spec"
+
+    factory_spec.write_text("Requires: foo\nBuildRequires: bar\n", encoding="utf-8")
+    project_spec.write_text("Requires: foo\nRequires: baz\n", encoding="utf-8")
+    diff = auto_submit.get_spec_changes_in_requirements("pkg", str(tmp_path))
+    assert "+Requires: baz" in diff
+
+    project_spec.chmod(0o000)
+    try:
+        assert auto_submit.get_spec_changes_in_requirements("pkg", str(tmp_path)) == ""
+    finally:
+        project_spec.chmod(0o644)
+
+
+def test_generate_changelog(mocker: MockerFixture, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    pkg_dir = tmp_path / "pkg"
+    pkg_dir.mkdir()
+    mocker.patch(
+        "auto_submit.run_osc_cmd",
+        side_effect=[
+            subprocess.CompletedProcess(["osc"], 0, stdout="old changes\n"),
+            Exception("osc failed"),
+        ],
+    )
+    mocker.patch(
+        "auto_submit.get_spec_changes_in_requirements",
+        return_value=" context line\n+Requires: added\n-Requires: removed\n",
+    )
+    auto_submit.generate_changelog(str(tmp_path), "pkg", "target", "osc")
+    changes_file = pkg_dir / "pkg.changes"
+    assert changes_file.exists()
+    content = changes_file.read_text(encoding="utf-8")
+    assert "- Added dependency added" in content
+    assert "- Removed dependency removed" in content
+    assert "old changes" in content
+
+    auto_submit.generate_changelog(str(tmp_path), "pkg", "target", "osc")
+
+
+def test_cleanup_and_rename_files(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    auto_submit.AutoSubmitter._cleanup_and_rename_files()
+
+    (tmp_path / "_service:test-test.changes").touch()
+    osc_dir = tmp_path / ".osc" / "sources"
+    osc_dir.mkdir(parents=True)
+    (osc_dir / "pkg-test.changes").write_text("osc content\n", encoding="utf-8")
+    (tmp_path / "_service:foo.spec").touch()
+    (tmp_path / "test-rpmlintrc").touch()
+    (tmp_path / "_servicedata").touch()
+    (tmp_path / "node_modules.sums").touch()
+    (tmp_path / "package-lock.json").touch()
+
+    auto_submit.AutoSubmitter._cleanup_and_rename_files()
+
+    assert not (tmp_path / "_service:test-test.changes").exists()
+    assert (tmp_path / "pkg-test.changes").exists()
+    assert (tmp_path / "foo.spec").exists()
+    assert not (tmp_path / "test-rpmlintrc").exists()
+    assert not (tmp_path / "_servicedata").exists()
+    assert not (tmp_path / "node_modules.sums").exists()
+    assert not (tmp_path / "package-lock.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("filename", "content", "expected"),
+    [
+        ("pkg.spec", "Name: pkg\nVersion: 2.3.4\n", "2.3.4"),
+        ("noversion.spec", "Name: pkg\n", ""),
+        ("pkg.obsinfo", "name: pkg\nversion: 5.6.7\n", "5.6.7"),
+        ("noversion.obsinfo", "name: pkg\n", ""),
+        ("empty.txt", "nothing here", ""),
+    ],
+    ids=["from_spec", "spec_without_version", "from_obsinfo", "obsinfo_without_version", "not_found"],
+)
+def test_find_version(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    filename: str,
+    content: str,
+    expected: str,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / filename).write_text(content, encoding="utf-8")
+    assert auto_submit.AutoSubmitter._find_version() == expected
+
+
+def test_osc_addremove_and_filter_specs(
+    mocker: MockerFixture,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    mocker.patch("auto_submit.run_osc_cmd")
+    spec_file = tmp_path / "pkg.spec"
+    spec_file.write_text("Source0: pkg.tar\n# rpmlintrc filter\nBuildRequires: gcc\n", encoding="utf-8")
+    changes_file = tmp_path / "pkg.changes"
+    changes_file.write_text("Update:\n  * \nOther details\n", encoding="utf-8")
+
+    submitter = auto_submit.AutoSubmitter(dry_run=False)
+    submitter._osc_addremove_and_filter_specs()
+
+    assert "rpmlintrc" not in spec_file.read_text(encoding="utf-8")
+    assert "  * Update to latest openQA version" in changes_file.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize(
+    ("dry_run", "status_out", "package", "skip_wait", "build_success", "expected"),
+    [
+        (False, "M pkg.changes\n", "pkg", False, True, auto_submit.CommitResult.NO_CHANGES),
+        (False, "M pkg.spec\n", "os-autoinst-distri-opensuse-deps", True, True, auto_submit.CommitResult.SUCCESS),
+        (False, "M pkg.spec\n", "other-pkg", True, True, auto_submit.CommitResult.SUCCESS),
+        (True, "", "container-pkg", False, False, auto_submit.CommitResult.FAILURE),
+    ],
+    ids=["only_changes_no_commit", "skip_wait_deps", "skip_wait_other", "build_failure"],
+)
+def test_commit_local_changes(
+    mocker: MockerFixture,
+    dry_run: bool,
+    status_out: str,
+    package: str,
+    skip_wait: bool,
+    build_success: bool,
+    expected: auto_submit.CommitResult,
+) -> None:
+    mocker.patch(
+        "auto_submit.run_osc_cmd",
+        return_value=subprocess.CompletedProcess(["osc"], 0, stdout=status_out),
+    )
+    mocker.patch("auto_submit.AutoSubmitter.wait_for_package_build", return_value=build_success)
+    submitter = auto_submit.AutoSubmitter(dry_run=dry_run, skip_wait_for_build=skip_wait)
+    assert submitter._commit_local_changes(package, "1.0") == expected
+
+
+def test_disable_service_buildtime(
+    mocker: MockerFixture, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    auto_submit.AutoSubmitter._disable_service_buildtime()
+
+    service_file = tmp_path / "_service"
+    service_file.write_text("invalid xml <service", encoding="utf-8")
+    auto_submit.AutoSubmitter._disable_service_buildtime()
+
+    service_file.write_text(
+        '<services><service name="obs_scm" mode="manual"/><service name="tar" mode="buildtime"/></services>',
+        encoding="utf-8",
+    )
+    mocker.patch.object(auto_submit.ET.ElementTree, "write", side_effect=Exception("write failed"))
+    auto_submit.AutoSubmitter._disable_service_buildtime()
+
+    mocker.stopall()
+    auto_submit.AutoSubmitter._disable_service_buildtime()
+    content = service_file.read_text(encoding="utf-8")
+    assert 'mode="disabled"' in content
+    assert 'mode="buildtime"' in content
+
+
+def test_update_package_branches(
+    mocker: MockerFixture,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    mocker.patch("auto_submit.AutoSubmitter._disable_service_buildtime")
+    mocker.patch("auto_submit.AutoSubmitter._cleanup_and_rename_files")
+    mocker.patch("auto_submit.AutoSubmitter._find_version", return_value="1.0")
+    mocker.patch("auto_submit.AutoSubmitter._osc_addremove_and_filter_specs")
+    mocker.patch("auto_submit.AutoSubmitter.has_pending_submission", side_effect=[True, False])
+    mocker.patch("auto_submit.AutoSubmitter.make_git_submit_request", return_value=True)
+    mocker.patch("auto_submit.AutoSubmitter.make_obs_submit_request", return_value=False)
+    changes_file = tmp_path / "pkg.changes"
+    changes_file.write_text("changes\n", encoding="utf-8")
+
+    submitter = auto_submit.AutoSubmitter(
+        dir=tmp_path,
+        dry_run=False,
+        targets=["none", "openSUSE:Leap:16.0", "openSUSE:Factory"],
+    )
+    mocker.patch.object(submitter, "_commit_local_changes", return_value=auto_submit.CommitResult.FAILURE)
+    assert submitter.update_package("pkg") is False
+
+    mocker.patch.object(submitter, "_commit_local_changes", return_value=auto_submit.CommitResult.NO_CHANGES)
+    assert submitter.update_package("pkg") is True
+
+    mocker.patch.object(submitter, "_commit_local_changes", return_value=auto_submit.CommitResult.SUCCESS)
+    (tmp_path / submitter.dst_project / "pkg").mkdir(parents=True)
+    assert submitter.update_package("pkg") is False
+    assert submitter.failed_packages == ["pkg"]
+
+    monkeypatch.chdir(tmp_path)
+    submitter_dry = auto_submit.AutoSubmitter(
+        dir=tmp_path,
+        dry_run=True,
+        targets=["openSUSE:Leap:16.0"],
+    )
+    mocker.patch.object(submitter_dry, "_commit_local_changes", return_value=auto_submit.CommitResult.SUCCESS)
+    mocker.patch("auto_submit.AutoSubmitter.has_pending_submission", return_value=False)
+    assert submitter_dry.update_package("pkg") is True
+
+
+def test_is_package_up_to_date(mocker: MockerFixture, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    submitter = auto_submit.AutoSubmitter(submit_target="target", src_project="src")
+    mocker.patch(
+        "auto_submit.run_osc_cmd", return_value=subprocess.CompletedProcess(["osc"], 0, stdout="spec content\n")
+    )
+    mocker.patch("auto_submit.generate_changelog")
+
+    mocker.patch("auto_submit.get_spec_changes_in_requirements", return_value="")
+    assert submitter._is_package_up_to_date("os-autoinst-distri-opensuse-deps") is True
+
+    mocker.patch("auto_submit.get_spec_changes_in_requirements", return_value="requires diff")
+    assert submitter._is_package_up_to_date("os-autoinst-distri-opensuse-deps") is False
+
+    mocker.patch("auto_submit.run_osc_cmd", side_effect=Exception("cat failed"))
+    assert submitter._is_package_up_to_date("os-autoinst-distri-opensuse-deps") is False
+
+    mocker.patch("auto_submit.last_revision", side_effect=["rev1", "rev1"])
+    assert submitter._is_package_up_to_date("openQA") is True
+
+    mocker.patch("auto_submit.last_revision", side_effect=["rev1", "rev2"])
+    assert submitter._is_package_up_to_date("openQA") is False
+
+
+def test_handle_auto_submit_flow(
+    mocker: MockerFixture,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    mocker.patch("auto_submit.os.chdir")
+    mocker.patch("auto_submit.run_osc_cmd")
+    submitter = auto_submit.AutoSubmitter(dir=tmp_path, dry_run=False, src_project="src", dst_project="dst")
+    mocker.patch.object(submitter, "_is_package_up_to_date", side_effect=[True, False, False, False])
+    mocker.patch.object(submitter, "update_package", return_value=True)
+
+    assert submitter.handle_auto_submit("pkg") is True
+
+    src_dir = tmp_path / "src" / "pkg"
+    dst_dir = tmp_path / "dst" / "pkg"
+    src_dir.mkdir(parents=True)
+    dst_dir.mkdir(parents=True)
+    (src_dir / "src_file.txt").touch()
+    (src_dir / "src_subdir").mkdir()
+    (dst_dir / "old_dst_file.txt").touch()
+    (dst_dir / "dst_subdir").mkdir()
+
+    assert submitter.handle_auto_submit("pkg") is True
+    assert (dst_dir / "src_file.txt").exists()
+    assert not (dst_dir / "old_dst_file.txt").exists()
+
+    submitter_dry = auto_submit.AutoSubmitter(dir=tmp_path, dry_run=True, src_project="src", dst_project="dst")
+    mocker.patch.object(submitter_dry, "_is_package_up_to_date", return_value=False)
+    mocker.patch.object(submitter_dry, "update_package", return_value=True)
+    assert submitter_dry.handle_auto_submit("pkg") is True
+
+    (dst_dir / "src_file.txt").unlink()
+    (src_dir / "src_file.txt").unlink()
+    shutil.rmtree(src_dir / "src_subdir")
+    shutil.rmtree(dst_dir / "dst_subdir")
+
+    shutil.rmtree(src_dir)
+    shutil.rmtree(dst_dir)
+    assert submitter.handle_auto_submit("pkg") is True
+
+
+def test_get_packages_to_submit_error(mocker: MockerFixture) -> None:
+    mocker.patch("auto_submit.run_osc_cmd", side_effect=subprocess.SubprocessError("osc ls failed"))
+    assert auto_submit._get_packages_to_submit("proj", "osc", dry_run=False) == []
+
+
+def test_run_submissions_cli_flows(
+    mocker: MockerFixture,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    skip_file = tmp_path / "job_post_skip_submission"
+    skip_file.write_text("Skipped due to pipeline condition", encoding="utf-8")
+
+    with pytest.raises(typer.Exit) as exc:
+        auto_submit._run_submissions(
+            src_project="src",
+            dst_project="",
+            staging_project="",
+            submit_target="target",
+            dry_run=False,
+            force=False,
+            osc_poll_interval=1,
+            osc_build_start_poll_tries=1,
+            throttle_days=1,
+            throttle_days_leap_16=1,
+            git_user="user",
+            submit_target_extra="",
+            packages="",
+            skip_wait_for_build=True,
+            cleanup_dir=True,
+        )
+    assert exc.value.exit_code == 0
+
+    mocker.patch("auto_submit._run_cmd")
+    mocker.patch("auto_submit.run_osc_cmd")
+
+    def fake_handle(self: Any, package: str) -> bool:
+        if package == "pkg1":
+            self.failed_packages.append(package)
+            return False
+        return True
+
+    mocker.patch.object(auto_submit.AutoSubmitter, "handle_auto_submit", fake_handle)
+    skip_file.write_text("Skipped", encoding="utf-8")
+    monkeypatch.setenv("PREFIX", "env-prefix")
+    monkeypatch.setenv("OSC", "osc")
+
+    with pytest.raises(typer.Exit) as exc_force:
+        auto_submit._run_submissions(
+            src_project="src",
+            dst_project="",
+            staging_project="src:staging",
+            submit_target="target",
+            dry_run=False,
+            force=True,
+            osc_poll_interval=1,
+            osc_build_start_poll_tries=1,
+            throttle_days=1,
+            throttle_days_leap_16=1,
+            git_user="user",
+            submit_target_extra="extra1,extra2",
+            packages="pkg1,pkg2",
+            skip_wait_for_build=True,
+            cleanup_dir=True,
+        )
+    assert exc_force.value.exit_code == 1
+    assert not skip_file.exists()
+
+    monkeypatch.chdir(tmp_path)
+    mocker.patch.object(auto_submit.AutoSubmitter, "handle_auto_submit", return_value=True)
+    auto_submit._run_submissions(
+        src_project="src",
+        dst_project="dst",
+        staging_project="src",
+        submit_target="target",
+        dry_run=False,
+        force=True,
+        osc_poll_interval=1,
+        osc_build_start_poll_tries=1,
+        throttle_days=1,
+        throttle_days_leap_16=1,
+        git_user="user",
+        submit_target_extra="none",
+        packages="pkg",
+        skip_wait_for_build=True,
+        cleanup_dir=True,
+    )
+
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    if skip_file.exists():
+        skip_file.unlink()
+
+    def handle_creates_skip(_self: Any, package: str) -> bool:
+        _ = package
+        (tmp_path / "job_post_skip_submission").touch()
+        return True
+
+    mocker.patch.object(auto_submit.AutoSubmitter, "handle_auto_submit", handle_creates_skip)
+    auto_submit._run_submissions(
+        src_project="src",
+        dst_project="dst",
+        staging_project="none",
+        submit_target="target",
+        dry_run=False,
+        force=False,
+        osc_poll_interval=1,
+        osc_build_start_poll_tries=1,
+        throttle_days=1,
+        throttle_days_leap_16=1,
+        git_user="user",
+        submit_target_extra="",
+        packages="pkg",
+        skip_wait_for_build=True,
+        cleanup_dir=True,
+    )
+
+
+def test_run_submissions_dry_run_and_errors(
+    mocker: MockerFixture,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "job_post_skip_submission").touch()
+    mocker.patch("auto_submit.run_osc_cmd")
+    mocker.patch("auto_submit._get_packages_to_submit", return_value=["pkg"])
+    mocker.patch("auto_submit.AutoSubmitter.handle_auto_submit", return_value=True)
+
+    auto_submit._run_submissions(
+        src_project="src",
+        dst_project="dst",
+        staging_project="src:staging",
+        submit_target="target",
+        dry_run=True,
+        force=True,
+        osc_poll_interval=1,
+        osc_build_start_poll_tries=1,
+        throttle_days=1,
+        throttle_days_leap_16=1,
+        git_user="user",
+        submit_target_extra="",
+        packages="",
+        skip_wait_for_build=True,
+        cleanup_dir=True,
+    )
+
+    mocker.patch("auto_submit._run_cmd", side_effect=OSError("cleanup failed"))
+    auto_submit._run_submissions(
+        src_project="src",
+        dst_project="dst",
+        staging_project="src:staging",
+        submit_target="target",
+        dry_run=False,
+        force=True,
+        osc_poll_interval=1,
+        osc_build_start_poll_tries=1,
+        throttle_days=1,
+        throttle_days_leap_16=1,
+        git_user="user",
+        submit_target_extra="",
+        packages="pkg",
+        skip_wait_for_build=True,
+        cleanup_dir=True,
+    )
+
+
+def test_main_cli_entrypoint(mocker: MockerFixture) -> None:
+    mocker.patch("sys.argv", ["os-autoinst-obs-auto-submit", "--help"])
+    script = f"{rootpath}/os-autoinst-obs-auto-submit"
+    main_spec = importlib.util.spec_from_file_location(
+        "__main__",
+        script,
+        loader=importlib.machinery.SourceFileLoader("__main__", script),
+    )
+    assert main_spec
+    assert main_spec.loader
+    main_mod = importlib.util.module_from_spec(main_spec)
+    with pytest.raises(SystemExit) as exc:
+        main_spec.loader.exec_module(main_mod)
+    assert exc.value.code == 0
