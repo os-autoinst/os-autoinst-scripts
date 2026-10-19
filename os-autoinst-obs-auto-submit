@@ -1062,6 +1062,7 @@ def _run_submissions(  # ruff: ignore[complex-structure, too-many-branches, too-
                 log.warning("- %s", pkg)
 
         if rc != 0:
+            os.chdir(original_dir)
             raise typer.Exit(code=rc)
 
     os.chdir(original_dir)
