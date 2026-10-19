@@ -45,7 +45,7 @@ def mocked_fetch_url(url: str, request_type: str = "text") -> Any:
     if parsed.scheme in {"http", "https"}:
         path = parsed.geturl()
         path = path[len(parsed.scheme) + 3 :]
-        path = "tests/data/python-requests/" + path
+        path = f"{rootpath}/tests/data/python-requests/{path}"
         content = pathlib.Path(path).read_text(encoding="utf-8")
     if request_type == "json":
         return json.loads(content)
