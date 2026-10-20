@@ -274,6 +274,16 @@ def test_client_get_http_variants(mocker: MockerFixture, caplog: pytest.LogCaptu
     assert res_404 == {"error_status": 404}
     assert "HTTP GET failed after" not in caplog.text
 
+    # HTTP non-404 status error raises and logs error
+    caplog.clear()
+    resp_500 = httpx.Response(500, request=httpx.Request("GET", "https://openqa.opensuse.org/test/500"))
+    mock_client_inst.get.side_effect = httpx.HTTPStatusError(
+        "Server Error", request=resp_500.request, response=resp_500
+    )
+    with caplog.at_level(logging.ERROR), pytest.raises(httpx.HTTPStatusError):
+        client._get_http("test/500")
+    assert "HTTP GET failed after 4 attempts" in caplog.text
+
     # retries < 0 (covers line return {})
     client_empty = openqa_investigate.OpenQAClient("https://openqa.opensuse.org", retries=-1)
     assert client_empty._get_http("test/empty") == {}

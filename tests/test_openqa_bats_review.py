@@ -167,6 +167,40 @@ def test_resolve_clone_chain_multiple(mocker: MockerFixture) -> None:
     assert chain == [123, 122, 121]
 
 
+def test_call_dry_run(mocker: MockerFixture) -> None:
+    mock_run = mocker.patch("bats_review.subprocess.run")
+    mock_run.return_value = Mock(stdout=b"ok\n", stderr=b"")
+    out = bats_review.call(["openqa-cli", "api"], dry_run=True)
+    assert mock_run.call_args.args[0][:3] == ["echo", "Simulating: ", "openqa-cli"]
+    assert out == "ok\n"
+
+
+def test_call_live_with_stderr(mocker: MockerFixture) -> None:
+    mock_run = mocker.patch("bats_review.subprocess.run")
+    mock_log = mocker.patch("bats_review.log")
+    mock_run.return_value = Mock(stdout=b"out\n", stderr=b"boom")
+    out = bats_review.call(["openqa-cli", "api"], dry_run=False)
+    assert mock_run.call_args.args[0] == ["openqa-cli", "api"]
+    mock_log.warning.assert_called_once_with("call() %s stderr: %s", "openqa-cli", b"boom")
+    assert out == "out\n"
+
+
+def test_openqa_comment(mocker: MockerFixture) -> None:
+    mock_call = mocker.patch("bats_review.call")
+    simulate = True
+    bats_review.openqa_comment(123, "http://host", "my comment", dry_run=simulate)
+    mock_call.assert_called_once_with(
+        [*bats_review.client_args, "--host", "http://host", "-X", "POST", "jobs/123/comments", "text=my comment"],
+        simulate,
+    )
+
+
+def test_get_expected_logs_distri_variants() -> None:
+    assert bats_review.get_expected_logs("opensuse", "15.6")["docker_testsuite"] == 18
+    assert bats_review.get_expected_logs("sle", "16.2")["docker_testsuite"] == 18
+    assert bats_review.get_expected_logs("sle", "15.1")["docker_testsuite"] == 13
+
+
 # main
 
 
@@ -236,6 +270,111 @@ def test_main_insufficient_logs(mocker: MockerFixture) -> None:
         bats_review.main("http://openqa.example.com/tests/123", dry_run=True)
     assert exc.value.code == 0
     mock_log.info.assert_any_call("No logs found in chain. Exiting")
+
+
+def test_main_url_without_scheme(mocker: MockerFixture) -> None:
+    """A scheme-less URL gets https:// prepended before parsing."""
+    with contextlib.suppress(Exception):
+        bats_review.get_job.cache_clear()
+    mock_resolve = mocker.patch("bats_review.resolve_clone_chain")
+    mock_resolve.return_value = [123]
+    with pytest.raises(SystemExit) as exc:
+        bats_review.main("openqa.example.com/tests/123", dry_run=True)
+    assert exc.value.code == 0
+
+
+def test_main_job_without_logs(mocker: MockerFixture) -> None:
+    """Jobs without .xml ulogs are skipped with a log line."""
+    with contextlib.suppress(Exception):
+        bats_review.get_job.cache_clear()
+    mock_resolve = mocker.patch("bats_review.resolve_clone_chain")
+    mock_get_job = mocker.patch("bats_review.get_job")
+    mock_log = mocker.patch("bats_review.log")
+    mock_resolve.return_value = [123, 122]
+
+    def job_resp(url: str) -> dict[str, Any]:
+        jid = int(url.split("/")[-2])
+        return {"id": jid, "settings": {"TEST": "aardvark_testsuite", "DISTRI": "opensuse"}, "ulogs": []}
+
+    mock_get_job.side_effect = job_resp
+    with pytest.raises(SystemExit) as exc:
+        bats_review.main("http://openqa.example.com/tests/123", dry_run=True)
+    assert exc.value.code == 0
+    mock_log.info.assert_any_call("Job %s has no logs, skipping", 123)
+
+
+def test_main_single_job_with_logs(mocker: MockerFixture) -> None:
+    """Exactly one job with logs in the chain is not enough for comparison."""
+    with contextlib.suppress(Exception):
+        bats_review.get_job.cache_clear()
+    mock_resolve = mocker.patch("bats_review.resolve_clone_chain")
+    mock_get_job = mocker.patch("bats_review.get_job")
+    mock_process_logs = mocker.patch("bats_review.process_logs")
+    mock_log = mocker.patch("bats_review.log")
+    mock_resolve.return_value = [123, 122]
+
+    def job_resp(url: str) -> dict[str, Any]:
+        jid = int(url.split("/")[-2])
+        ulogs = ["test.xml"] if jid == 123 else []
+        return {"id": jid, "settings": {"TEST": "aardvark_testsuite", "DISTRI": "opensuse"}, "ulogs": ulogs}
+
+    mock_get_job.side_effect = job_resp
+    mock_process_logs.return_value = {"a"}
+    with pytest.raises(SystemExit) as exc:
+        bats_review.main("http://openqa.example.com/tests/123", dry_run=True)
+    assert exc.value.code == 0
+    mock_log.info.assert_any_call("Only one job with logs in chain. Exiting")
+
+
+def test_main_no_common_failures_live(mocker: MockerFixture) -> None:
+    """dry_run=False selects the "Would tag as PASSED" message."""
+    with contextlib.suppress(Exception):
+        bats_review.get_job.cache_clear()
+    mock_resolve = mocker.patch("bats_review.resolve_clone_chain")
+    mock_get_job = mocker.patch("bats_review.get_job")
+    mock_process_logs = mocker.patch("bats_review.process_logs")
+    mock_log = mocker.patch("bats_review.log")
+    mock_resolve.return_value = [123, 122]
+
+    def job_resp(url: str) -> dict[str, Any]:
+        jid = int(url.split("/")[-2])
+        return {
+            "id": jid,
+            "settings": {"TEST": "aardvark_testsuite", "DISTRI": "opensuse"},
+            "ulogs": ["test.xml"],
+        }
+
+    mock_get_job.side_effect = job_resp
+    mock_process_logs.side_effect = [{"a"}, {"b"}]
+    res = bats_review.main("http://openqa.example.com/tests/123", dry_run=False)
+    assert res is None
+    mock_log.info.assert_called_with("No common failures across clone chain. Would tag as PASSED.")
+
+
+def test_main_common_failures(mocker: MockerFixture) -> None:
+    """Identical failures across the chain exit with code 1."""
+    with contextlib.suppress(Exception):
+        bats_review.get_job.cache_clear()
+    mock_resolve = mocker.patch("bats_review.resolve_clone_chain")
+    mock_get_job = mocker.patch("bats_review.get_job")
+    mock_process_logs = mocker.patch("bats_review.process_logs")
+    mock_log = mocker.patch("bats_review.log")
+    mock_resolve.return_value = [123, 122]
+
+    def job_resp(url: str) -> dict[str, Any]:
+        jid = int(url.split("/")[-2])
+        return {
+            "id": jid,
+            "settings": {"TEST": "aardvark_testsuite", "DISTRI": "opensuse"},
+            "ulogs": ["test.xml"],
+        }
+
+    mock_get_job.side_effect = job_resp
+    mock_process_logs.side_effect = [{"x"}, {"x"}]
+    with pytest.raises(SystemExit) as exc:
+        bats_review.main("http://openqa.example.com/tests/123", dry_run=True)
+    assert exc.value.code == 1
+    mock_log.error.assert_called_once_with("Common failures found across clone chain: %s", "x")
 
 
 def test_parse_args_success(mocker: MockerFixture) -> None:
@@ -310,3 +449,20 @@ def test_full_workflow_no_common_failures(mocker: MockerFixture) -> None:
     res = bats_review.main("http://openqa.example.com/tests/123", dry_run=True)
     assert res is None
     mock_log.info.assert_called_with("No common failures across clone chain. Tagging as PASSED.")
+
+
+def test_main_entrypoint(mocker: MockerFixture) -> None:
+    mocker.patch("sys.argv", ["openqa-bats-review", "--dry-run", "http://host/tests/1"])
+    mock_session = mocker.patch("requests.Session")
+    mock_session.return_value.get.side_effect = RequestException("stop")
+    script = f"{rootpath}/openqa-bats-review"
+    main_spec = importlib.util.spec_from_file_location(
+        "__main__",
+        script,
+        loader=importlib.machinery.SourceFileLoader("__main__", script),
+    )
+    assert main_spec
+    assert main_spec.loader
+    main_mod = importlib.util.module_from_spec(main_spec)
+    with pytest.raises(SystemExit):
+        main_spec.loader.exec_module(main_mod)
