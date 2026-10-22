@@ -177,6 +177,23 @@ Or with [uv](https://docs.astral.sh/uv/), which installs the dependencies for yo
 For Google Vertex AI, set `GOOGLE_APPLICATION_CREDENTIALS` and `GCLOUD_PROJECT` (optionally `VERTEX_LOCATION`, default `global`), then e.g.
 `LLM_API=vertex LLM_MODEL=claude-sonnet-5-5@default ./openqa-llm-investigate https://openqa.opensuse.org/tests/123`.
 
+### openqa-recent-test-changes
+
+`openqa-recent-test-changes` runs on an openQA web UI host (it is called by `openqa-label-known-issues-and-investigate-hook`)
+and comments on a failed job if files involved in the failure changed in git within 5 days before the job started:
+
+* test code: the files named in the failure's stack traces (or else the failed module's own file) in the checkout
+  `/var/lib/openqa/share/tests/<DISTRI>`
+* needles: the candidate needles of the failed screen checks (JSON and PNG), and needles added, removed or edited that
+  carry the checks' tags. They are looked up in the needles checkout (`NEEDLES_DIR`, else `products/<DISTRI>/needles`),
+  which must be a git repository of its own
+
+Only commits up to the job's `TEST_GIT_HASH` or `NEEDLES_GIT_HASH` count. The comment lists the newest 30 commits per
+checkout with link, date and subject (reworked so openQA finds no bugref or label in it), at most 50 involved files are
+checked, and the comment says when a limit was reached. It prints nothing and posts nothing if there is no such change.
+Jobs with a `CASEDIR` or `NEEDLES_DIR` URL (or an absolute path outside the checkouts), passed jobs and `:investigate:`
+jobs are skipped. Try it with `./openqa-recent-test-changes --dry -v <job URL>`.
+
 ### More details and examples about openqa-investigate comments
 
 Let's say we have a failed test `openqa-Tumbleweed-dev-x86_64-Build:TW.315-vim`.

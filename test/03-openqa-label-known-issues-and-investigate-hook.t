@@ -2,7 +2,7 @@
 
 source test/init
 
-plan tests 46
+plan tests 52
 dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 source "$dir/../openqa-label-known-issues-and-investigate-hook"
@@ -14,7 +14,12 @@ export INVESTIGATE_RETRIGGER_HOOK=false
 # Mocking
 export LLM_INVESTIGATE_FAIL=false
 export LLM_INVESTIGATE_SKIP=false
+export RECENT_CHANGES_FAIL=false
 
+openqa-recent-test-changes() {
+    warn "- openqa-recent-test-changes $1"
+    ! "$RECENT_CHANGES_FAIL"
+}
 openqa-llm-investigate() {
     local testurl=$1
     warn "- openqa-llm-investigate $testurl"
@@ -56,6 +61,7 @@ openqa-api-get() {
 try hook 123
 is "$rc" 0 'successful hook (123)'
 has "$got" "- openqa-label-known-issues"
+has "$got" "- openqa-recent-test-changes"
 has "$got" "- openqa-llm-investigate"
 has "$got" "- openqa-investigate"
 has "$got" "- openqa-trigger-bisect-jobs"
@@ -81,6 +87,14 @@ has "$got" "- openqa-llm-investigate"
 has "$got" "- openqa-investigate"
 has "$got" "- openqa-trigger-bisect-jobs"
 
+export RECENT_CHANGES_FAIL=true
+try hook 123
+is "$rc" 0 'successful hook (recent test changes failed) (123)'
+has "$got" "WARNING: openqa-recent-test-changes failed"
+has "$got" "- openqa-llm-investigate"
+has "$got" "- openqa-investigate"
+export RECENT_CHANGES_FAIL=false
+
 export INVESTIGATE_FAIL=true
 try hook 123
 is "$rc" 1 'openqa-investigate failed'
@@ -99,6 +113,7 @@ export INVESTIGATE_RETRIGGER_HOOK=false
 try hook 123
 is "$rc" 0 'successful hook (no unknown issue) (123)'
 has "$got" "- openqa-label-known-issues"
+hasnt "$got" "- openqa-recent-test-changes"
 hasnt "$got" "- openqa-llm-investigate"
 hasnt "$got" "- openqa-investigate"
 hasnt "$got" "- openqa-trigger-bisect-jobs"

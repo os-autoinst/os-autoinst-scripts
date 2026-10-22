@@ -20,6 +20,8 @@ investigate-and-bisect() {
     [[ -n "$test" ]] || return 0
     rc=0
 
+    openqa-recent-test-changes "$test" || warn "WARNING: openqa-recent-test-changes failed"
+
     # Call the new LLM investigation script first, which acts as a gatekeeper
     # If it decides no further investigation is needed, it won't output the test URL.
     local investigate_target=""
