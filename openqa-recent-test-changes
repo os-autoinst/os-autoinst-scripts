@@ -1,9 +1,9 @@
 #!/usr/bin/python3
 # Copyright SUSE LLC
-"""Comment on a failed openQA job if the test code files involved in the failure were changed recently.
+"""Comment on a failed openQA job if the test code files or needles involved in the failure changed recently.
 
-Runs on an openQA web UI host and reads the test code git checkout there. The comment must never contain
-anything openQA parses as a bugref or label, hence no commit subject goes in unsanitized.
+Runs on an openQA web UI host and reads the test code and needles git checkouts there. The comment must never
+contain anything openQA parses as a bugref or label, hence no commit subject goes in unsanitized.
 """
 
 from __future__ import annotations
@@ -22,19 +22,29 @@ import httpx
 import typer
 
 from common.error_handling import is_404_str
-from openqa_llm_investigate.failures import extract_failed_modules, extract_test_died_errors
+from openqa_llm_investigate.failures import extract_failed_modules, extract_test_died_errors, failing_cluster
 from openqa_llm_investigate.http import AnalyzerError, JsonDict, OpenQA
 
 USER_AGENT = "openqa-recent-test-changes (https://github.com/os-autoinst/os-autoinst-scripts)"
-COMMENT_MARKER = "**Recent test code changes:**"
+CODE_MARKER = "**Recent test code changes:**"
+NEEDLE_MARKER = "**Recent needle changes:**"
 DAYS = 5
+CODE_HEADER = f"{CODE_MARKER} files in this failure were modified in the {DAYS} days before the job ran:"
+NEEDLE_HEADER = (
+    f"{NEEDLE_MARKER} needles of the failed screen checks (or tagged for them) changed in the last {DAYS} days:"
+)
 MODULES_MAX = 3
-FILES_MAX = 10
-COMMITS_MAX = 5
+FILES_MAX = 50
+COMMITS_MAX = 30
+FILE_NAMES_MAX = 10
 SUBJECT_MAX = 100
 TESTS_ROOTS = (Path("/var/lib/openqa/share/tests"), Path("/var/lib/openqa/tests"))
 _PATH_RE = re.compile(r"[\w./-]+\.(?:pm|py)\b")
 _DISTRI_RE = re.compile(r"[\w.-]+")
+_REL_PATH_RE = re.compile(r"[\w./-]+")
+_TAG_RE = re.compile(r"[A-Za-z0-9_.:+-]+")
+_NO_NEEDLE_RE = re.compile(r"no candidate needle with tag\(s\) '([^']+)'")
+_STATUS_TEXT = {"A": " (added)", "D": " (removed)"}
 _SHA_RE = re.compile(r"[0-9a-f]{7,40}")
 _HTTP_REMOTE_RE = re.compile(r"https?://[\w.-]+(?::\d+)?/[\w./-]+")
 _SCP_REMOTE_RE = re.compile(r"(?:[\w.-]+@)?([\w.-]+):([\w./-]+)")
@@ -46,12 +56,13 @@ app = typer.Typer(add_completion=False)
 
 
 class Commit(NamedTuple):
-    """A commit changing some of the involved files."""
+    """A commit changing some of the involved files; `changes` are (git status letter, file name)."""
 
     sha: str
     date: str
+    ts: int
     subject: str
-    files: list[str]
+    changes: list[tuple[str, str]]
 
 
 def parse_job_url(job_url: str) -> tuple[str, str]:
@@ -92,6 +103,25 @@ def tests_dir(settings: JsonDict) -> Path | None:
     return repo if repo.is_dir() else None
 
 
+def needles_dir(settings: JsonDict, tests: Path | None) -> Path | None:
+    """Return the needles git checkout of a job, None if it has none or the job did not use one of this host."""
+    setting = settings.get("NEEDLES_DIR")
+    if setting and "://" in setting:
+        return None
+    if setting and setting.startswith("/"):
+        path = Path(setting).resolve()
+        found = path if any(path.is_relative_to(r.resolve()) for r in TESTS_ROOTS) else None
+    elif tests and setting:
+        found = None if ".." in Path(setting).parts else tests / setting
+    elif tests:
+        distri = settings.get("DISTRI") or ""
+        product = tests / "products" / distri
+        found = (product if _DISTRI_RE.fullmatch(distri) and product.is_dir() else tests) / "needles"
+    else:
+        found = None
+    return found if found and (found / ".git").exists() else None
+
+
 def _git(repo: Path, *args: str) -> str:
     """Run git in `repo`; `safe.directory` on the command line avoids the dubious ownership error for other users."""
     cmd = ["git", "-c", f"safe.directory={repo}", "-C", str(repo), *args]
@@ -117,35 +147,90 @@ def involved_files(repo: Path, modules: list[JsonDict]) -> list[str]:
             own = resolve_path(repo, f"tests/{module['category']}/{module['name']}.pm")
             resolved = [own] if own else []
         found.update(dict.fromkeys(resolved))
-    return list(found)[:FILES_MAX]
+    return list(found)
 
 
-def tested_rev(repo: Path, vars_json: JsonDict) -> str:
-    """Return the job's `TEST_GIT_HASH` if the checkout has it, else HEAD."""
-    sha = str(vars_json.get("TEST_GIT_HASH") or "")
+def _needle_files(needles: Path, candidate: JsonDict) -> list[str]:
+    """Return the existing JSON file and PNG of a candidate needle of a failed screen step."""
+    rel = candidate.get("json")
+    if not isinstance(rel, str) or not _REL_PATH_RE.fullmatch(rel) or rel.startswith("/") or ".." in rel.split("/"):
+        return []
+    names = [rel, f"{rel.removesuffix('.json')}.png"] if rel.endswith(".json") else [rel]
+    return [n for n in names if (needles / n).is_file()]
+
+
+def involved_needles(needles: Path, modules: list[JsonDict]) -> tuple[list[str], list[str]]:
+    """Return the candidate needle files and the tags of the failed screen steps of the failed modules."""
+    files: dict[str, None] = {}
+    tags: dict[str, None] = {}
+    for module in modules:
+        cluster = failing_cluster(module.get("details", []))
+        for step in cluster[0] if cluster else []:
+            for candidate in step.get("needles") or []:
+                files.update(dict.fromkeys(_needle_files(needles, candidate)))
+            listed = [t for t in step.get("tags") or [] if isinstance(t, str)]
+            listed += [t for m in _NO_NEEDLE_RE.findall(step.get("text_data") or "") for t in re.split(r"[\s,]+", m)]
+            tags.update(dict.fromkeys(t for t in listed if _TAG_RE.fullmatch(t)))
+    return list(files), list(tags)
+
+
+def tested_rev(repo: Path, vars_json: JsonDict, kind: str, settings: JsonDict) -> str | None:
+    """Return the job's `<kind>_GIT_HASH` if the checkout has it, else HEAD (None if the job used a refspec)."""
+    sha = str(vars_json.get(f"{kind}_GIT_HASH") or "")
     if _SHA_RE.fullmatch(sha):
         try:
             _git(repo, "cat-file", "-e", f"{sha}^{{commit}}")
         except subprocess.CalledProcessError:
-            return "HEAD"
-        return sha
-    return "HEAD"
+            pass
+        else:
+            return sha
+    return None if settings.get(f"{kind}_GIT_REFSPEC") else "HEAD"
+
+
+def _log(repo: Path, rev: str, started: dt.datetime, *selection: str) -> list[Commit]:
+    """Return the commits of the `DAYS` days before `started` that match the git log `selection`, newest first."""
+    since, until = (started - dt.timedelta(days=DAYS)).isoformat(), started.isoformat()
+    fmt = "--format=%x00%H%x1f%cs%x1f%ct%x1f%s"
+    args = ["log", rev, f"--since={since}", f"--until={until}", "--no-merges", "--no-renames", "--name-status", fmt]
+    commits = []
+    for chunk in _git(repo, *args, *selection).split("\0")[1:]:
+        header, *lines = chunk.splitlines()
+        sha, date, ts, subject = header.split("\x1f", 3)
+        changes = [
+            (status[:1], name)
+            for line in lines
+            if (status := line.partition("\t")[0]) and (name := line.partition("\t")[2])
+        ]
+        commits.append(Commit(sha, date, int(ts), subject, changes))
+    return commits
 
 
 def recent_commits(repo: Path, rev: str, started: dt.datetime, files: list[str]) -> list[Commit]:
     """Return the commits to `files` in the `DAYS` days before `started`, newest first."""
-    since, until = (started - dt.timedelta(days=DAYS)).isoformat(), started.isoformat()
-    fmt = "--format=%x00%H%x1f%cs%x1f%s"
-    out = _git(
-        repo, "log", rev, f"--since={since}", f"--until={until}", "--no-merges", "--name-only", fmt, "--", *files
-    )
-    commits = []
-    for chunk in out.split("\0")[1:]:
-        header, *names = chunk.splitlines()
-        sha, date, subject = header.split("\x1f", 2)
-        if changed := [n for n in names if n in files]:
-            commits.append(Commit(sha, date, subject, changed))
-    return commits
+    if not files:
+        return []
+    commits = [
+        c._replace(changes=[(s, n) for s, n in c.changes if n in files]) for c in _log(repo, rev, started, "--", *files)
+    ]
+    return [c for c in commits if c.changes]
+
+
+def tagged_commits(repo: Path, rev: str, started: dt.datetime, tags: list[str]) -> list[Commit]:
+    """Return the commits that added, removed or edited a needle JSON line with one of `tags`."""
+    if not tags:
+        return []
+    pattern = "|".join(re.sub(r"[.+]", r"\\\g<0>", tag) for tag in tags)
+    return _log(repo, rev, started, f'-G"({pattern})"', "--", "*.json")
+
+
+def merge_commits(*groups: list[Commit]) -> list[Commit]:
+    """Return the commits of all `groups` once each with their changes joined, newest first."""
+    merged: dict[str, Commit] = {}
+    for commit in (c for group in groups for c in group):
+        known = merged.get(commit.sha)
+        joined = list(dict.fromkeys([*(known.changes if known else []), *commit.changes]))
+        merged[commit.sha] = commit._replace(changes=joined)
+    return sorted(merged.values(), key=lambda c: c.ts, reverse=True)
 
 
 def commit_url_base(repo: Path) -> str | None:
@@ -166,15 +251,27 @@ def sanitize_subject(subject: str) -> str:
     return _GLUED_RE.sub(lambda m: m.group() + " ", subject.strip()[:SUBJECT_MAX])
 
 
-def format_comment(base: str | None, commits: list[Commit]) -> str:
-    """Return the comment text listing `commits`; the link is markdown, as openQA does not turn those into bugrefs."""
-    lines = [f"{COMMENT_MARKER} files in this failure were modified in the {DAYS} days before the job ran:"]
-    for sha, date, subject, files in commits[:COMMITS_MAX]:
-        ref = f"[{sha[:7]}]({base}{sha})" if base else f"`{sha[:7]}`"
-        lines.append(f"* {ref} {date} {sanitize_subject(subject)}: " + ", ".join(f"`{f}`" for f in files))
+def _changes_text(changes: list[tuple[str, str]]) -> str:
+    shown = ", ".join(f"`{name}`{_STATUS_TEXT.get(status, '')}" for status, name in changes[:FILE_NAMES_MAX])
+    more = len(changes) - FILE_NAMES_MAX
+    return shown + (f", +{more} more files" if more > 0 else "")
+
+
+def format_section(header: str, base: str | None, commits: list[Commit], notes: list[str]) -> str | None:
+    """Return a section listing the newest `COMMITS_MAX` of `commits` (None without any), with markdown links."""
+    if not commits:
+        return None
+    lines = [header]
+    for commit in commits[:COMMITS_MAX]:
+        ref = f"[{commit.sha[:7]}]({base}{commit.sha})" if base else f"`{commit.sha[:7]}`"
+        lines.append(f"* {ref} {commit.date} {sanitize_subject(commit.subject)}: {_changes_text(commit.changes)}")
     if len(commits) > COMMITS_MAX:
-        lines.append(f"* ... and {len(commits) - COMMITS_MAX} more commits")
-    return "\n".join(lines)
+        lines.append(f"* ... and {len(commits) - COMMITS_MAX} more older commits not shown (limit {COMMITS_MAX})")
+    return "\n".join([*lines, *(f"* {n}" for n in notes)])
+
+
+def _cap_note(what: str, total: int) -> list[str]:
+    return [f"Only the first {FILES_MAX} of {total} involved {what} were checked."] if total > FILES_MAX else []
 
 
 def _job_start(job: JsonDict) -> dt.datetime:
@@ -196,9 +293,33 @@ def _skip_reason(oqa: OpenQA, job_id: str, job: JsonDict) -> str | None:
         comments = oqa.json(f"/api/v1/jobs/{job_id}/comments")
     except AnalyzerError:
         return None
-    if any(c.get("text", "").startswith(COMMENT_MARKER) for c in comments):
+    if any(c.get("text", "").startswith((CODE_MARKER, NEEDLE_MARKER)) for c in comments):
         return f"job {job_id} already has the comment"
     return None
+
+
+def code_section(repo: Path, modules: list[JsonDict], job: JsonDict, vars_json: JsonDict) -> str | None:
+    """Return the section on recent changes to the test code files involved in the failed modules."""
+    settings = job.get("settings") or {}
+    found = involved_files(repo, modules)
+    if not found or not (rev := tested_rev(repo, vars_json, "TEST", settings)):
+        return None
+    commits = recent_commits(repo, rev, _job_start(job), found[:FILES_MAX])
+    return format_section(CODE_HEADER, commit_url_base(repo), commits, _cap_note("files", len(found)))
+
+
+def needle_section(repo: Path, modules: list[JsonDict], job: JsonDict, vars_json: JsonDict) -> str | None:
+    """Return the section on recent changes to the needles of the failed screen checks."""
+    settings = job.get("settings") or {}
+    files, tags = involved_needles(repo, modules)
+    if not (files or tags) or not (rev := tested_rev(repo, vars_json, "NEEDLES", settings)):
+        return None
+    started = _job_start(job)
+    commits = merge_commits(
+        recent_commits(repo, rev, started, files[:FILES_MAX]), tagged_commits(repo, rev, started, tags[:FILES_MAX])
+    )
+    notes = _cap_note("needle files", len(files)) + _cap_note("tags", len(tags))
+    return format_section(NEEDLE_HEADER, commit_url_base(repo), commits, notes)
 
 
 def build_comment(oqa: OpenQA, job_id: str) -> str | None:
@@ -207,15 +328,18 @@ def build_comment(oqa: OpenQA, job_id: str) -> str | None:
     if reason := _skip_reason(oqa, job_id, job):
         log.info("Skipping: %s", reason)
         return None
-    if not (repo := tests_dir(job.get("settings") or {})):
-        log.info("Skipping: job %s did not use a local test code checkout", job_id)
+    tests = tests_dir(job.get("settings") or {})
+    needles = needles_dir(job.get("settings") or {}, tests)
+    if not tests and not needles:
+        log.info("Skipping: job %s did not use a local test code or needles checkout", job_id)
         return None
     modules = extract_failed_modules(oqa.json(f"/tests/{job_id}/details_ajax"))[:MODULES_MAX]
-    if not (files := involved_files(repo, modules)):
-        return None
-    rev = tested_rev(repo, _vars(oqa, job_id))
-    commits = recent_commits(repo, rev, _job_start(job), files)
-    return format_comment(commit_url_base(repo), commits) if commits else None
+    vars_json = _vars(oqa, job_id)
+    sections = [
+        code_section(tests, modules, job, vars_json) if tests else None,
+        needle_section(needles, modules, job, vars_json) if needles else None,
+    ]
+    return "\n\n".join(s for s in sections if s) or None
 
 
 @app.command()
@@ -225,7 +349,7 @@ def main(
     verbose: Annotated[bool, typer.Option("--verbose", "-v", help="Log why nothing was posted")] = False,  # ruff: ignore[boolean-default-value-positional-argument]
     timeout: Annotated[float, typer.Option("--timeout", envvar="OPENQA_HTTP_TIMEOUT_S", help="HTTP timeout")] = 90.0,
 ) -> None:
-    """Comment on a failed job if test code files involved in the failure changed in the last days."""
+    """Comment on a failed job if test code files or needles involved in the failure changed in the last days."""
     logging.basicConfig(level=logging.INFO if verbose else logging.WARNING, format="%(levelname)s: %(message)s")
     base_url, job_id = parse_job_url(job_url)
     if not job_id.isdigit():
@@ -235,7 +359,7 @@ def main(
         with httpx.Client(headers={"User-Agent": USER_AGENT}, timeout=timeout) as client:
             comment = build_comment(OpenQA(client, base_url), job_id)
     except (AnalyzerError, subprocess.CalledProcessError, OSError, KeyError, ValueError):
-        log.exception("Could not check recent test code changes of job %s", job_id)
+        log.exception("Could not check recent test code and needle changes of job %s", job_id)
         sys.exit(1)
     if not comment:
         return
