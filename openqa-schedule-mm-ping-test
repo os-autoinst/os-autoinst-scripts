@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import random
 import re
 import subprocess
 import tempfile
@@ -45,14 +46,43 @@ job_templates:
     settings:
       <<: *common
       HOSTNAME: server
+      WORKER_CLASS: {worker_class},{server_host}
   ping_client:
     product: mm-ping-test
     machine: {machine}
     settings:
       <<: *common
       HOSTNAME: client
+      WORKER_CLASS: {worker_class},{client_host}
       PARALLEL_WITH: ping_server
 """
+
+ONLINE_STATES = {"idle", "running"}
+
+
+def pick_hosts(client: OpenQA_Client, worker_class: str) -> tuple[str, str]:
+    """Pick a random online host as server and its neighbour as client.
+
+    Over repeated runs every host providing worker_class gets tested.
+    """
+    try:
+        workers = client.openqa_request("GET", "workers").get("workers", [])
+    except OpenQAClientError as exc:
+        typer.echo(f"Error finding online workers: {exc}", err=True)
+        raise typer.Exit(1) from exc
+    required = set(worker_class.split(","))
+    hosts = sorted({
+        worker["host"]
+        for worker in workers
+        if worker.get("status") in ONLINE_STATES
+        and required <= set(worker.get("properties", {}).get("WORKER_CLASS", "").split(","))
+    })
+    if not hosts:
+        typer.echo(f"No online hosts found providing '{worker_class}'", err=True)
+        raise typer.Exit(1)
+    index = random.randrange(len(hosts))  # ruff: ignore[suspicious-non-cryptographic-random-usage]
+    return hosts[index], hosts[(index + 1) % len(hosts)]
+
 
 app = typer.Typer(add_completion=False, context_settings={"help_option_names": ["-h", "--help"]})
 
@@ -121,6 +151,8 @@ def main(  # ruff: ignore[too-many-arguments]
         typer.echo("Could not find a passed job with HDD_1", err=True)
         raise typer.Exit(1)
 
+    worker_class = worker_class or f"qemu_{arch},tap"
+    server_host, client_host = pick_hosts(OpenQA_Client(server=host), worker_class)
     build = dt.datetime.now().astimezone().isoformat(timespec="minutes")
     settings = {
         "DISTRI": distri,
@@ -147,7 +179,9 @@ def main(  # ruff: ignore[too-many-arguments]
         arch=arch,
         version=version,
         machine=machine,
-        worker_class=worker_class or f"qemu_{arch},tap",
+        worker_class=worker_class,
+        server_host=server_host,
+        client_host=client_host,
     )
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".yaml") as scenario_file:
         scenario_file.write(scenario_yaml)

@@ -46,6 +46,11 @@ APP_ENV_VARS = (
     "worker_class",
 )
 PASSED_JOB = {"result": "passed", "settings": {"BUILD": "20250101", "HDD_1": "tw.qcow2"}}
+TAP_CLASSES = "qemu_x86_64,tap"
+
+
+def worker(host: str, status: str = "idle", classes: str = TAP_CLASSES) -> dict[str, Any]:
+    return {"host": host, "status": status, "properties": {"WORKER_CLASS": f"{classes},{host}"}}
 
 
 @pytest.fixture(autouse=True)
@@ -57,6 +62,12 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture(autouse=True)
 def openqa_client(mocker: MockerFixture) -> Any:
     client_cls = mocker.patch("openqa_schedule_mm_ping_test.OpenQA_Client")
+    client_cls.workers = [worker("w1")]
+
+    def respond(_method: str, route: str, **_kwargs: Any) -> Any:
+        return {"workers": client_cls.workers} if route == "workers" else mocker.DEFAULT
+
+    client_cls.return_value.openqa_request.side_effect = respond
     client_cls.return_value.openqa_request.return_value = {"jobs": [PASSED_JOB]}
     return client_cls
 
@@ -76,7 +87,8 @@ def scheduled(mocker: MockerFixture) -> dict[str, Any]:
     return captured
 
 
-def test_scenario_yaml_is_rendered_from_options(scheduled: dict[str, Any]) -> None:
+def test_scenario_yaml_is_rendered_from_options(openqa_client: Any, scheduled: dict[str, Any]) -> None:
+    openqa_client.workers = [worker("w1", classes="qemu_aarch64,tap")]
     result = runner.invoke(mm_ping.app, ["--arch", "aarch64", "--machine", "M"])
     assert result.exit_code == 0
     data = yaml.safe_load(scheduled["yaml"])
@@ -87,7 +99,8 @@ def test_scenario_yaml_is_rendered_from_options(scheduled: dict[str, Any]) -> No
     assert data["job_templates"]["ping_client"]["settings"]["PARALLEL_WITH"] == "ping_server"
 
 
-def test_worker_class_can_be_overridden(scheduled: dict[str, Any]) -> None:
+def test_worker_class_can_be_overridden(openqa_client: Any, scheduled: dict[str, Any]) -> None:
+    openqa_client.workers = [worker("w1", classes="qemu_x86_64,tap,foo")]
     result = runner.invoke(mm_ping.app, ["--worker-class", "qemu_x86_64,tap,foo"])
     assert result.exit_code == 0
     data = yaml.safe_load(scheduled["yaml"])
@@ -195,6 +208,7 @@ def test_selects_latest_matching_passed_hdd(
 
 
 def test_queries_jobs_with_expected_params(openqa_client: Any) -> None:
+    openqa_client.workers = [worker("w1", classes="qemu_A,tap")]
     result = runner.invoke(
         mm_ping.app,
         [
@@ -213,8 +227,8 @@ def test_queries_jobs_with_expected_params(openqa_client: Any) -> None:
         ],
     )
     assert result.exit_code == 0
-    openqa_client.assert_called_once_with(server="https://custom.openqa")
-    openqa_client.return_value.openqa_request.assert_called_once_with(
+    openqa_client.assert_called_with(server="https://custom.openqa")
+    openqa_client.return_value.openqa_request.assert_any_call(
         "GET",
         "jobs",
         params={
@@ -249,6 +263,54 @@ def test_fails_on_openqa_client_error(openqa_client: Any, scheduled: dict[str, A
     result = runner.invoke(mm_ping.app, [])
     assert result.exit_code == 1
     assert "Error finding latest HDD" in result.output
+    assert "cmd" not in scheduled
+
+
+def test_pins_jobs_to_a_random_host_and_its_neighbour(
+    mocker: MockerFixture, openqa_client: Any, scheduled: dict[str, Any]
+) -> None:
+    openqa_client.workers = [worker("w1"), worker("w1", status="running"), worker("w2"), worker("w3")]
+    randrange = mocker.patch("random.randrange", return_value=2)
+    result = runner.invoke(mm_ping.app, [])
+    assert result.exit_code == 0
+    randrange.assert_called_once_with(3)
+    templates = yaml.safe_load(scheduled["yaml"])["job_templates"]
+    assert templates["ping_server"]["settings"]["WORKER_CLASS"] == f"{TAP_CLASSES},w3"
+    assert templates["ping_client"]["settings"]["WORKER_CLASS"] == f"{TAP_CLASSES},w1"
+
+
+def test_only_online_hosts_providing_the_worker_class_are_picked(mocker: MockerFixture, openqa_client: Any) -> None:
+    openqa_client.workers = [
+        worker("w1"),
+        worker("w2", status="dead"),
+        worker("w3", status="broken"),
+        worker("w4", classes="qemu_x86_64"),
+        worker("w5", status="running"),
+    ]
+    mocker.patch("random.randrange", return_value=0)
+    assert mm_ping.pick_hosts(openqa_client.return_value, TAP_CLASSES) == ("w1", "w5")
+
+
+def test_fails_without_online_hosts(openqa_client: Any, scheduled: dict[str, Any]) -> None:
+    openqa_client.workers = [worker("w1", status="dead")]
+    result = runner.invoke(mm_ping.app, [])
+    assert result.exit_code == 1
+    assert "No online hosts found providing 'qemu_x86_64,tap'" in result.output
+    assert "cmd" not in scheduled
+
+
+def test_fails_on_workers_query_error(openqa_client: Any, scheduled: dict[str, Any]) -> None:
+    error = RequestError("GET", "https://openqa.test/api/v1/workers", 500, "boom")
+
+    def respond(_method: str, route: str, **_kwargs: Any) -> Any:
+        if route == "workers":
+            raise error
+        return {"jobs": [PASSED_JOB]}
+
+    openqa_client.return_value.openqa_request.side_effect = respond
+    result = runner.invoke(mm_ping.app, [])
+    assert result.exit_code == 1
+    assert "Error finding online workers" in result.output
     assert "cmd" not in scheduled
 
 
