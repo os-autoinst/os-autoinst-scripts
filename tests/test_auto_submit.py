@@ -136,6 +136,7 @@ def test_prepare_local_clone_fetches_before_switch(mocker: MockerFixture) -> Non
     """Fetch parent before creating the branch so a fork lacking it still works."""
     mock_run = mocker.patch("auto_submit.subprocess.run")
     mocker.patch("auto_submit.pathlib.Path.iterdir", return_value=[])
+    mocker.patch("auto_submit.diff_has_single_added_block", return_value=(True, ""))
     submitter = auto_submit.AutoSubmitter(dst_project="dst", git_cmd_str="git", dir=pathlib.Path(), dry_run=False)
     submitter._prepare_local_clone("openQA", "leap-16.0")
     git_calls = [call.args[0] for call in mock_run.call_args_list]
@@ -160,6 +161,7 @@ def test_prepare_local_clone_calls_fetch_lfs(mocker: MockerFixture) -> None:
     mock_run = mocker.patch("auto_submit.subprocess.run")
     mock_fetch_lfs = mocker.patch("auto_submit.AutoSubmitter._fetch_lfs_objects")
     mock_copy = mocker.patch("auto_submit.AutoSubmitter._copy_files_to_clone")
+    mocker.patch("auto_submit.diff_has_single_added_block", return_value=(True, ""))
     submitter = auto_submit.AutoSubmitter(dst_project="dst", git_cmd_str="git", dir=pathlib.Path(), dry_run=False)
     submitter._prepare_local_clone("openQA", "leap-16.0")
 
@@ -361,8 +363,7 @@ def test_make_obs_submit_request_success(mocker: MockerFixture) -> None:
         osc_cmd_str="osc",
         dry_run=False,
     )
-    res = submitter.make_obs_submit_request("pkg", "Factory", "3.14")
-    assert res is True
+    submitter.make_obs_submit_request("pkg", "Factory", "3.14")
     mock_run.assert_called_once_with(
         ["osc", "sr", "-s", "23", "-m", "Update to 3.14", "dst", "pkg", "Factory"],
         dry_run=False,
@@ -378,8 +379,7 @@ def test_make_obs_submit_request_new(mocker: MockerFixture) -> None:
         osc_cmd_str="osc",
         dry_run=False,
     )
-    res = submitter.make_obs_submit_request("pkg", "Factory", "3.14")
-    assert res is True
+    submitter.make_obs_submit_request("pkg", "Factory", "3.14")
     mock_run.assert_called_once_with(
         ["osc", "sr", "-m", "Update to 3.14", "dst", "pkg", "Factory"],
         dry_run=False,
@@ -389,14 +389,14 @@ def test_make_obs_submit_request_new(mocker: MockerFixture) -> None:
 
 def test_make_obs_submit_request_failure(mocker: MockerFixture) -> None:
     mocker.patch("auto_submit.get_obs_sr_id", return_value="")
-    mock_run = mocker.patch("auto_submit.run_osc_cmd", side_effect=subprocess.CalledProcessError(1, "sr"))
+    mocker.patch("auto_submit.run_osc_cmd", side_effect=subprocess.CalledProcessError(1, "sr"))
     submitter = auto_submit.AutoSubmitter(
         dst_project="dst",
         osc_cmd_str="osc",
         dry_run=False,
     )
-    res = submitter.make_obs_submit_request("pkg", "Factory", "3.14")
-    assert res is False
+    with pytest.raises(auto_submit.SubmitError, match="Unable to call osc:"):
+        submitter.make_obs_submit_request("pkg", "Factory", "3.14")
 
 
 def test_last_revision(mocker: MockerFixture, caplog: pytest.LogCaptureFixture) -> None:
@@ -546,6 +546,7 @@ def test_update_package_no_changes(
     mocker.patch("auto_submit.AutoSubmitter._cleanup_and_rename_files", return_value="23")
     mocker.patch("auto_submit.AutoSubmitter._find_version", return_value="23")
     mocker.patch("auto_submit.AutoSubmitter._osc_addremove_and_filter_specs", return_value="23")
+    mocker.patch("auto_submit.diff_has_single_added_block", return_value=(True, ""))
     mocker.patch("auto_submit.AutoSubmitter._commit_local_changes", return_value=auto_submit.CommitResult.NO_CHANGES)
     mocker.patch("auto_submit._run_cmd", return_value=True)
 
@@ -580,6 +581,7 @@ def test_update_package_failure(
     mocker.patch("auto_submit.AutoSubmitter._cleanup_and_rename_files", return_value="23")
     mocker.patch("auto_submit.AutoSubmitter._find_version", return_value="23")
     mocker.patch("auto_submit.AutoSubmitter._osc_addremove_and_filter_specs", return_value="23")
+    mocker.patch("auto_submit.diff_has_single_added_block", return_value=(True, ""))
     mocker.patch("auto_submit.AutoSubmitter._commit_local_changes", return_value=auto_submit.CommitResult.FAILURE)
     mocker.patch("auto_submit._run_cmd", return_value=True)
 
@@ -614,6 +616,7 @@ def test_update_package(
     mocker.patch("auto_submit.AutoSubmitter._cleanup_and_rename_files", return_value="23")
     mocker.patch("auto_submit.AutoSubmitter._find_version", return_value="23")
     mocker.patch("auto_submit.AutoSubmitter._osc_addremove_and_filter_specs", return_value="23")
+    mocker.patch("auto_submit.diff_has_single_added_block", return_value=(True, ""))
     mocker.patch("auto_submit.AutoSubmitter._commit_local_changes", return_value=auto_submit.CommitResult.SUCCESS)
     mocker.patch("auto_submit.AutoSubmitter._commit_and_push", return_value=True)
     mocker.patch("auto_submit.AutoSubmitter._create_pull_request", return_value=True)
@@ -701,3 +704,356 @@ BuildRequires:  fdupes
     assert (
         caplog.records[0].getMessage() == "openQA.spec does not contain node_modules specific sources; no changes made."
     )
+
+
+def test_diff_text_has_single_added_block() -> None:
+    """Verify that diff_text_has_single_added_block correctly accepts only clean additions at the start."""
+    # Standard valid unified diff: adds a changelog block at line 1, followed by context lines
+    valid_diff = """--- pkg.changes\t2026-10-21 10:00:00.000000000 +0000
++++ pkg.changes\t2026-10-21 11:00:00.000000000 +0000
+@@ -1,3 +1,11 @@
++-------------------------------------------------------------------
++Wed Oct 21 11:00:00 UTC 2026 - developer@example.com
++
++- Update to version 2.0:
++  * New feature added
++
+ -------------------------------------------------------------------
+ Wed Oct 14 10:00:00 UTC 2026 - developer@example.com
+"""
+    assert auto_submit.diff_text_has_single_added_block(valid_diff) is True
+
+    # Valid diff for a newly created file (old file empty)
+    valid_new_file_diff = """--- /dev/null\t2026-10-21 10:00:00.000000000 +0000
++++ pkg.changes\t2026-10-21 11:00:00.000000000 +0000
+@@ -0,0 +1,5 @@
++-------------------------------------------------------------------
++Wed Oct 21 11:00:00 UTC 2026 - developer@example.com
++
++- Initial release
++"""
+    assert auto_submit.diff_text_has_single_added_block(valid_new_file_diff) is True
+
+    # Valid diff with downward alignment from real osc invocation
+    valid_osc_diff_with_separator_on_top = """Index: openQA.changes
+===================================================================
+--- openQA.changes	(revision f138f910c1c9925a98f7c916f124ccc8)
++++ openQA.changes	(working copy)
+@@ -1,4 +1,12 @@
+ -------------------------------------------------------------------
++Wed Aug 20 09:55:39 UTC 2026 - foo@bar
++
++- Update to version 3.14
++  * Change 1
++  * Change 2
++  * Change 3
++
++ -------------------------------------------------------------------
+ Wed Aug 19 09:55:39 UTC 2026 - okurz@suse.com
+
+ - Update to version 5.1787133330.4deef227:"""
+    assert auto_submit.diff_text_has_single_added_block(valid_osc_diff_with_separator_on_top) is True
+
+    # Valid diff with only a single added line at line 1
+    valid_single_line_diff = """--- pkg.changes\t2026-10-21 10:00:00.000000000 +0000
++++ pkg.changes\t2026-10-21 11:00:00.000000000 +0000
+@@ -1,3 +1,4 @@
++Single added line
+ -------------------------------------------------------------------
+ Wed Oct 14 10:00:00 UTC 2026 - developer@example.com
+"""
+    assert auto_submit.diff_text_has_single_added_block(valid_single_line_diff) is True
+
+    # Invalid: line 1 is addition (+), line 2 is immediate deletion (-)
+    diff_deletion_after_first_line = """--- pkg.changes
++++ pkg.changes
+@@ -1,3 +1,3 @@
++New entry line
+-Historical line removed
+ -------------------------------------------------------------------
+"""
+    assert auto_submit.diff_text_has_single_added_block(diff_deletion_after_first_line) is False
+
+    # Invalid: line 1 is addition (+), line 2 is context ( ), line 3 is addition (+)
+    diff_context_at_line_2 = """--- pkg.changes
++++ pkg.changes
+@@ -1,3 +1,4 @@
++New entry line 1
+ -------------------------------------------------------------------
++New entry line 2
+"""
+    assert auto_submit.diff_text_has_single_added_block(diff_context_at_line_2) is False
+
+    # Invalid: line 1 is separator context, followed immediately by deletion (-)
+    diff_separator_followed_by_deletion = """--- pkg.changes
++++ pkg.changes
+@@ -1,3 +1,3 @@
+ -------------------------------------------------------------------
+-Historical line removed
++New entry line
+"""
+    assert auto_submit.diff_text_has_single_added_block(diff_separator_followed_by_deletion) is False
+
+    # Invalid: line 1 is separator context, line 2 is addition (+), line 3 is deletion (-)
+    diff_separator_addition_then_deletion = """--- pkg.changes
++++ pkg.changes
+@@ -1,3 +1,3 @@
+ -------------------------------------------------------------------
++New entry line
+-Historical line removed
+"""
+    assert auto_submit.diff_text_has_single_added_block(diff_separator_addition_then_deletion) is False
+
+    # Invalid: addition is not at line 1 (e.g. added in the middle of the file)
+    diff_added_in_middle = """--- pkg.changes
++++ pkg.changes
+@@ -10,3 +10,6 @@
++-------------------------------------------------------------------
++Wed Oct 21 11:00:00 UTC 2026 - developer@example.com
+"""
+    assert auto_submit.diff_text_has_single_added_block(diff_added_in_middle) is False
+
+    # Invalid: hunk starts at line 1, but has context lines before the additions
+    # (meaning existing lines were kept above the new block)
+    diff_context_before_addition = """--- pkg.changes
++++ pkg.changes
+@@ -1,5 +1,7 @@
+ -------------------------------------------------------------------
+  Wed Oct 14 10:00:00 UTC 2026 - developer@example.com
++-------------------------------------------------------------------
++Wed Oct 21 11:00:00 UTC 2026 - developer@example.com
+"""
+    assert auto_submit.diff_text_has_single_added_block(diff_context_before_addition) is False
+
+    # Invalid: deleted lines (-), modifying historical entries
+    diff_with_deleted_line = """--- pkg.changes
++++ pkg.changes
+@@ -1,5 +1,8 @@
++-------------------------------------------------------------------
++Wed Oct 21 11:00:00 UTC 2026 - developer@example.com
+- Old line removed
+ -------------------------------------------------------------------
+"""
+    assert auto_submit.diff_text_has_single_added_block(diff_with_deleted_line) is False
+
+    # Invalid: deleted separator line that starts with '---' (must not be treated as a diff header)
+    diff_with_deleted_separator = """--- pkg.changes
++++ pkg.changes
+@@ -1,5 +1,8 @@
++-------------------------------------------------------------------
++Wed Oct 21 11:00:00 UTC 2026 - developer@example.com
+--------------------------------------------------------------------
+"""
+    assert auto_submit.diff_text_has_single_added_block(diff_with_deleted_separator) is False
+
+    # Invalid: multiple additions within the same hunk separated by context
+    diff_multiple_added_blocks = """--- pkg.changes
++++ pkg.changes
+@@ -1,5 +1,10 @@
++-------------------------------------------------------------------
++Wed Oct 21 11:00:00 UTC 2026 - developer@example.com
+ -------------------------------------------------------------------
+  Wed Oct 14 10:00:00 UTC 2026 - developer@example.com
++ Extra added line
+"""
+    assert auto_submit.diff_text_has_single_added_block(diff_multiple_added_blocks) is False
+
+    # Invalid: multiple hunks (changes scattered across the file)
+    diff_multiple_hunks = """--- pkg.changes
++++ pkg.changes
+@@ -1,3 +1,6 @@
++-------------------------------------------------------------------
++Wed Oct 21 11:00:00 UTC 2026 - developer@example.com
+ -------------------------------------------------------------------
+@@ -20,3 +23,5 @@
++ Extra entry
+"""
+    assert auto_submit.diff_text_has_single_added_block(diff_multiple_hunks) is False
+
+    # Invalid: empty diff or no changes
+    assert auto_submit.diff_text_has_single_added_block("") is False
+
+    # Invalid: diff headers without actual hunks
+    diff_headers_only = """diff --git a/pkg.changes b/pkg.changes
+index 1234567..89abcde 100644
+--- a/pkg.changes
++++ b/pkg.changes
+"""
+    assert auto_submit.diff_text_has_single_added_block(diff_headers_only) is False
+
+
+def test_diff_has_single_added_block_real_git(tmp_path: pathlib.Path) -> None:
+    """Test diff_has_single_added_block against a real Git repository with various diff scenarios.
+
+    Running actual Git commands verifies that git diff flags, headers, exit codes, and output
+    formats are handled cleanly without relying on mocks.
+    """
+    git_bin = shutil.which("git") or "/usr/bin/git"
+    repo = tmp_path / "test-repo"
+    repo.mkdir()
+    subprocess.run([git_bin, "init", "-b", "main", str(repo)], check=True)
+    subprocess.run([git_bin, "-C", str(repo), "config", "user.name", "Test User"], check=True)
+    subprocess.run([git_bin, "-C", str(repo), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run([git_bin, "-C", str(repo), "config", "commit.gpgsign", "false"], check=True)
+
+    baseline_changes = (
+        "-------------------------------------------------------------------\n"
+        "Wed Oct 14 10:00:00 UTC 2026 - author@example.com\n\n"
+        "- Initial release entry\n"
+    )
+    changes_file = repo / "pkg.changes"
+    changes_file.write_text(baseline_changes, encoding="utf-8")
+    subprocess.run([git_bin, "-C", str(repo), "add", "pkg.changes"], check=True)
+    subprocess.run([git_bin, "-C", str(repo), "commit", "-m", "Initial commit"], check=True)
+
+    diff_cmd = [git_bin, "-C", str(repo), "diff", "pkg.changes"]
+
+    # Clean addition at the top (valid)
+    new_entry = (
+        "-------------------------------------------------------------------\n"
+        "Wed Oct 21 10:00:00 UTC 2026 - author@example.com\n\n"
+        "- Update to version 2.0\n\n"
+    )
+    changes_file.write_text(new_entry + baseline_changes, encoding="utf-8")
+    diff_ok, output = auto_submit.diff_has_single_added_block(diff_cmd)
+    assert diff_ok is True
+    assert "+- Update to version 2.0" in output
+
+    # Modification of an existing historical line (invalid)
+    corrupted_changes = new_entry + baseline_changes.replace("Initial release entry", "Modified historical entry")
+    changes_file.write_text(corrupted_changes, encoding="utf-8")
+    diff_ok, output = auto_submit.diff_has_single_added_block(diff_cmd)
+    assert diff_ok is False
+    assert "- Initial release entry" in output
+
+    # Addition at the end instead of the top (invalid)
+    appended_changes = baseline_changes + "\n- Unexpected trailing entry\n"
+    changes_file.write_text(appended_changes, encoding="utf-8")
+    diff_ok, output = auto_submit.diff_has_single_added_block(diff_cmd)
+    assert diff_ok is False
+
+    # No changes made (invalid, as a package update requires a changelog entry)
+    changes_file.write_text(baseline_changes, encoding="utf-8")
+    diff_ok, output = auto_submit.diff_has_single_added_block(diff_cmd)
+    assert diff_ok is False
+
+    # Command failure (e.g. non-existent file or bad git argument)
+    invalid_cmd = [git_bin, "-C", str(repo), "diff", "--invalid-flag"]
+    diff_ok, output = auto_submit.diff_has_single_added_block(invalid_cmd)
+    assert diff_ok is False
+
+
+def test_prepare_local_clone_real_git(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test _prepare_local_clone in a real Git repository environment.
+
+    Verifies that _prepare_local_clone approves valid changelog diffs and aborts
+    when the changelog contains invalid diffs (e.g. modifications or insertions elsewhere).
+    """
+    git_bin = shutil.which("git") or "/usr/bin/git"
+    parent_dir = tmp_path / "parent"
+    parent_dir.mkdir()
+    subprocess.run([git_bin, "init", "-b", "leap-16.0", str(parent_dir)], check=True)
+    subprocess.run([git_bin, "-C", str(parent_dir), "config", "user.name", "Test User"], check=True)
+    subprocess.run([git_bin, "-C", str(parent_dir), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run([git_bin, "-C", str(parent_dir), "config", "commit.gpgsign", "false"], check=True)
+
+    baseline_changes = (
+        "-------------------------------------------------------------------\n"
+        "Wed Oct 14 10:00:00 UTC 2026 - author@example.com\n\n"
+        "- Baseline commit\n"
+    )
+    (parent_dir / "pkg.changes").write_text(baseline_changes, encoding="utf-8")
+    (parent_dir / "pkg.spec").write_text("Name: pkg\nVersion: 1.0\n", encoding="utf-8")
+    subprocess.run([git_bin, "-C", str(parent_dir), "add", "pkg.changes", "pkg.spec"], check=True)
+    subprocess.run([git_bin, "-C", str(parent_dir), "commit", "-m", "Initial commit on parent"], check=True)
+
+    # Local clone repo where AutoSubmitter will work
+    local_dir = tmp_path / "local"
+    subprocess.run([git_bin, "clone", str(parent_dir), str(local_dir)], check=True)
+    subprocess.run([git_bin, "-C", str(local_dir), "config", "user.name", "Test User"], check=True)
+    subprocess.run([git_bin, "-C", str(local_dir), "config", "user.email", "test@example.com"], check=True)
+    subprocess.run([git_bin, "-C", str(local_dir), "remote", "add", "parent", str(parent_dir)], check=True)
+
+    # Staged source files directory (simulating self.dir / self.dst_project / package)
+    staging_dir = tmp_path / "staging" / "dst" / "pkg"
+    staging_dir.mkdir(parents=True)
+    (staging_dir / "pkg.spec").write_text("Name: pkg\nVersion: 2.0\n", encoding="utf-8")
+
+    submitter = auto_submit.AutoSubmitter(
+        dir=tmp_path / "staging",
+        dst_project="dst",
+        git_cmd_str=git_bin,
+        dry_run=False,
+    )
+
+    # Valid changelog prepended at top -> _prepare_local_clone succeeds
+    valid_new_entry = (
+        "-------------------------------------------------------------------\n"
+        "Wed Oct 21 10:00:00 UTC 2026 - author@example.com\n\n"
+        "- Update to version 2.0\n\n"
+    )
+    (staging_dir / "pkg.changes").write_text(valid_new_entry + baseline_changes, encoding="utf-8")
+
+    monkeypatch.chdir(local_dir)
+    submitter._prepare_local_clone("pkg", "leap-16.0")
+
+    # Bad changelog with rewritten history -> _prepare_local_clone fails and raises SubmitError
+    bad_changes = valid_new_entry + "- Completely overwritten history without baseline\n"
+    (staging_dir / "pkg.changes").write_text(bad_changes, encoding="utf-8")
+    with pytest.raises(auto_submit.SubmitError, match=r"git diff for pkg\.changes does not look ok"):
+        submitter._prepare_local_clone("pkg", "leap-16.0")
+
+
+def test_update_package_diff_not_ok(
+    caplog: pytest.LogCaptureFixture,
+    mocker: MockerFixture,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify update_package aborts before _commit_local_changes when osc diff validation fails."""
+    mocker.patch("auto_submit.AutoSubmitter._disable_service_buildtime", return_value="23")
+    mocker.patch("auto_submit.AutoSubmitter._cleanup_and_rename_files", return_value="23")
+    mocker.patch("auto_submit.AutoSubmitter._find_version", return_value="23")
+    mocker.patch("auto_submit.AutoSubmitter._osc_addremove_and_filter_specs", return_value="23")
+    mock_commit = mocker.patch("auto_submit.AutoSubmitter._commit_local_changes")
+    mocker.patch(
+        "auto_submit.diff_has_single_added_block",
+        return_value=(False, "--- pkg.changes\n- Old line removed"),
+    )
+
+    (tmp_path / "dst" / "pkg").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "dst" / "pkg" / "pkg.changes").write_text("test", encoding="utf-8")
+    monkeypatch.chdir(tmp_path / "dst" / "pkg")
+
+    submitter = auto_submit.AutoSubmitter(
+        dst_project="dst",
+        osc_cmd_str="osc",
+        dry_run=False,
+    )
+    caplog.set_level(logging.INFO)
+    res = submitter.update_package("pkg")
+
+    # update_package must return False, log the warning with diff output, and never commit
+    assert res is False
+    assert mock_commit.call_count == 0
+    assert "osc diff for pkg.changes does not look ok:" in caplog.records[1].getMessage()
+    assert "- Old line removed" in caplog.records[1].getMessage()
+
+
+def test_make_git_submit_request_diff_not_ok(mocker: MockerFixture) -> None:
+    """Verify make_git_submit_request aborts if _prepare_local_clone fails due to bad diff."""
+    mocker.patch("auto_submit.AutoSubmitter._fork_and_clone_repo", return_value="pool/pkg")
+    mock_prepare = mocker.patch(
+        "auto_submit.AutoSubmitter._prepare_local_clone",
+        side_effect=auto_submit.SubmitError("git diff for pkg.changes does not look ok"),
+    )
+    mock_commit_and_push = mocker.patch("auto_submit.AutoSubmitter._commit_and_push")
+    mock_create_pr = mocker.patch("auto_submit.AutoSubmitter._create_pull_request")
+
+    submitter = auto_submit.AutoSubmitter(dry_run=True)
+    with pytest.raises(auto_submit.SubmitError, match=r"git diff for pkg\.changes does not look ok"):
+        submitter.make_git_submit_request("pkg", "1.0", "leap-16.0")
+
+    mock_prepare.assert_called_once_with("pkg", "leap-16.0")
+    assert mock_commit_and_push.call_count == 0
+    assert mock_create_pr.call_count == 0
