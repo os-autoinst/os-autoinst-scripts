@@ -267,6 +267,66 @@ def empty_git_dir(path: pathlib.Path) -> None:
             item.unlink()
 
 
+def diff_text_has_single_added_block(diff_text: str) -> bool:
+    """Return True if the diff contains exactly one contiguous block of added lines at the beginning.
+
+    We enforce this check to prevent corrupted or rewritten changelogs from being submitted.
+    A valid changelog update must only prepend a single new block of entries at line 1,
+    must not modify or remove any existing entries, and must not introduce changes anywhere else.
+    """
+    lines = diff_text.splitlines()
+    hunk_index = next((i for i, line in enumerate(lines) if line.startswith("@@")), None)
+    if hunk_index is None:
+        return False
+
+    # The hunk must start at line 1 (or 0,0 for an empty old file) and line 1 of the new file,
+    # ensuring additions occur strictly at the very beginning of the changelog.
+    if not re.match(r"^@@ -(?:1|0,0)(?:,\d+)? \+1(?:,\d+)? @@", lines[hunk_index]):
+        return False
+
+    hunk_lines = lines[hunk_index + 1 :]
+    if not hunk_lines:
+        return False
+
+    # The new entry is usually added starting at line 1 (+...). However, because both the old
+    # and new changelogs begin with a separator line (-----------------------------------),
+    # some diff implementations match line 1 as an unchanged context line and place the
+    # added block starting at line 2. If line 1 is an unchanged separator context line,
+    # we strip it so that the remaining lines must strictly start with the added block.
+    if not hunk_lines[0].startswith(("-", "+", "@@")) and re.match(r"^-{20,}$", hunk_lines[0].strip()):
+        hunk_lines = hunk_lines[1:]
+
+    # The very first line of the addition block must start with '+'
+    if not hunk_lines or not hunk_lines[0].startswith("+"):
+        return False
+
+    # Skip the contiguous block of added lines
+    context_index = next((i for i, line in enumerate(hunk_lines) if not line.startswith("+")), len(hunk_lines))
+
+    # Remaining lines (if any) are context lines and must not contain any additions, deletions, or new hunks
+    return not any(line.startswith(("+", "-", "@@")) for line in hunk_lines[context_index:])
+
+
+def diff_has_single_added_block(diff_cmd: list[str]) -> tuple[bool, str]:
+    """Execute a diff command and return (True, diff_output) if it adds a single block at the start.
+
+    Captures both stdout and stderr so any diff discrepancies or command errors
+    can be logged directly by the caller.
+    """
+    res = _run_cmd(diff_cmd, capture_output=True, text=True, check=False)
+    stdout = getattr(res, "stdout", "") or ""
+    stderr = getattr(res, "stderr", "") or ""
+    output = stdout + (("\n" + stderr) if stderr else "")
+
+    # Exit code 0 is standard for git/osc diff. Exit code 1 is also accepted for tools like diff -u
+    # which exit with 1 when differences are found. Any higher exit code indicates an execution error.
+    returncode = getattr(res, "returncode", 0)
+    if returncode not in {0, 1}:
+        return (False, output)
+
+    return (diff_text_has_single_added_block(stdout), output)
+
+
 @dataclass
 class AutoSubmitter:
     """Automate the preparation and submission of packages."""
@@ -407,24 +467,34 @@ class AutoSubmitter:
                 return ""
         return forked_repo
 
-    def _prepare_local_clone(self, package: str, branch: str) -> None:
+    def _prepare_local_clone(self, package: str, branch: str) -> bool:
         """Prepare local clone with files from original directory."""
         git_cmd = shlex.split(self.git_cmd_str)
         # "parent" remote is added by git-obs; fetch before switch because the
         # fork may lack the branch (switch-first fails "invalid reference").
         fetch_cmd = [*git_cmd, "fetch", "parent"]
         switch_cmd = [*git_cmd, "switch", "-C", branch, f"parent/{branch}"]
+        diff_cmd = [*git_cmd, "diff", f"{package}.changes"]
 
         if self.dry_run:
             log.info("[dry-run] Would execute: %s", " ".join(fetch_cmd))
             log.info("[dry-run] Would execute: %s", " ".join(switch_cmd))
             self._fetch_lfs_objects(branch)
             log.info("[dry-run] Would replace files in clone with files from ../../%s/*", package)
+            log.info("[dry-run] Would execute: %s", " ".join(diff_cmd))
         else:
             _run_cmd(fetch_cmd, check=True)
             _run_cmd(switch_cmd, check=True)
             self._fetch_lfs_objects(branch)
             self._copy_files_to_clone(package)
+
+            # Ensure the changelog diff against parent branch only has one new block at the beginning.
+            diff_ok, output = diff_has_single_added_block(diff_cmd)
+            if not diff_ok:
+                log.warning("git diff for %s.changes does not look ok:\n%s", package, output)
+                return False
+
+        return True
 
     def _fetch_lfs_objects(self, branch: str) -> None:
         """Fetch necessary Git LFS objects from parent before pushing."""
@@ -566,7 +636,8 @@ class AutoSubmitter:
         if not self.dry_run:
             os.chdir(package)
 
-        self._prepare_local_clone(package, branch)
+        if not self._prepare_local_clone(package, branch):
+            return False
         self._commit_and_push(title, branch)
         return self._create_pull_request(title, description, branch)
 
@@ -751,36 +822,14 @@ class AutoSubmitter:
         except Exception as e:  # ruff: ignore[blind-except]
             log.warning("Failed to write updated _service file: %s", e)
 
-    def update_package(
-        self,
-        package: str,
-    ) -> bool:
-        """Update package, trigger builds, and submit to targets."""
-        log.info("update_package %s", package)
-
-        self._disable_service_buildtime()
-        self._cleanup_and_rename_files()
-        version = self._find_version()
-        self._osc_addremove_and_filter_specs()
-
-        commit_res = self._commit_local_changes(package, version)
-        if commit_res == CommitResult.FAILURE:
-            return False
-        if commit_res == CommitResult.NO_CHANGES:
-            return True
-
-        # Log changes file before submitting
-        changes_file = pathlib.Path(f"{package}.changes")
-        content = changes_file.read_text(encoding="utf-8", errors="ignore")
-        _log_head(changes_file, content, 50)
-
+    def _create_submit_requests(self, package: str, version: str) -> bool:
+        """Create OBS/Git submit requests for all targets."""
         success = True
         for target in self.targets:
             if target == "none" or not target:
                 continue
             if self.has_pending_submission(package, target):
                 continue
-
             log.info("## Ready to submit %s to %s ##", package, target)
             git_branch = git_branches.get(target)
             if git_branch:
@@ -803,12 +852,47 @@ class AutoSubmitter:
                     target=target,
                     version=version,
                 )
-
             if not res_submit:
                 success = False
                 self.failed_packages.append(package)
-
         return success
+
+    def update_package(
+        self,
+        package: str,
+    ) -> bool:
+        """Update package, trigger builds, and submit to targets."""
+        log.info("update_package %s", package)
+
+        self._disable_service_buildtime()
+        self._cleanup_and_rename_files()
+        version = self._find_version()
+        self._osc_addremove_and_filter_specs()
+
+        # Verify that the changelog contains only one new block at the beginning before committing.
+        # This prevents corrupted or overwritten changelog history from being pushed to OBS.
+        # Note: Must run AFTER _cleanup_and_rename_files() so {package}.changes exists in dst_dir!
+        diff_cmd = [*shlex.split(self.osc_cmd_str), "diff", f"{package}.changes"]
+        if self.dry_run:
+            log.info("[dry-run] Would execute: %s", " ".join(diff_cmd))
+        else:
+            diff_ok, output = diff_has_single_added_block(diff_cmd)
+            if not diff_ok:
+                log.warning("osc diff for %s.changes does not look ok:\n%s", package, output)
+                return False
+
+        commit_res = self._commit_local_changes(package, version)
+        if commit_res == CommitResult.FAILURE:
+            return False
+        if commit_res == CommitResult.NO_CHANGES:
+            return True
+
+        # Log changes file before submitting
+        changes_file = pathlib.Path(f"{package}.changes")
+        content = changes_file.read_text(encoding="utf-8", errors="ignore")
+        _log_head(changes_file, content, 50)
+
+        return self._create_submit_requests(package, version)
 
     def _is_package_up_to_date(self, package: str) -> bool:
         """Check if package is already up to date on target."""
@@ -1043,6 +1127,8 @@ def _run_submissions(  # ruff: ignore[complex-structure, too-many-branches, too-
             os.chdir(tmpdir_path)
             success = submitter.handle_auto_submit(package=package)
             if not success:
+                if package not in submitter.failed_packages:
+                    submitter.failed_packages.append(package)
                 rc = 1
 
             if must_cleanup_staging:
