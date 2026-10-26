@@ -224,6 +224,7 @@ def test_investigate_cmd(mocker: MockerFixture) -> None:
     assert comment.index("* isosize:") < comment.index("`isosize` module died") < comment.index("Classification:")
     assert "BISECT: YES" in comment
     assert comment.endswith(f"\n\n{llm_investigate.COMMENT_FOOTER}")
+    assert comment.endswith(" flag:verbatim")
     assert client.post.call_count == 3
     ajax_calls = [call for call in client.get.call_args_list if "investigation_ajax" in call[0][0]]
     assert len(ajax_calls) == 1
