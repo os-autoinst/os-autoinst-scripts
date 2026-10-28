@@ -122,7 +122,7 @@ class TransientHTTPError(Exception):
 
 
 class RetryTransport(httpx.HTTPTransport):
-    """Custom HTTP transport that retries on transient errors (e.g. 429, 5xx) and timeouts."""
+    """Custom HTTP transport that retries on transient errors (e.g. 429, 5xx), timeouts, and remote protocol errors."""
 
     RETRY_STATUS_CODES = frozenset({408, 429, 500, 502, 503, 504})
 
@@ -182,12 +182,23 @@ class RetryTransport(httpx.HTTPTransport):
                 delay,
                 retries_left,
             )
+        elif isinstance(exc, httpx.RemoteProtocolError):
+            log.info(
+                "Server disconnected (%s). Retrying in %.2f seconds (%d retries left)...",
+                exc,
+                delay,
+                retries_left,
+            )
 
     def handle_request(self, request: httpx.Request) -> httpx.Response:
-        """Handle the HTTP request, retrying on transient status codes and timeouts if retries are available."""
+        """Handle request, retrying on transient status codes, timeouts, and disconnects if retries are available."""
         try:
             for attempt in tenacity.Retrying(
-                retry=tenacity.retry_if_exception_type((TransientHTTPError, httpx.TimeoutException)),
+                retry=tenacity.retry_if_exception_type((
+                    TransientHTTPError,
+                    httpx.TimeoutException,
+                    httpx.RemoteProtocolError,
+                )),
                 stop=tenacity.stop_after_attempt(self.retries + 1),
                 wait=self._wait_strategy,
                 before_sleep=self._before_sleep,
@@ -755,7 +766,7 @@ def investigate(  # ruff: ignore[too-many-arguments, too-many-positional-argumen
         typer.Option(
             "--retries",
             envvar="LLM_RETRIES",
-            help="Number of retries on retry-worthy HTTP responses and timeouts",
+            help="Number of retries on retry-worthy HTTP responses, timeouts, and disconnects",
         ),
     ] = 7,
     llm_url: Annotated[

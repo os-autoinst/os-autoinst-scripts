@@ -594,6 +594,64 @@ def test_retry_transport_timeout_exhausted(mocker: MockerFixture) -> None:
     ])
 
 
+def test_retry_transport_retry_on_remote_protocol_error(mocker: MockerFixture) -> None:
+    mock_sleep = mocker.patch("time.sleep")
+    mock_log = mocker.patch("llm_investigate.log")
+    mock_super_handle = mocker.patch("llm_investigate.httpx.HTTPTransport.handle_request")
+
+    resp200 = MagicMock(spec=httpx.Response)
+    resp200.status_code = 200
+
+    exc = httpx.RemoteProtocolError("Server disconnected without sending a response.")
+    mock_super_handle.side_effect = [exc, resp200]
+
+    transport = llm_investigate.RetryTransport(retries=2)
+    req = httpx.Request("POST", "http://example.com")
+    res = transport.handle_request(req)
+
+    assert res == resp200
+    assert mock_super_handle.call_count == 2
+    mock_sleep.assert_called_once_with(1.0)
+    mock_log.info.assert_called_once_with(
+        "Server disconnected (%s). Retrying in %.2f seconds (%d retries left)...",
+        exc,
+        1.0,
+        1,
+    )
+
+
+def test_retry_transport_remote_protocol_error_exhausted(mocker: MockerFixture) -> None:
+    mock_sleep = mocker.patch("time.sleep")
+    mock_log = mocker.patch("llm_investigate.log")
+    mock_super_handle = mocker.patch("llm_investigate.httpx.HTTPTransport.handle_request")
+    exc = httpx.RemoteProtocolError("Server disconnected without sending a response.")
+    mock_super_handle.side_effect = exc
+
+    transport = llm_investigate.RetryTransport(retries=2)
+    req = httpx.Request("POST", "http://example.com")
+
+    with pytest.raises(httpx.RemoteProtocolError):
+        transport.handle_request(req)
+
+    assert mock_super_handle.call_count == 3
+    assert mock_sleep.call_count == 2
+    assert mock_log.info.call_count == 2
+    mock_log.info.assert_has_calls([
+        mocker.call(
+            "Server disconnected (%s). Retrying in %.2f seconds (%d retries left)...",
+            exc,
+            1.0,
+            1,
+        ),
+        mocker.call(
+            "Server disconnected (%s). Retrying in %.2f seconds (%d retries left)...",
+            exc,
+            2.0,
+            0,
+        ),
+    ])
+
+
 def test_investigate_configures_retry_transport(mocker: MockerFixture) -> None:
     # Verify that calling investigate with a specific retries value configures RetryTransport
     mock_client_class = mocker.patch("llm_investigate.httpx.Client")
