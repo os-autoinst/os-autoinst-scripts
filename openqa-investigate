@@ -413,7 +413,7 @@ def sync_via_investigation_comment(
     comment_id = int(comment_id)
 
     comments = client.get_job_comments(first_cluster_job_id)
-    inv_comments = [c for c in comments if INVESTIGATION_COMMENT_RE.search(c.get("text", "") or "")]
+    inv_comments = [c for c in comments if INVESTIGATION_COMMENT_RE.match(c.get("text", "") or "")]
     if not inv_comments:
         return str(comment_id)
 
@@ -766,7 +766,7 @@ def _find_investigation_comment(comments: list[dict[str, Any]]) -> dict[str, Any
     min_id = float("inf")
     for comment in comments:
         text = comment.get("text", "")
-        if "Automatic investigation jobs" not in text or "for job" not in text:
+        if not text.startswith("Automatic investigation jobs for job"):
             continue
         if ":investigate:retry*:" not in text:
             continue
