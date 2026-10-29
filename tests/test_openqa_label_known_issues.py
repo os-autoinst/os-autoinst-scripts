@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, Mock, patch
 import httpx
 import pytest
 import typer
+from markdown_it import MarkdownIt
 from typer.testing import CliRunner
 
 if TYPE_CHECKING:
@@ -66,33 +67,21 @@ def test_is_older_than_14_days() -> None:
     assert openqa_label_known_issues.is_older_than_14_days("invalid") is False
 
 
-def test_get_markdown_html(mocker: MockerFixture) -> None:
-    # 1. Successful Markdown.pl run
-    mock_run = mocker.patch("subprocess.run")
-    mock_run.return_value = Mock(stdout="<p>html</p>\n")
-    assert openqa_label_known_issues.get_markdown_html("test") == "<p>html</p>\n"
-    mock_run.assert_called_once()
-
-    # 2. Markdown.pl missing, but markdown succeeds (fallback loop)
-    mock_run.reset_mock()
-    mock_run.side_effect = [FileNotFoundError, Mock(stdout="<p>html2</p>\n")]
-    assert openqa_label_known_issues.get_markdown_html("test") == "<p>html2</p>\n"
-    assert mock_run.call_count == 2
-
-    # 3. Markdown tools missing / error out entirely
-    mock_run.reset_mock()
-    mock_run.side_effect = FileNotFoundError
-    assert openqa_label_known_issues.get_markdown_html("test") == "test"
+def test_get_markdown_html() -> None:
+    html = MarkdownIt().render("[test link](https://example.com)\n\n* item 1\n* item 2")
+    assert '<a href="https://example.com">test link</a>' in html
+    assert "<ul>" in html
+    assert "<li>item 1</li>" in html
+    assert "<li>item 2</li>" in html
 
 
-def test_multipart_from_markdown(mocker: MockerFixture) -> None:
-    mocker.patch("openqa_label_known_issues.get_markdown_html", return_value="<p>html</p>")
+def test_multipart_from_markdown() -> None:
     res = openqa_label_known_issues.multipart_from_markdown("plain text", "to@ex.com", "from@ex.com", "Subject")
     assert "To: to@ex.com" in res
     assert "From: from@ex.com" in res
     assert "Subject: Subject" in res
-    assert "plain text" in res
-    assert "<html><body>\n<p>html</p></body></html>" in res
+    assert "plain text\n" in res
+    assert "<html><body>\n<p>plain text</p>\n</body></html>" in res
 
 
 def test_send_email(mocker: MockerFixture) -> None:

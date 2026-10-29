@@ -22,6 +22,7 @@ from typing import Annotated, Any
 import httpx
 import tenacity
 import typer
+from markdown_it import MarkdownIt
 
 DEFAULT_HTTP_TIMEOUT: float = 90.0
 
@@ -189,19 +190,8 @@ def is_older_than_14_days(timeago_str: str) -> bool:
         return False
 
 
-def get_markdown_html(plain_text: str) -> str:
-    for cmd in ["Markdown.pl", "markdown"]:
-        try:
-            res = subprocess.run([cmd], input=plain_text, capture_output=True, text=True, check=True)
-            return res.stdout
-        except (subprocess.CalledProcessError, FileNotFoundError):
-            continue
-    print("+++ (Markdown.pl|markdown) not found, please install Text::Markdown +++", file=sys.stderr)
-    return plain_text
-
-
 def multipart_from_markdown(plain: str, to_email: str, from_email: str, subject: str) -> str:
-    md = get_markdown_html(plain)
+    md = MarkdownIt().render(plain)
     msg = EmailMessage()
     msg["To"] = to_email
     msg["From"] = from_email
