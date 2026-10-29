@@ -26,8 +26,6 @@ enable_force_result=${enable_force_result:-false}
 client_call=()
 client_args=()
 curl_args=()
-markdown_cmd=$(command -v Markdown.pl) || markdown_cmd=$(command -v markdown) \
-    || warn "+++ (Markdown.pl|markdown) not found, please install Text::Markdown +++"
 openqa_cli="${openqa_cli:-""}"
 host_url="${host_url:-""}"
 tw_openqa_host="${tw_openqa_host:-"https://openqa.opensuse.org"}"
@@ -165,121 +163,6 @@ comment_on_job() {
         comment="label:force_result:$force_result:$comment"
     fi
     "${client_call[@]}" -X POST jobs/"$id"/comments text="$comment"
-}
-
-search_log() {
-    local id=$1 search_term=$2 out=$3 grep_timeout=${4:-5}
-    local rc=0 grep_output
-    local grep_opts="${grep_opts:-"-qPzo"}"
-    # shellcheck disable=SC2086
-    grep_output=$(timeout "$grep_timeout" grep $grep_opts "$search_term" "$out" 2>&1) || rc=$?
-    if [[ "$rc" == 1 ]]; then
-        return 1
-    elif [[ "$rc" == 124 ]]; then
-        warn "grep was killed, possibly timed out: cmd=>grep $grep_opts '$search_term' '$out'< output='$grep_output'"
-        return $rc
-    elif [[ "$rc" != 0 ]]; then
-        # unexpected error, e.g. "exceeded PCRE's backtracking limit"
-        warn "grep failed: cmd=>grep $grep_opts '$search_term' '$out'< output='$grep_output'"
-        return $rc
-    fi
-}
-
-label-on-issue() {
-    local id=$1 search_term=$2 label=$3 restart=${4:-''} force_result=${5:-''}
-    local out=${out:?}
-    search_log "$id" "$search_term" "$out" || return
-    comment_on_job "$id" "$label" "$force_result"
-    if [ "$restart" = "1" ]; then
-        "${client_call[@]}" -X POST jobs/"$id"/restart
-    fi
-}
-
-snip_start="    # --- 8< ---"$'\n'
-snip_end="    # --- >8 ---"
-handle_unreviewed() {
-    local testurl=$1 out=$2 reason=$3 group_id=$4 email_unreviewed=$5 from_email=$6 notification_address=${7:-} job_data=${8:-} dry_run=${9:-}
-    local group_data group_name group_description group_mailto header email excerpt=$snip_start
-    local job_name job_result info
-    to_review+=("$testurl ${reason:0:50}")
-    header="[$testurl]($testurl): Unknown test issue, to be reviewed"$'\n'"-> [autoinst-log.txt]($testurl/file/autoinst-log.txt)"$'\n'
-    excerpt="Last lines before SUT shutdown:"$'\n'$'\n'"$snip_start"
-    # Look for different termination points with likely context
-    excerpt+=$( (grep -A 12 'Backend process died, backend errors are reported below in the following lines' "$out" || grep -B 10 'sending magic and exit' "$out" || grep -B 5 'killing command server.*because test execution ended through exception' "$out" || grep -B 5 'EXIT 1' "$out" || grep -B 10 '\(Result: died\|isotovideo failed\)' "$out" || echo '(No log excerpt found)') | sed 's/^/    # /' | head -n -1 | sed 's/\x1b\[[0-9;]*m//g')
-    excerpt+=$'\n'"$snip_end"
-    echo "$header"
-    echo "$excerpt"
-
-    if "$email_unreviewed" && [[ "$group_id" != 'null' ]]; then
-        group_data=$(openqa-cli "${client_args[@]}" "job_groups/$group_id")
-        group_description=$(echo "$group_data" | runjq -r '.[0].description') || true
-        group_mailto=$(echo "$group_description" | perl -n -wE'm/.*MAILTO: (\S+).*/ and say $1' | head -1)
-        group_mailto=${group_mailto:-$notification_address}
-        # Avoid sending notifications for jobs that were restarted
-        clone_id="$(echo "$job_data" | runjq -r '.job.clone_id')"
-        if [[ -n "$group_mailto" && "$clone_id" == 'null' ]]; then
-            group_name=$(echo "$group_data" | runjq -r '.[0].name')
-            job_name=$(echo "$job_data" | runjq -r '.job.name')
-            job_result=$(echo "$job_data" | runjq -r '.job.result')
-            info="* Name: $job_name
-* Result: $job_result
-* Reason: $reason
-
-It might be a product bug, an outdated needle, test code needing adaptation or a
-test infrastructure related problem.
-Adding a [bugref](http://open.qa/docs/#_bug_references) that can be
-[carried over](http://open.qa/docs/#carry-over) will prevent these mails for
-this issue. If the carry-over is not sufficient, you may want to create a ticket with
-[auto-review-regex](https://github.com/os-autoinst/os-autoinst-scripts/blob/master/README.md#auto-review---automatically-detect-known-issues-in-openqa-jobs-label-openqa-jobs-with-ticket-references-and-optionally-retrigger)."
-            email="[$job_name]($testurl)"$'\n'"$header"$'\n'"$info"$'\n'$'\n'"$excerpt"
-            subject="Unreviewed issue (Group $group_id $group_name)"
-            email=$(multipart-from-markdown "$email" "$group_mailto" "openqa-label-known-issues <$from_email>" "$subject")
-            send-email "$group_mailto" "$email"
-        fi
-    fi
-}
-
-send-email() {
-    local mailto=$1 email=$2
-    if [[ $dry_run == 1 ]]; then
-        echo "Would send email to '$mailto':"$'\n'"$email"
-        return
-    fi
-    echo "$email" | /usr/sbin/sendmail -t "$mailto"
-}
-
-multipart-from-markdown() {
-    local plain=$1 to_email=$2 from=$3 subject=$4
-    local email md body header boundary
-    md=$(echo "$plain" | $markdown_cmd)
-    boundary="_000_DB6PR0401MB2565_"
-    header='Content-Type: multipart/alternative; boundary="'"$boundary"'"'
-    body="--$boundary"'
-Content-Type: text/plain; charset="utf-8"
-Content-Transfer-Encoding: quoted-printable
-
-'"$plain
-
---$boundary"'
-Content-Type: text/html; charset="utf-8"
-Content-Transfer-Encoding: quoted-printable
-
-<html><body>
-'"$md"'
-</body></html>
-
-'"--$boundary--"
-
-    email="To: $to_email
-From: $from
-Subject: $subject
-$header
-
-$body
-"
-
-    echo "$email"
-
 }
 
 latest_published_tw_builds() {
