@@ -33,7 +33,6 @@ main_requires:
   perl(Getopt::Long):
   perl(FindBin):
   perl(Mojo::File):
-  perl(Text::Markdown):
   perl(YAML::PP):
   python3-pynetbox:
   python3-net-snmp:
@@ -42,6 +41,7 @@ main_requires:
   python3-tenacity:
   python3-typer:
   python3-httpx:
+  python3-markdown-it-py:
   python3-openqa_client:
   retry:
   sed:
