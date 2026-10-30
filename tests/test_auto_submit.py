@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
 import importlib.machinery
 import importlib.util
 import logging
@@ -941,6 +942,86 @@ def test_diff_has_single_added_block_real_git(tmp_path: pathlib.Path) -> None:
     invalid_cmd = [git_bin, "-C", str(repo), "diff", "--invalid-flag"]
     diff_ok, output = auto_submit.diff_has_single_added_block(invalid_cmd)
     assert diff_ok is False
+
+
+def test_diff_has_single_added_block_real_osc(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test diff_has_single_added_block against a real local osc checkout directory.
+
+    Initializes a local offline osc working copy with .osc metadata and tests
+    that actual 'osc diff' executions correctly validate clean changes (including downward
+    alignment where line 1 separator is context) and reject invalid diffs.
+    """
+    osc_bin = shutil.which("osc")
+    if not osc_bin:
+        pytest.skip("osc binary is not installed")
+
+    # Configure a dummy oscrc to prevent interactive prompts or credential errors in unconfigured
+    # environments such as OBS build workers where ~/.oscrc does not exist.
+    dummy_oscrc = tmp_path / "oscrc"
+    dummy_oscrc.write_text(
+        "[general]\napiurl = https://api.opensuse.org\n\n[https://api.opensuse.org]\nuser = dummy\npass = dummy\n",
+        encoding="utf-8",
+    )
+    dummy_oscrc.chmod(0o600)
+    monkeypatch.setenv("OSC_CONFIG", str(dummy_oscrc))
+
+    # Initialize a local osc package working copy in tmp_path
+    osc_dir = tmp_path / "osc-pkg"
+    osc_dir.mkdir()
+    (osc_dir / ".osc").mkdir()
+    (osc_dir / ".osc" / "sources").mkdir()
+    (osc_dir / ".osc" / "_osclib_version").write_text("1.0", encoding="utf-8")
+    (osc_dir / ".osc" / "_apiurl").write_text("https://api.opensuse.org", encoding="utf-8")
+    (osc_dir / ".osc" / "_project").write_text("test_proj", encoding="utf-8")
+    (osc_dir / ".osc" / "_package").write_text("pkg", encoding="utf-8")
+
+    baseline = (
+        "-------------------------------------------------------------------\n"
+        "Wed Aug 19 09:55:39 UTC 2026 - author@example.com\n\n"
+        "- Update to version 5.1787133330.4deef227:\n"
+    )
+    (osc_dir / ".osc" / "sources" / "pkg.changes").write_text(baseline, encoding="utf-8")
+    (osc_dir / "pkg.changes").write_text(baseline, encoding="utf-8")
+
+    md5 = hashlib.md5(baseline.encode(), usedforsecurity=False).hexdigest()
+    size = len(baseline.encode())
+    (osc_dir / ".osc" / "_files").write_text(
+        f'<directory rev="1"><entry name="pkg.changes" md5="{md5}" size="{size}" mtime="12345" /></directory>',
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(osc_dir)
+    diff_cmd = [osc_bin, "diff", "pkg.changes"]
+
+    # Clean addition (real osc downward alignment where line 1 separator is context)
+    new_entry = (
+        "-------------------------------------------------------------------\n"
+        "Wed Aug 20 09:55:39 UTC 2026 - foo@bar\n\n"
+        "- Update to version 3.14\n"
+        "  * Change 1\n\n"
+    )
+    (osc_dir / "pkg.changes").write_text(new_entry + baseline, encoding="utf-8")
+    diff_ok, output = auto_submit.diff_has_single_added_block(diff_cmd)
+    assert diff_ok is True, output
+    assert "+Wed Aug 20" in output
+
+    # Historical line modification
+    corrupted = new_entry + baseline.replace("5.1787133330.4deef227", "corrupted")
+    (osc_dir / "pkg.changes").write_text(corrupted, encoding="utf-8")
+    diff_ok, output = auto_submit.diff_has_single_added_block(diff_cmd)
+    assert diff_ok is False, output
+    assert "- Update to version 5.1787133330.4deef227:" in output
+
+    # Trailing additions
+    trailing = baseline + "\n- Unexpected trailing entry\n"
+    (osc_dir / "pkg.changes").write_text(trailing, encoding="utf-8")
+    diff_ok, output = auto_submit.diff_has_single_added_block(diff_cmd)
+    assert diff_ok is False, output
+
+    # No changes
+    (osc_dir / "pkg.changes").write_text(baseline, encoding="utf-8")
+    diff_ok, output = auto_submit.diff_has_single_added_block(diff_cmd)
+    assert diff_ok is False, output
 
 
 def test_prepare_local_clone_real_git(tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch) -> None:
