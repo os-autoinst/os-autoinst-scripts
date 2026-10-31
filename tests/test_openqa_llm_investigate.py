@@ -951,7 +951,7 @@ def test_fit_context_drops_test_commits_only_when_the_analysis_needs_their_room(
     note = llm_investigate.CONTEXT_TRUNCATED_NOTE.format(context_tokens=0)
     overhead = len(llm_investigate.INTRO_TEMPLATE.format(**fields | {"analysis": "", "truncated": note}))
     room = overhead + llm_investigate.OMISSION_NOTE_CHARS + len(commits) // 2
-    tokens = llm_investigate.RESPONSE_RESERVE_TOKENS + -(-room // llm_investigate.CHARS_PER_TOKEN)
+    tokens = llm_investigate.RESPONSE_RESERVE_TOKENS + int(-(-room // llm_investigate.CHARS_PER_TOKEN))
     assert len(commits) <= llm_investigate.COMMITS_MAX_SHARE * room
 
     fitted = llm_investigate._fit_context(fields, dataclasses.replace(opts, context_tokens=tokens))
@@ -1020,7 +1020,7 @@ def test_investigate_context_tokens_caps_prompt(mocker: MockerFixture) -> None:
     assert "--context-tokens budget reached" in prompt
     assert "truncated to fit 4096 tokens" in prompt
     assert "line00000" in prompt
-    assert len(prompt) <= (4096 - llm_investigate.RESPONSE_RESERVE_TOKENS) * llm_investigate.CHARS_PER_TOKEN
+    assert len(prompt) <= (4096 - llm_investigate.RESPONSE_RESERVE_TOKENS) * 2.5
 
 
 def test_investigate_context_tokens_keeps_short_analysis(mocker: MockerFixture) -> None:

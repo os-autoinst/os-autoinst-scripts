@@ -101,7 +101,7 @@ transient (flaky timing, network, worker or external service) so that a rerun is
 
 TRUNCATED_NOTE = ", truncated to the first {log_lines} lines; do not guess about the omitted tail"
 CONTEXT_TRUNCATED_NOTE = ", truncated to fit {context_tokens} tokens; do not guess about the omitted tail"
-CHARS_PER_TOKEN = 3
+CHARS_PER_TOKEN = 2.5  # logs, paths and hashes tokenize denser than prose
 RESPONSE_RESERVE_TOKENS = 2048  # covers the three replies and the two follow-up questions
 OMISSION_NOTE_CHARS = 100
 COMMITS_MAX_SHARE = 0.1  # of the prompt characters; larger test commits are dropped before the analysis is cut
@@ -481,7 +481,7 @@ def _fit_context(fields: dict[str, Any], opts: Options) -> dict[str, Any]:
     prompt, or than the room they leave for the analysis.
     """
     note = CONTEXT_TRUNCATED_NOTE.format(context_tokens=opts.context_tokens)
-    chars = (opts.context_tokens - RESPONSE_RESERVE_TOKENS) * CHARS_PER_TOKEN
+    chars = int((opts.context_tokens - RESPONSE_RESERVE_TOKENS) * CHARS_PER_TOKEN)
     overhead = len(INTRO_TEMPLATE.format(**fields | {"analysis": "", "truncated": note}))
     budget = chars - overhead - OMISSION_NOTE_CHARS
     commits = fields["commits_section"]
