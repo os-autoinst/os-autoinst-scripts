@@ -28,6 +28,7 @@ from common.error_handling import is_404_str
 from common.smelt import submission_ids, submission_packages
 from openqa_llm_investigate.analysis import analyze_job
 from openqa_llm_investigate.commits import commits_section
+from openqa_llm_investigate.history import fetch_rows, is_reviewed
 from openqa_llm_investigate.http import AnalyzerError, NoFailedModulesError, OpenQA
 from openqa_llm_investigate.text import redact
 
@@ -425,9 +426,8 @@ def _fetch_job(client: httpx.Client, base_url: str, job_id: str) -> dict[str, An
     return job_data["job"]
 
 
-def _analyze(client: httpx.Client, base_url: str, job_id: str, job: dict[str, Any], opts: Options) -> str:
+def _analyze(oqa: OpenQA, job_id: str, job: dict[str, Any], opts: Options) -> str:
     """Return the failure analysis; exit when there is nothing to analyze unless forced."""
-    oqa = OpenQA(client, base_url)
     softfailed = job.get("result") == "softfailed"
     try:
         return analyze_job(oqa, job_id, context_lines=opts.context_lines, include_softfailed=softfailed, job=job)
@@ -725,8 +725,14 @@ def _perform_investigation(client: httpx.Client, base_url: str, job_id: str, opt
     if not opts.force and job.get("result") in {"passed", "softfailed"}:
         log.info("Job %s %s, skipping investigation.", job_id, job.get("result"))
         sys.exit(0)
+    oqa = OpenQA(client, base_url)  # one instance, so the analysis reuses the rows fetched here from its cache
+    if not (opts.force or opts.dry or opts.print_prompt) and is_reviewed(fetch_rows(oqa, job_id)):
+        log.info("Job %s is already reviewed, skipping the LLM investigation.", job_id)
+        # no LLM verdict to gate on, so leave the job to the standard investigation
+        typer.echo(f"{base_url}/tests/{job_id}")
+        return
 
-    analysis = _analyze(client, base_url, job_id, job, opts)
+    analysis = _analyze(oqa, job_id, job, opts)
     stats, job_found = _gather_stats(client, base_url, job_id, job, opts)
     prompt, cut_notes = _build_prompt(job, analysis, stats, opts)
     if opts.print_prompt:
@@ -746,8 +752,15 @@ def _perform_investigation(client: httpx.Client, base_url: str, job_id: str, opt
         typer.echo(f"{base_url}/tests/{job_id}")
 
     comment = f"{COMMENT_MARKER}\n\n{llm_response}{_comment_notes(cut_notes, opts, job_found=job_found)}"
+    _post_summary(client, base_url, job_id, comment, opts)
+
+
+def _post_summary(client: httpx.Client, base_url: str, job_id: str, comment: str, opts: Options) -> None:
+    """Print the summary on --dry, else post it unless the job was reviewed meanwhile (--force posts anyway)."""
     if opts.dry:
         typer.echo(comment)
+    elif not opts.force and is_reviewed(fetch_rows(OpenQA(client, base_url), job_id, neighbours=False)):
+        log.info("Job %s was reviewed while the LLM answered, not posting the summary.", job_id)
     else:
         post_comment(base_url, job_id, f"{comment}\n\n{COMMENT_FOOTER}")
 
@@ -758,7 +771,8 @@ def investigate(  # ruff: ignore[too-many-arguments, too-many-positional-argumen
     verbose: Annotated[int, typer.Option("--verbose", "-v", count=True, help="Increase verbosity")] = 0,
     quiet: Annotated[bool, typer.Option("--quiet", "-q", help="Quiet mode")] = False,  # ruff: ignore[boolean-default-value-positional-argument]
     dry: Annotated[  # ruff: ignore[boolean-default-value-positional-argument]
-        bool, typer.Option("--dry", help="Dry run mode: output summary instead of posting a comment")
+        bool,
+        typer.Option("--dry", help="Dry run mode: output summary instead of posting a comment, even on a reviewed job"),
     ] = False,
     print_prompt: Annotated[  # ruff: ignore[boolean-default-value-positional-argument]
         bool,
@@ -772,7 +786,7 @@ def investigate(  # ruff: ignore[too-many-arguments, too-many-positional-argumen
         typer.Option(
             "--force",
             "-f",
-            help="Force another analysis even if an LLM comment already exists or if the job passed/softfailed",
+            help="Force another analysis even if the job is reviewed, has an LLM comment or passed/softfailed",
         ),
     ] = False,
     timeout: Annotated[

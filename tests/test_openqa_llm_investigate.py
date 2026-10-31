@@ -181,6 +181,7 @@ def setup_mock_client(mocker: MockerFixture, overrides: dict[str, Any] | None = 
             ]
         },
         "autoinst-log.txt": "failed log",
+        "/ajax": {"data": [{"id": 123, "iscurrent": 1, "comment_data": 0}]},
     }
     if overrides:
         responses.update(overrides)
