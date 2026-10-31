@@ -147,7 +147,7 @@ def setup_mock_client(mocker: MockerFixture, overrides: dict[str, Any] | None = 
         "test=": {
             "jobs": [
                 {"id": 120, "state": "done", "result": "passed"},
-                {"id": 121, "state": "done", "result": "failed"},
+                {"id": 121, "state": "done", "result": "passed"},
                 {"id": 122, "state": "done", "result": "failed"},
                 {"id": 123, "state": "done", "result": "failed"},
             ]
@@ -973,7 +973,7 @@ def test_fit_context_drops_test_commits_only_when_the_analysis_needs_their_room(
         ("Summary.\nBISECT: YES \u2014 isolated\n```\n", True),
         ("BISECT: YES \u2014 isolated\n\nHope this helps.", True),
         ("Summary.\n`BISECT: NO` \u2014 widespread\n", False),
-        ("No verdict at all", False),
+        ("No verdict at all", True),
     ],
 )
 def test_investigate_bisect_gate_uses_last_verdict(mocker: MockerFixture, response: str, *, printed: bool) -> None:
@@ -987,6 +987,22 @@ def test_investigate_bisect_gate_uses_last_verdict(mocker: MockerFixture, respon
     llm_investigate.investigate("123")
 
     assert (call("https://openqa.opensuse.org/tests/123") in mock_print.call_args_list) is printed
+
+
+@pytest.mark.parametrize("dry", [False, True])
+def test_investigate_without_a_bisect_verdict_falls_back_without_a_comment(mocker: MockerFixture, *, dry: bool) -> None:
+    mock_log = mocker.patch("llm_investigate.log")
+    mock_post = mocker.patch("llm_investigate.post_comment")
+    mock_print = mocker.patch("llm_investigate.typer.echo")
+    mocker.patch.dict(CHAT_REPLIES, {3: "BISECT: NO \u2014 known", 5: "Classification: Product bug"})
+    setup_mock_client(mocker)
+    llm_investigate.investigate("123", dry=dry)
+    mock_post.assert_not_called()
+    mock_log.error.assert_not_called()
+    assert any("no BISECT line" in c.args[0] for c in mock_log.info.call_args_list)
+    printed = [c.args[0] for c in mock_print.call_args_list]
+    assert printed[0] == "https://openqa.opensuse.org/tests/123"
+    assert [p.endswith("\n\nClassification: Product bug") for p in printed[1:]] == ([True] if dry else [])
 
 
 def test_investigate_warns_when_analysis_is_cut(mocker: MockerFixture) -> None:
@@ -1298,6 +1314,39 @@ def test_investigate_bisect_rule_forces_no_for_same_module_failures(mocker: Mock
 
 
 @pytest.mark.parametrize(
+    ("runs", "job", "overridden"),
+    [
+        ((121, 122, 123), {}, True),
+        ((120, 121, 122), {}, False),
+        ((120, 121, 122, 123), {"result": "incomplete"}, False),
+    ],
+    ids=["overridden", "job-not-in-history", "incomplete-job"],
+)
+def test_investigate_overrides_bisect_and_restart_from_the_job_history(
+    mocker: MockerFixture, runs: tuple[int, ...], job: dict[str, str], *, overridden: bool
+) -> None:
+    mock_post = mocker.patch("llm_investigate.post_comment")
+    mock_print = mocker.patch("llm_investigate.typer.echo")
+    reply = "BISECT: YES \u2014 isolated\nRestart: YES \u2014 flaky"
+    mocker.patch.dict(CHAT_REPLIES, {5: reply})
+    fetch_job = llm_investigate._fetch_job
+    mocker.patch("llm_investigate._fetch_job", side_effect=lambda *a: fetch_job(*a) | job)
+    history = {"jobs": [_run(i, "failed") for i in runs]}
+    last_good = {"last_good": {"link": "/tests/100", "text": 100, "type": "link"}}
+    setup_mock_client(mocker, overrides={"test=": history, "investigation_ajax": last_good})
+    llm_investigate.investigate("123")
+    verdict = (
+        "BISECT: NO \u2014 failed at least 3 times in a row\nRestart: NO \u2014 failed at least 3 times in a row"
+        if overridden
+        else reply
+    )
+    assert (call("https://openqa.opensuse.org/tests/123") in mock_print.call_args_list) is not overridden
+    assert mock_post.call_args[0][2].startswith(
+        f"{llm_investigate.COMMENT_MARKER}\n\n{CHAT_REPLIES[1]}\n\n{CHAT_REPLIES[3]}\n\n{verdict}\n\n"
+    )
+
+
+@pytest.mark.parametrize(
     ("verdict", "expected"),
     [
         ("BISECT: NO \u2014 reason\nRestart: YES - Reason.", "BISECT: NO\nRestart: YES"),
@@ -1308,6 +1357,12 @@ def test_investigate_bisect_rule_forces_no_for_same_module_failures(mocker: Mock
 )
 def test_drop_placeholder_reasons(verdict: str, expected: str) -> None:
     assert llm_investigate._drop_placeholder_reasons(verdict) == expected
+
+
+@pytest.mark.parametrize("line", ["**BISECT:** YES \u2014 isolated", "**BISECT**: YES", "BISECT: **YES**"])
+def test_enforce_bisect_rule_rewrites_emphasized_lines(line: str) -> None:
+    no = "BISECT: NO \u2014 2 other job(s) in this build fail in the same module"
+    assert llm_investigate._enforce_bisect_rule(f"Classification: Test issue\n{line}", 2).endswith(f"\n{no}")
 
 
 def test_investigate_drops_placeholder_reasons_from_comment(mocker: MockerFixture) -> None:
