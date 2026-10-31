@@ -998,6 +998,42 @@ def test_investigate_warns_when_analysis_is_cut(mocker: MockerFixture) -> None:
     assert "--log-lines=%d" in mock_log.info.call_args[0][0]
 
 
+_ANALYSIS_CUT = "The failure analysis was cut to {}; the LLM did not see its end."
+
+
+@pytest.mark.parametrize(
+    ("options", "test_log", "notes"),
+    [
+        ({"log_lines": 100000}, None, []),
+        ({"log_lines": 3}, None, [_ANALYSIS_CUT.format("its first 3 lines")]),
+        ({"log_lines": 5000, "context_tokens": 4096}, None, [_ANALYSIS_CUT.format("fit 4096 tokens")]),
+        (
+            {"log_lines": 100000, "context_tokens": 4096},
+            "".join(f"{i:07x} Fix isosize {'x' * 60}\n tests/installation/isosize.pm | 1 +\n" for i in range(10)),
+            [
+                "The test commits since the last good job were left out of the prompt to fit 4096 tokens.",
+                _ANALYSIS_CUT.format("fit 4096 tokens"),
+            ],
+        ),
+    ],
+    ids=["nothing-cut", "log-lines", "log-lines-and-context-tokens", "test-commits-and-context-tokens"],
+)
+def test_investigate_comment_notes_what_the_llm_did_not_see(
+    mocker: MockerFixture, options: dict[str, int], test_log: str | None, notes: list[str]
+) -> None:
+    mock_post = mocker.patch("llm_investigate.post_comment")
+    mocker.patch("llm_investigate.typer.echo")
+    mocker.patch("llm_investigate.analyze_job", return_value=_LONG_ANALYSIS)
+    investigation = _COMMITS_OVERRIDES["investigation_ajax"] | ({"test_log": test_log} if test_log else {})
+    setup_mock_client(mocker, _COMMITS_OVERRIDES | {"investigation_ajax": investigation})
+
+    llm_investigate.investigate("123", **options)
+
+    comment = mock_post.call_args[0][2]
+    assert comment.endswith("".join(f"\n\n*Note: {n}*" for n in notes) + f"\n\n{llm_investigate.COMMENT_FOOTER}")
+    assert comment.count("*Note:") == len(notes)
+
+
 @pytest.mark.parametrize("option", ["--context-lines", "--log-lines"])
 def test_negative_line_options_are_rejected(option: str) -> None:
     result = CliRunner().invoke(llm_investigate.app, ["123", option, "-1"])
@@ -1357,13 +1393,13 @@ def _prompt(extension: Any) -> str:
     stats = {"investigation_info": "None"}
     return llm_investigate._build_prompt(
         {"settings": settings}, "analysis", stats, llm_investigate.Options("http://llm", "m", None, 1, 50, 100, 10, 5)
-    )
+    )[0]
 
 
 def test_build_prompt_names_the_machine() -> None:
     job = {"settings": {"ARCH": "x86_64", "MACHINE": "uefi", "FLAVOR": "DVD"}}
     opts = llm_investigate.Options("http://llm", "m", None, 1, 50, 100, 10, 5)
-    prompt = llm_investigate._build_prompt(job, "analysis", {"investigation_info": ""}, opts)
+    prompt, _ = llm_investigate._build_prompt(job, "analysis", {"investigation_info": ""}, opts)
     assert "- Arch: x86_64\n- Machine: uefi\n- Flavor: DVD\n" in prompt
 
 
