@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from operator import itemgetter
 from urllib.parse import quote
 
@@ -19,6 +19,8 @@ _HISTORY_FAILED = ("failed", "incomplete", "timeout_exceeded", "parallel_failed"
 _HISTORY_NEIGHBOURS = 5
 _HISTORY_MAX_FETCHES = 8
 _HISTORY_MAX_GROUPS = 6
+_REVIEWS_LOOK_BACK = 20
+_REVIEWS_SHOWN = 5
 _COMMAND_MAX_CHARS = 80
 _BY_ID = itemgetter("id")
 _BEST_EFFORT_ERRORS = (AnalyzerError, AttributeError, KeyError, TypeError, ValueError)
@@ -26,10 +28,11 @@ _BEST_EFFORT_ERRORS = (AnalyzerError, AttributeError, KeyError, TypeError, Value
 
 @dataclass
 class _Lookups:
-    """Server access plus the shared budget of per-job detail fetches."""
+    """Server access, the shared budget of per-job detail fetches and the job's 'Next & previous results' rows."""
 
     oqa: OpenQA
     fetched: int = 0
+    rows: list[JsonDict] = field(default_factory=list)
 
 
 def fetch_job(oqa: OpenQA, job_id: str) -> JsonDict:
@@ -123,7 +126,7 @@ def _runs_text(label: str, runs: list[JsonDict], lookups: _Lookups) -> str:
 
 def _neighbour_summary(lookups: _Lookups, job_id: str) -> str | None:
     """Return the result of the previous/next runs shown in openQA's 'Next & previous results'."""
-    data = lookups.oqa.json(f"/tests/{job_id}/ajax")["data"]
+    data = lookups.rows = lookups.oqa.json(f"/tests/{job_id}/ajax")["data"]
     cur = int(job_id)
     done = {j["id"]: j for j in data if j.get("state") == "done" and j["id"] != cur}
     prev = sorted((j for i, j in done.items() if i < cur), key=_BY_ID, reverse=True)
@@ -134,6 +137,38 @@ def _neighbour_summary(lookups: _Lookups, job_id: str) -> str | None:
         if runs
     ]
     return "Previous/next runs: " + "; ".join(parts) + "." if parts else None
+
+
+def _review_marks(comment_data: object) -> list[tuple[str, str]]:
+    """Return the bugrefs and the label in openQA's comment data of a run, each with its note ('label, ' or '').
+
+    openQA keeps only the newest label of a job, so a later label:linked can replace a reviewer's label.
+    """
+    if not isinstance(comment_data, dict):  # 0 without comments
+        return []
+    marks = [(bug["content"], "") for bug in comment_data.get("bugs") or []]
+    # openQA adds linked[:<bugref>] when a job page is opened from a ticket or PR; ttm adds unknown_failure
+    if (label := comment_data.get("label")) and label.split(":", 1)[0] not in {"linked", "unknown_failure"}:
+        marks.append((label, "label, "))  # without "label:", which label queries would find in our reply
+    return marks
+
+
+def _earlier_reviews(lookups: _Lookups, job_id: str) -> str | None:
+    """Return the bugrefs and labels of recent previous runs that failed in every module this job failed in.
+
+    Reads the rows `_neighbour_summary` fetched. A mark carried over to several runs is named at its latest one.
+    """
+    cur = int(job_id)
+    modules = set(next((j.get("failedmodules") or [] for j in lookups.rows if j["id"] == cur), []))
+    prev = sorted((j for j in lookups.rows if j.get("state") == "done" and j["id"] < cur), key=_BY_ID, reverse=True)
+    found: dict[str, str] = {}
+    for j in prev[:_REVIEWS_LOOK_BACK]:
+        if modules and modules <= set(j.get("failedmodules") or []):
+            build = f", build {j['build']}" if j.get("build") else ""
+            for mark, note in _review_marks(j.get("comment_data")):
+                found.setdefault(mark, f"{mark} ({note}job {j['id']}{build})")
+    shown = list(found.values())[:_REVIEWS_SHOWN]
+    return "Earlier reviews of runs failing in the same module: " + "; ".join(shown) + "." if shown else None
 
 
 def _sibling_failures(others: list[JsonDict], flavor: str | None) -> list[JsonDict]:
@@ -181,13 +216,18 @@ def _sibling_summary(lookups: _Lookups, job_id: str, job: JsonDict) -> str | Non
 
 
 def run_history(oqa: OpenQA, job_id: str, job: JsonDict) -> list[str]:
-    """Return up to two sentences on similar previous runs and sibling jobs.
+    """Return up to three sentences on similar previous runs, their reviews and sibling jobs.
 
     Best-effort: a section whose data cannot be fetched or parsed is omitted.
     """
     lookups = _Lookups(oqa)
     lines = []
-    for summarize in (lambda: _neighbour_summary(lookups, job_id), lambda: _sibling_summary(lookups, job_id, job)):
+    # _earlier_reviews reads the rows that _neighbour_summary fetches
+    for summarize in (
+        lambda: _neighbour_summary(lookups, job_id),
+        lambda: _earlier_reviews(lookups, job_id),
+        lambda: _sibling_summary(lookups, job_id, job),
+    ):
         try:
             if line := summarize():
                 lines.append(redact(line))

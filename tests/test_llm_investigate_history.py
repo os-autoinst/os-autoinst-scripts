@@ -4,9 +4,14 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+import pytest
 
 from openqa_llm_investigate import history
+
+if TYPE_CHECKING:
+    from pytest_mock import MockerFixture
 
 _JOB = {"job": {"group_id": 7, "settings": {"BUILD": "1.2"}}}
 _ONE_FAILED = {"modules": [{"name": "a", "result": "failed", "details": []}]}
@@ -29,7 +34,14 @@ _FAIL_CMD = {
 
 
 def _hist(job_id: int, result: str, mods: tuple[str, ...] = (), build: str = "1.2") -> dict[str, Any]:
-    return {"id": job_id, "result": result, "state": "done", "build": build, "failedmodules": list(mods)}
+    return {
+        "id": job_id,
+        "result": result,
+        "state": "done",
+        "build": build,
+        "failedmodules": list(mods),
+        "comment_data": 0,
+    }
 
 
 def _sib(job_id: int, result: str, test: str = "t", mods: tuple[str, ...] = ()) -> dict[str, Any]:
@@ -191,3 +203,130 @@ def test_siblings_filtered_by_version(make_openqa: Any) -> None:
     oqa = make_openqa({"/api/v1/jobs/42": json.dumps(job), "/api/v1/jobs": jobs})
     history.run_history(oqa, "42", history.fetch_job(oqa, "42"))
     assert seen == ["groupid=7&build=1.2&version=16.0&latest=1&limit=500"]
+
+
+def _commented(row: dict[str, Any], bugs: tuple[str, ...] = (), label: str | None = None) -> dict[str, Any]:
+    """Return a history row with openQA's comment data for these bugrefs and label."""
+    found = [
+        {"content": b, "css_class": "label_bug fa-solid fa-bug", "title": f"Bug referenced: {b}\nx", "url": "u"}
+        for b in bugs
+    ]
+    comment_data = {"bugs": found, "comment_icon": "", "comments": 1, "label": label, "label_url": None, "reviewed": 1}
+    return {**row, "comment_data": comment_data}
+
+
+def _reviews(make_openqa: Any, rows: list[dict[str, Any]]) -> list[str]:
+    lines = _lines(make_openqa, {"data": rows})
+    assert lines[0].startswith("Previous/next runs:")
+    return [ln for ln in lines if ln.startswith("Earlier reviews")]
+
+
+def test_earlier_reviews_of_the_same_module(make_openqa: Any) -> None:
+    rows = [
+        _commented(_hist(43, "failed", ("a", "b")), label="later_run"),
+        _commented(_hist(42, "failed", ("a", "b"))),
+        _commented(_hist(41, "softfailed", ("a", "b")), label="force_result:softfailed"),
+        _commented(_hist(40, "failed", ("c",)), bugs=("poo#1",)),
+        _commented(_hist(39, "failed", ("b", "a", "c"), build="1.1"), bugs=("boo#2",)),
+        _commented(_hist(37, "failed", ("a", "b"))),
+        _hist(36, "failed", ("a", "b")),
+    ]
+    expected = (
+        "Earlier reviews of runs failing in the same module: force_result:softfailed (label, job 41, build 1.2);"
+        " boo#2 (job 39, build 1.1)."
+    )
+    assert _reviews(make_openqa, rows) == [expected]
+    assert "label:" not in expected
+
+
+def test_earlier_reviews_name_each_mark_once(make_openqa: Any) -> None:
+    rows = [
+        _hist(42, "failed", ("a",)),
+        _commented(_hist(41, "failed", ("a",)), bugs=("boo#2", "poo#3")),
+        _commented(_hist(40, "failed", ("a",), build="1.1"), bugs=("boo#2", "poo#4")),
+        _commented(_hist(39, "failed", ("a",)), label="force_result:softfailed"),
+        _commented(_hist(38, "failed", ("a",)), label="force_result:softfailed"),
+    ]
+    expected = (
+        "Earlier reviews of runs failing in the same module: boo#2 (job 41, build 1.2); poo#3 (job 41, build 1.2);"
+        " poo#4 (job 40, build 1.1); force_result:softfailed (label, job 39, build 1.2)."
+    )
+    assert _reviews(make_openqa, rows) == [expected]
+
+
+def test_earlier_reviews_capped(make_openqa: Any) -> None:
+    rows = [
+        _hist(42, "failed", ("a",)),
+        *(_commented(_hist(30 + i, "failed", ("a",)), bugs=(f"poo#{i}",)) for i in range(7)),
+    ]
+    (line,) = _reviews(make_openqa, rows)
+    assert line.count("(job ") == 5
+    assert "poo#6 (job 36, build 1.2);" in line
+    assert "poo#1" not in line
+
+
+@pytest.mark.parametrize(("newer", "shown"), [(19, 1), (20, 0)])
+def test_earlier_reviews_look_back(make_openqa: Any, newer: int, shown: int) -> None:
+    runs = [_hist(41 - i, "passed") for i in range(newer)]
+    rows = [_hist(42, "failed", ("a",)), *runs, _commented(_hist(41 - newer, "failed", ("a",)), bugs=("poo#7",))]
+    assert len(_reviews(make_openqa, rows)) == shown
+
+
+@pytest.mark.parametrize("label", ["linked", "linked:poo#209598", "unknown_failure"])
+def test_earlier_reviews_skip_bot_labels(make_openqa: Any, label: str) -> None:
+    rows = [_hist(42, "failed", ("a",)), _commented(_hist(41, "failed", ("a",)), bugs=("poo#1",), label=label)]
+    assert _reviews(make_openqa, rows) == [
+        "Earlier reviews of runs failing in the same module: poo#1 (job 41, build 1.2)."
+    ]
+
+
+_SNAPSHOT_MODULES = ("boot_into_snapshot", "rollback_from_ro_snapshot")
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        pytest.param(
+            [_hist(42, "failed"), _commented(_hist(41, "failed", ("a",)), label="x")], id="job-without-module"
+        ),
+        pytest.param(
+            [_hist(42, "failed", ("a",)), _commented(_hist(41, "failed", ("b",)), label="x")], id="other-module"
+        ),
+        pytest.param(
+            [
+                _hist(42, "failed", ("desktop_mainmenu", *_SNAPSHOT_MODULES)),
+                _commented(_hist(41, "softfailed", _SNAPSHOT_MODULES), bugs=("poo#195551",)),
+            ],
+            id="not-every-module",
+        ),
+        pytest.param([_hist(42, "failed", ("a",)), _commented(_hist(41, "failed", ("a",)))], id="no-bugref-or-label"),
+        pytest.param(
+            [_hist(42, "failed", ("a",)), _commented(_hist(41, "failed", ("a",)), label="linked")], id="linked"
+        ),
+        pytest.param(
+            [
+                _hist(42, "failed", ("a",)),
+                {**_commented(_hist(41, "failed", ("a",)), label="x"), "state": "running"},
+                _hist(40, "passed"),
+            ],
+            id="not-done",
+        ),
+        pytest.param(
+            [_hist(42, "failed", ("a",)), {**_hist(41, "failed", ("a",)), "comment_data": {"bugs": [{"url": "u"}]}}],
+            id="malformed-comment-data",
+        ),
+    ],
+)
+def test_no_earlier_reviews(make_openqa: Any, rows: list[dict[str, Any]]) -> None:
+    assert not _reviews(make_openqa, rows)
+
+
+@pytest.mark.parametrize("served", [pytest.param(["/tests/42/ajax"], id="served"), pytest.param([], id="404")])
+def test_earlier_reviews_reuse_the_history_response(make_openqa: Any, mocker: MockerFixture, served: list[str]) -> None:
+    rows = [_hist(42, "failed", ("a",)), _commented(_hist(41, "failed", ("a",)), label="x")]
+    oqa = make_openqa(dict.fromkeys(served, json.dumps({"data": rows})))
+    get = mocker.spy(oqa.client, "get")
+    lines = history.run_history(oqa, "42", {})
+    expected = "Earlier reviews of runs failing in the same module: x (label, job 41, build 1.2)."
+    assert (expected in lines) == bool(served)
+    assert [c.args[0] for c in get.call_args_list].count("https://srv/tests/42/ajax") == 1
