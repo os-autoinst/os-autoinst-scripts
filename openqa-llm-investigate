@@ -634,7 +634,21 @@ def _submissions(client: httpx.Client, job: dict[str, Any]) -> dict[int, list[st
         return {}
 
 
-def _build_prompt(job: dict[str, Any], analysis: str, stats: dict[str, Any], opts: Options) -> str:
+def _cut_notes(fields: dict[str, Any], fitted: dict[str, Any], opts: Options) -> list[str]:
+    """Return notes for the reviewer on what the LLM did not see of the failure analysis and test commits."""
+    tokens = f"fit {opts.context_tokens} tokens"
+    notes = []
+    if fitted["commits_section"] != fields["commits_section"]:
+        notes.append(f"The test commits since the last good job were left out of the prompt to {tokens}.")
+    if fitted["analysis"] != fields["analysis"]:
+        notes.append(f"The failure analysis was cut to {tokens}; the LLM did not see its end.")
+    elif fields["truncated"]:
+        notes.append(f"The failure analysis was cut to its first {opts.log_lines} lines; the LLM did not see its end.")
+    return notes
+
+
+def _build_prompt(job: dict[str, Any], analysis: str, stats: dict[str, Any], opts: Options) -> tuple[str, list[str]]:
+    """Return the first prompt and the notes on what was cut to fit it."""
     settings = job.get("settings", {})
     failed_modules = [m.get("name", "unknown") for m in job.get("testresults", []) if m.get("result") == "failed"]
     extension = str(settings.get("LLM_PROMPT_EXTENSION") or "").strip()
@@ -662,7 +676,8 @@ def _build_prompt(job: dict[str, Any], analysis: str, stats: dict[str, Any], opt
         "commits_section": commits,
         "prompt_extension_text": extension_text,
     }
-    return INTRO_TEMPLATE.format(**(_fit_context(fields, opts) if opts.context_tokens else fields))
+    fitted = _fit_context(fields, opts) if opts.context_tokens else fields
+    return INTRO_TEMPLATE.format(**fitted), _cut_notes(fields, fitted, opts)
 
 
 def _gather_stats(
@@ -690,6 +705,12 @@ def _gather_stats(
     }, job_found
 
 
+def _comment_notes(cut_notes: list[str], opts: Options, *, job_found: bool) -> str:
+    """Return the notes that warn the reviewer about gaps in the data behind the summary."""
+    streak = f"Job not found in recent history (limit {opts.history_limit}). Streak count may be inaccurate."
+    return "".join(f"\n\n*Note: {n}*" for n in (cut_notes if job_found else [streak, *cut_notes]))
+
+
 def _perform_investigation(client: httpx.Client, base_url: str, job_id: str, opts: Options) -> None:
     comments = [] if opts.print_prompt else fetch_json(client, f"{base_url}/api/v1/jobs/{job_id}/comments", default=[])
     if (
@@ -707,12 +728,13 @@ def _perform_investigation(client: httpx.Client, base_url: str, job_id: str, opt
 
     analysis = _analyze(client, base_url, job_id, job, opts)
     stats, job_found = _gather_stats(client, base_url, job_id, job, opts)
+    prompt, cut_notes = _build_prompt(job, analysis, stats, opts)
     if opts.print_prompt:
-        prompts = [_build_prompt(job, analysis, stats, opts), BRIEF_QUESTION, _verdict_question(stats, opts)]
+        prompts = [prompt, BRIEF_QUESTION, _verdict_question(stats, opts)]
         typer.echo("\n\n".join(f"===== Prompt {i}/3 =====\n{p}" for i, p in enumerate(prompts, 1)))
         return
     messages: list[dict[str, str]] = []
-    lines = _ask(client, opts, messages, _build_prompt(job, analysis, stats, opts), TEMPERATURE)
+    lines = _ask(client, opts, messages, prompt, TEMPERATURE)
     brief = _ask(client, opts, messages, BRIEF_QUESTION, TEMPERATURE)
     verdict = _ask(client, opts, messages, _verdict_question(stats, opts), 0.0)
     verdict = _enforce_bisect_rule(_drop_placeholder_reasons(verdict), stats["same_module_failures"])
@@ -723,11 +745,7 @@ def _perform_investigation(client: httpx.Client, base_url: str, job_id: str, opt
     if _bisect_recommended(llm_response):
         typer.echo(f"{base_url}/tests/{job_id}")
 
-    comment = f"{COMMENT_MARKER}\n\n{llm_response}"
-    if not job_found:
-        comment += (
-            f"\n\n*Note: Job not found in recent history (limit {opts.history_limit}). Streak count may be inaccurate.*"
-        )
+    comment = f"{COMMENT_MARKER}\n\n{llm_response}{_comment_notes(cut_notes, opts, job_found=job_found)}"
     if opts.dry:
         typer.echo(comment)
     else:
