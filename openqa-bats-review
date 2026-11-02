@@ -246,6 +246,7 @@ def main(url: str, dry_run: bool = False) -> None:  # ruff: ignore[complex-struc
             log.info("No common failures across clone chain. Would tag as PASSED.")
         else:
             log.info("No common failures across clone chain. Tagging as PASSED.")
+        print(openqa_comment(my_job_id, openqa_host, PASSED, dry_run))  # ruff: ignore[print]
     else:
         log.error(
             "Common failures found across clone chain: %s",
