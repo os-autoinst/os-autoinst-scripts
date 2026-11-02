@@ -79,6 +79,9 @@ hook() {
             openqa-bats-review "$url" && return
         fi
         label "$url" | investigate-and-bisect
+    elif [[ $name =~ ":investigate:" ]]; then
+        # bypass the LLM gate: openqa-investigate reports investigation results to the origin job
+        echo "$url" | llm_investigate=0 investigate-and-bisect
     else
         echo "$url" | investigate-and-bisect
     fi

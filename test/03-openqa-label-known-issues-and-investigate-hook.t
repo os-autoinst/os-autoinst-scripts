@@ -2,7 +2,7 @@
 
 source test/init
 
-plan tests 46
+plan tests 58
 dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 source "$dir/../openqa-label-known-issues-and-investigate-hook"
@@ -50,6 +50,8 @@ openqa-api-get() {
         echo '{"job":{"state":"done", "result":"failed", "test":"foo:investigate:retry:x"}}'
     elif [[ "$path" == "jobs/126" ]]; then
         echo '{"job":{"state":"done", "result":"failed", "test":"foo:investigate:abc:x"}}'
+    elif [[ "$path" == "jobs/127" ]]; then
+        echo '{"job":{"state":"done", "result":"passed", "test":"foo:investigate:retry"}}'
     fi
 }
 
@@ -70,14 +72,14 @@ has "$got" "- openqa-trigger-bisect-jobs"
 try hook 125
 is "$rc" 0 'successful hook (125)'
 hasnt "$got" "- openqa-label-known-issues"
-has "$got" "- openqa-llm-investigate"
+hasnt "$got" "- openqa-llm-investigate"
 has "$got" "- openqa-investigate"
 has "$got" "- openqa-trigger-bisect-jobs"
 
 try hook 126
 is "$rc" 0 'successful hook (126)'
 hasnt "$got" "- openqa-label-known-issues"
-has "$got" "- openqa-llm-investigate"
+hasnt "$got" "- openqa-llm-investigate"
 has "$got" "- openqa-investigate"
 has "$got" "- openqa-trigger-bisect-jobs"
 
@@ -115,6 +117,15 @@ has "$got" "- openqa-label-known-issues"
 has "$got" "- openqa-llm-investigate"
 hasnt "$got" "- openqa-investigate"
 hasnt "$got" "- openqa-trigger-bisect-jobs"
+
+# Test: investigation jobs bypass the LLM gate
+for id in 125 126 127; do
+    try hook "$id"
+    is "$rc" 0 "successful hook bypasses the LLM gate ($id)"
+    hasnt "$got" "- openqa-llm-investigate"
+    has "$got" "- openqa-investigate"
+    has "$got" "- openqa-trigger-bisect-jobs"
+done
 
 # Test: LLM fails (fallback to standard investigation)
 export LLM_INVESTIGATE_SKIP=false
