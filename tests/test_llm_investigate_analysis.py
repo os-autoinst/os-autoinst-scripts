@@ -630,6 +630,40 @@ def test_failing_step_rules_skip_other_steps_and_runs(
     assert "Key error:" not in _module_report(make_openqa, steps, files, category=category)
 
 
+_AVC_STEP = _step(1, result="ok", title="AVC", text="avc:  denied  { lock } for  comm=flock tclass=file permissive=1")
+_SEALERT_STEPS = [
+    _step(
+        16,
+        title="validate_script_output",
+        text=(
+            "Script:\nsealert -l '*'\n\nOutput:\n"
+            "SELinux is preventing chmod from setattr access on the directory sdbootutil.\n\nRaw Audit Messages\n"
+            'type=AVC msg=audit(1793337432.45:191): avc:  denied  { setattr } for  pid=2075 comm="chmod"'
+            ' name="sdbootutil" scontext=system_u:system_r:sdbootutil_t:s0 tcontext=system_u:object_r:var_run_t:s0'
+            " tclass=dir permissive=1\n"
+        ),
+    ),
+    _step(17, title="Failed", text="# Test died: output not validating\n"),
+]
+
+
+@pytest.mark.parametrize(
+    ("modules", "key_errors"),
+    [
+        ([_module([_AVC_STEP], name="before_test")], []),
+        ([_module([_AVC_STEP], name="check_selinux_fails")], ["Key error: SELinux denial"]),
+        ([_module([_AVC_STEP], name="before_test"), {**_module([], name="selinux_setup"), "result": "softfailed"}], []),
+        ([_module(_SEALERT_STEPS, name="setroubleshootd")], ["Key error: SELinux denial"]),
+    ],
+    ids=["other", "selinux check", "softfailed selinux module", "failing step shows a denial"],
+)
+def test_permissive_selinux_denial_is_the_key_error_only_of_an_selinux_check(
+    make_openqa: Any, modules: list[dict[str, Any]], key_errors: list[str]
+) -> None:
+    out = _analyze(make_openqa, {"modules": modules}, include_softfailed=True)
+    assert [ln for ln in out.splitlines() if ln.startswith("Key error:")] == key_errors
+
+
 def test_uploaded_widgets_and_terraform_output(make_openqa: Any) -> None:
     routes = {
         "/tests/42/details_ajax": json.dumps({"modules": [_module([_step(1, text="boom")], category="c")]}),

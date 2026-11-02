@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import pytest
@@ -376,6 +377,81 @@ _DNS = ["curl: (6) Could not resolve host: download.opensuse.org"]
 )
 def test_failing_step_verdict_beats_only_generic_key_errors(signals: str, failing: list[str], expected: str) -> None:
     assert logs.summarize_key_error(signals, failing) == expected
+
+
+_PERMISSIVE_AVC = (
+    "type=AVC msg=audit(10/30/2026 02:08:17.656:147) : avc:  denied  { lock } for  pid=3833 comm=flock"
+    " path=/run/sdbootutil/lock scontext=system_u:system_r:sdbootutil_t:s0"
+    " tcontext=system_u:object_r:var_run_t:s0 tclass=file permissive=1 "
+)
+_ENFORCING_AVC = (
+    "type=AVC msg=audit(10/30/2026 02:08:36.918:194) : avc:  denied  { search } for  pid=5532 comm=ovs-vsctl"
+    " name=4230 scontext=system_u:system_r:openvswitch_t:s0 tcontext=system_u:system_r:wicked_t:s0"
+    " tclass=dir permissive=0 "
+)
+_RAW_AVC = (
+    'type=AVC msg=audit(1793337432.45:191): avc:  denied  { setattr } for  pid=2075 comm="chmod" name="sdbootutil"'
+    ' dev="tmpfs" ino=2217 scontext=system_u:system_r:sdbootutil_t:s0 tcontext=system_u:object_r:var_run_t:s0'
+    " tclass=dir permissive=1"
+)
+_KERNEL_AVC = _RAW_AVC.replace("type=AVC msg=", "audit: type=1400 ")
+_SEALERT_STEP = (
+    "validate_script_output\nScript:\nsealert -l '*'\n\nOutput:\n"
+    "SELinux is preventing chmod from setattr access on the directory sdbootutil.\n\n"
+    "Enforcing Mode                Enforcing\n\nRaw Audit Messages\n"
+    f"{_RAW_AVC}\n\n\nHash: chmod,sdbootutil_t,var_run_t,dir,setattr\n"
+)
+
+
+@pytest.mark.parametrize(
+    ("signals", "expected"),
+    [
+        (f"AVC\n{_PERMISSIVE_AVC}", None),
+        (f"{_PERMISSIVE_AVC}\nYou are in emergency mode.", "boot reached emergency mode"),
+        (f"{_PERMISSIVE_AVC}\n{_ENFORCING_AVC}", "SELinux denial"),
+        (f"{_PERMISSIVE_AVC}{_ENFORCING_AVC}", "SELinux denial"),
+        (f"{_ENFORCING_AVC}{_PERMISSIVE_AVC}", "SELinux denial"),
+        (f"{_ENFORCING_AVC.replace(' permissive=0 ', ' ')}{_PERMISSIVE_AVC}", "SELinux denial"),
+        (f"{_KERNEL_AVC}[   12.4] dracut: FATAL: FIPS integrity test failed", "initrd FIPS integrity failure"),
+        (
+            f"You are in emergency mode. After logging in, type [   12.3] {_KERNEL_AVC}",
+            "boot reached emergency mode",
+        ),
+        (
+            (
+                "SELinux access check scon=system_u:system_r:init_t:s0 tcon=system_u:object_r:systemd_unit_file_t:s0"
+                " tclass=service perm=start state=permissive function=method_start_unit"
+                " path=/usr/lib/systemd/system/foo.service cmdline=n/a: Success"
+            ),
+            None,
+        ),
+    ],
+)
+def test_permissive_selinux_denial_is_no_key_error(signals: str, expected: str | None) -> None:
+    assert logs.summarize_key_error(signals) == expected
+
+
+def test_permissive_selinux_denials_on_a_long_line_of_records() -> None:
+    start = time.perf_counter()
+    assert logs.summarize_key_error("avc:  denied  { x } for " * 5000) == "SELinux denial"
+    assert time.perf_counter() - start < 2
+
+
+def test_permissive_selinux_denial_is_the_key_error_of_an_selinux_check() -> None:
+    assert logs.summarize_key_error(_PERMISSIVE_AVC, selinux_check=True) == "SELinux denial"
+
+
+@pytest.mark.parametrize(
+    "failing",
+    [
+        [_SEALERT_STEP, "Failed\n# Test died: output not validating"],
+        [f"AVC denial\n{_RAW_AVC}", "Failed\n# Test died: AVC denials detected at slem_basic.pm line 41."],
+        [f"AVC (unpermitted)\n{_RAW_AVC}"],
+    ],
+    ids=["sealert", "slem_basic", "AVC_FAIL_ON_DENIALS"],
+)
+def test_permissive_selinux_denial_is_the_key_error_of_a_failing_step_showing_it(failing: list[str]) -> None:
+    assert logs.summarize_key_error("\n".join(failing), failing) == "SELinux denial"
 
 
 def test_kdump_oops_symbol() -> None:

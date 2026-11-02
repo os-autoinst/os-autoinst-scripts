@@ -477,7 +477,10 @@ def _preamble(
     out: list[str] = []
     signals = "\n".join(_key_error_signals(failed_modules, boot_log, [consoles, job_files], uploads))
     failing = _failing_step_texts(job, failed_modules[:_MODULES_MAX])
-    if key_error := summarize_key_error(signals, failing):
+    selinux_check = any(
+        "selinux" in m.get("name", "") and m.get("result") == "failed" for m in failed_modules[:_MODULES_MAX]
+    )
+    if key_error := summarize_key_error(signals, failing, selinux_check=selinux_check):
         out += [redact(f"Key error: {key_error}"), ""]
     if (died := last_test_died(job.autoinst)) and died[1] > 1:
         out += [redact(f"Last test died ({died[1]} in autoinst-log.txt): {died[0]}"), ""]

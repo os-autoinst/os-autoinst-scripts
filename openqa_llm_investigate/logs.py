@@ -51,6 +51,11 @@ _KEY_RULES: list[tuple[re.Pattern[str], str]] = [
 ]
 # Verdicts that a stale or unrelated line can set too, like an AVC denial at boot: a failing step's verdict beats them.
 _GENERIC_VERDICTS = ("SELinux denial", "cloud-init error", "unexpected dialog")
+_DENIAL_RE = re.compile(r"avc:\s+denied|scon=")
+# A denial record up to its own permissive marker, never into the next record.
+_PERMISSIVE_DENIAL_RE = re.compile(
+    r"(?:avc:\s+denied|scon=)(?:(?!permissive=|state=|avc:\s+denied|scon=)[^\n])*(?:permissive=1|state=permissive)"
+)
 # Common output of any command, so they only read the steps that failed the module; `^\r?` allows `\n\r` line ends.
 _STEP_RULES: list[tuple[re.Pattern[str], str]] = [
     (re.compile(pattern, re.MULTILINE), template)
@@ -289,11 +294,17 @@ def _failing_step_verdict(texts: list[str]) -> str | None:
     return None
 
 
-def summarize_key_error(text: str, failing_steps: list[str] | None = None) -> str | None:
+def summarize_key_error(
+    text: str, failing_steps: list[str] | None = None, *, selinux_check: bool = False
+) -> str | None:
     """Return a one-line verdict for the first matching signal rule (None if no rule matches).
 
     A `_STEP_RULES` verdict for the texts of `failing_steps` beats the `_GENERIC_VERDICTS` rules, not the others.
+    Permissive SELinux denials were logged, not enforced: they only count for a `selinux_check` module or when a
+    failing step shows a denial.
     """
+    if not selinux_check and not any(_DENIAL_RE.search(t) for t in failing_steps or []):
+        text = _PERMISSIVE_DENIAL_RE.sub("", text)
     step = _failing_step_verdict(failing_steps or [])
     for rx, template in _KEY_RULES:
         if step and template.startswith(_GENERIC_VERDICTS):
