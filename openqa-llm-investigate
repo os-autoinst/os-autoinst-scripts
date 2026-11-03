@@ -28,8 +28,10 @@ from common.error_handling import is_404_str
 from common.smelt import submission_ids, submission_packages
 from openqa_llm_investigate.analysis import analyze_job
 from openqa_llm_investigate.commits import commits_section
+from openqa_llm_investigate.history import fetch_rows, is_reviewed
 from openqa_llm_investigate.http import AnalyzerError, NoFailedModulesError, OpenQA
 from openqa_llm_investigate.text import redact
+from openqa_llm_investigate.verdict import BISECT_RE, bisect_verdict, enforce_history_rules
 
 USER_AGENT = "openqa-llm-investigate (https://github.com/os-autoinst/os-autoinst-scripts)"
 DEFAULT_OPENQA_TIMEOUT: float = 90.0
@@ -107,7 +109,6 @@ OMISSION_NOTE_CHARS = 100
 COMMITS_MAX_SHARE = 0.1  # of the prompt characters; larger test commits are dropped before the analysis is cut
 TEMPERATURE = 0.3
 _PLACEHOLDER_REASON_RE = re.compile(r"\s*[\u2014-]\s*<?(?:your own )?(?:short )?reason>?\.?\s*$", re.IGNORECASE)
-_BISECT_RE = re.compile(r"^[\s*_`>-]*BISECT:\s*(YES|NO)\b", re.IGNORECASE)
 
 log = logging.getLogger(__name__)
 
@@ -425,9 +426,8 @@ def _fetch_job(client: httpx.Client, base_url: str, job_id: str) -> dict[str, An
     return job_data["job"]
 
 
-def _analyze(client: httpx.Client, base_url: str, job_id: str, job: dict[str, Any], opts: Options) -> str:
+def _analyze(oqa: OpenQA, job_id: str, job: dict[str, Any], opts: Options) -> str:
     """Return the failure analysis; exit when there is nothing to analyze unless forced."""
-    oqa = OpenQA(client, base_url)
     softfailed = job.get("result") == "softfailed"
     try:
         return analyze_job(oqa, job_id, context_lines=opts.context_lines, include_softfailed=softfailed, job=job)
@@ -442,14 +442,6 @@ def _analyze(client: httpx.Client, base_url: str, job_id: str, job: dict[str, An
     except Exception:
         log.exception("Unexpected error analyzing job %s", job_id)
         sys.exit(1)
-
-
-def _bisect_recommended(response: str) -> bool:
-    """Return True if the last `BISECT: YES|NO` verdict line of the response is YES."""
-    for ln in reversed(response.splitlines()):
-        if m := _BISECT_RE.match(ln):
-            return m.group(1).upper() == "YES"
-    return False
 
 
 def _cap_lines(text: str, max_lines: int) -> tuple[str, bool]:
@@ -523,7 +515,7 @@ def _enforce_bisect_rule(verdict: str, same_module_failures: int) -> str:
     if not same_module_failures:
         return verdict
     no = f"BISECT: NO \u2014 {same_module_failures} other job(s) in this build fail in the same module"
-    return "\n".join(no if _BISECT_RE.match(ln) else ln for ln in verdict.splitlines())
+    return "\n".join(no if BISECT_RE.match(ln) else ln for ln in verdict.splitlines())
 
 
 def _counted_run(job: dict[str, Any]) -> bool:
@@ -699,6 +691,7 @@ def _gather_stats(
         "build_failures": build_failures,
         "same_module_failures": same_module_failures,
         "consecutive_failures": consecutive_str,
+        "streak": consecutive_failures if job_found and job.get("result") == "failed" else None,
         "investigation_info": _investigation_text(investigation.get("diff_to_last_good")),
         "investigation": investigation,
         "submission_info": _submissions(client, job),
@@ -725,8 +718,14 @@ def _perform_investigation(client: httpx.Client, base_url: str, job_id: str, opt
     if not opts.force and job.get("result") in {"passed", "softfailed"}:
         log.info("Job %s %s, skipping investigation.", job_id, job.get("result"))
         sys.exit(0)
+    oqa = OpenQA(client, base_url)  # one instance, so the analysis reuses the rows fetched here from its cache
+    if not (opts.force or opts.dry or opts.print_prompt) and is_reviewed(fetch_rows(oqa, job_id)):
+        log.info("Job %s is already reviewed, skipping the LLM investigation.", job_id)
+        # no LLM verdict to gate on, so leave the job to the standard investigation
+        typer.echo(f"{base_url}/tests/{job_id}")
+        return
 
-    analysis = _analyze(client, base_url, job_id, job, opts)
+    analysis = _analyze(oqa, job_id, job, opts)
     stats, job_found = _gather_stats(client, base_url, job_id, job, opts)
     prompt, cut_notes = _build_prompt(job, analysis, stats, opts)
     if opts.print_prompt:
@@ -738,16 +737,31 @@ def _perform_investigation(client: httpx.Client, base_url: str, job_id: str, opt
     brief = _ask(client, opts, messages, BRIEF_QUESTION, TEMPERATURE)
     verdict = _ask(client, opts, messages, _verdict_question(stats, opts), 0.0)
     verdict = _enforce_bisect_rule(_drop_placeholder_reasons(verdict), stats["same_module_failures"])
-    llm_response = f"{lines}\n\n{brief}\n\n{verdict}"
+    verdict = enforce_history_rules(verdict, stats["streak"])
+    bisect = bisect_verdict(verdict)
+    if bisect is None:
+        log.info(
+            "Job %s: no BISECT line in the verdict reply %.100r, so the standard investigation runs", job_id, verdict
+        )
 
-    # Print the job URL to stdout ONLY if BISECT: YES is recommended
+    # Print the job URL to stdout unless BISECT: NO is recommended; without a verdict the standard investigation runs
     # This makes the script act as a gatekeeper, similar to `openqa-label-known-issues`
-    if _bisect_recommended(llm_response):
+    if bisect is not False:
         typer.echo(f"{base_url}/tests/{job_id}")
 
-    comment = f"{COMMENT_MARKER}\n\n{llm_response}{_comment_notes(cut_notes, opts, job_found=job_found)}"
+    comment = (
+        f"{COMMENT_MARKER}\n\n{lines}\n\n{brief}\n\n{verdict}{_comment_notes(cut_notes, opts, job_found=job_found)}"
+    )
+    if opts.dry or bisect is not None:
+        _post_summary(client, base_url, job_id, comment, opts)
+
+
+def _post_summary(client: httpx.Client, base_url: str, job_id: str, comment: str, opts: Options) -> None:
+    """Print the summary on --dry, else post it unless the job was reviewed meanwhile (--force posts anyway)."""
     if opts.dry:
         typer.echo(comment)
+    elif not opts.force and is_reviewed(fetch_rows(OpenQA(client, base_url), job_id, neighbours=False)):
+        log.info("Job %s was reviewed while the LLM answered, not posting the summary.", job_id)
     else:
         post_comment(base_url, job_id, f"{comment}\n\n{COMMENT_FOOTER}")
 
@@ -758,7 +772,8 @@ def investigate(  # ruff: ignore[too-many-arguments, too-many-positional-argumen
     verbose: Annotated[int, typer.Option("--verbose", "-v", count=True, help="Increase verbosity")] = 0,
     quiet: Annotated[bool, typer.Option("--quiet", "-q", help="Quiet mode")] = False,  # ruff: ignore[boolean-default-value-positional-argument]
     dry: Annotated[  # ruff: ignore[boolean-default-value-positional-argument]
-        bool, typer.Option("--dry", help="Dry run mode: output summary instead of posting a comment")
+        bool,
+        typer.Option("--dry", help="Dry run mode: output summary instead of posting a comment, even on a reviewed job"),
     ] = False,
     print_prompt: Annotated[  # ruff: ignore[boolean-default-value-positional-argument]
         bool,
@@ -772,7 +787,7 @@ def investigate(  # ruff: ignore[too-many-arguments, too-many-positional-argumen
         typer.Option(
             "--force",
             "-f",
-            help="Force another analysis even if an LLM comment already exists or if the job passed/softfailed",
+            help="Force another analysis even if the job is reviewed, has an LLM comment or passed/softfailed",
         ),
     ] = False,
     timeout: Annotated[

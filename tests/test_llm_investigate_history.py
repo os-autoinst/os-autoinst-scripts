@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -11,6 +12,7 @@ import pytest
 from openqa_llm_investigate import history
 
 if TYPE_CHECKING:
+    import httpx
     from pytest_mock import MockerFixture
 
 _JOB = {"job": {"group_id": 7, "settings": {"BUILD": "1.2"}}}
@@ -329,4 +331,83 @@ def test_earlier_reviews_reuse_the_history_response(make_openqa: Any, mocker: Mo
     lines = history.run_history(oqa, "42", {})
     expected = "Earlier reviews of runs failing in the same module: x (label, job 41, build 1.2)."
     assert (expected in lines) == bool(served)
+    assert [c.args[0] for c in get.call_args_list].count("https://srv/tests/42/ajax") == 1
+
+
+_REVIEWED = {"bugs": [{"content": "boo#1288770"}], "comments": None, "label": None, "reviewed": 1}
+_LABELLED = {"bugs": [], "label": "x", "reviewed": 1}
+_COMMENTED = {"bugs": [], "comments": 1, "label": None, "reviewed": None}
+
+
+def _own_rows(current: Any, latest: Any = 0) -> list[dict[str, Any]]:
+    """Return 'Next & previous results' rows with the comment data of the job (1) and of the latest job (2)."""
+    return [{"id": 2, "islatest": 1, "comment_data": latest}, {"id": 1, "iscurrent": 1, "comment_data": current}]
+
+
+@pytest.mark.parametrize(
+    ("comment_data", "reviewed"),
+    [
+        pytest.param(_REVIEWED, True, id="bugref"),
+        pytest.param(_LABELLED, True, id="label"),
+        pytest.param({"bugs": [], "label": "linked:gh#o/r#1", "reviewed": 1}, True, id="linked-label"),
+        pytest.param(_COMMENTED, False, id="comments-without-bugref-or-label"),
+        pytest.param(0, False, id="no-comments"),
+    ],
+)
+def test_is_reviewed_follows_openqa(comment_data: Any, *, reviewed: bool) -> None:
+    assert history.is_reviewed(_own_rows(comment_data)) is reviewed
+
+
+@pytest.mark.parametrize(
+    "rows",
+    [
+        pytest.param(_own_rows(_COMMENTED, latest=_REVIEWED), id="another-job-reviewed"),
+        pytest.param([{"id": 2, "comment_data": _REVIEWED}], id="no-row-of-the-job"),
+        pytest.param([], id="no-rows"),
+    ],
+)
+def test_is_reviewed_reads_only_the_row_of_the_job(rows: list[dict[str, Any]]) -> None:
+    assert not history.is_reviewed(rows)
+
+
+@pytest.mark.parametrize(
+    ("neighbours", "params"),
+    [
+        pytest.param(True, {}, id="with-neighbours"),
+        pytest.param(False, {"previous_limit": "0", "next_limit": "0"}, id="smallest-page"),
+    ],
+)
+def test_fetch_rows_asks_for_the_neighbours_or_the_smallest_page(
+    make_openqa: Any, params: dict[str, str], *, neighbours: bool
+) -> None:
+    seen = []
+
+    def route(request: httpx.Request) -> str:
+        seen.append(dict(request.url.params))
+        return json.dumps({"data": _own_rows(0)})
+
+    assert history.fetch_rows(make_openqa({"/tests/1/ajax": route}), "1", neighbours=neighbours) == _own_rows(0)
+    assert seen == [params]
+
+
+@pytest.mark.parametrize(
+    "routes", [pytest.param({}, id="not-found"), pytest.param({"/tests/1/ajax": "[]"}, id="malformed-page")]
+)
+def test_fetch_rows_warns_and_returns_no_rows_when_openqa_cannot_tell(
+    make_openqa: Any, routes: dict[str, str], caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.WARNING):
+        assert history.fetch_rows(make_openqa(routes), "1") == []
+    assert "Could not fetch the next & previous results of job 1" in caplog.text
+
+
+def test_run_history_reuses_rows_fetched_before_through_the_same_openqa(
+    make_openqa: Any, mocker: MockerFixture
+) -> None:
+    rows = [{**_hist(42, "failed", ("a",)), "iscurrent": 1}, _commented(_hist(41, "failed", ("a",)), label="x")]
+    oqa = make_openqa({"/tests/42/ajax": json.dumps({"data": rows}), "/tests/*/details_ajax": json.dumps(_ONE_FAILED)})
+    get = mocker.spy(oqa.client, "get")
+    assert not history.is_reviewed(history.fetch_rows(oqa, "42"))
+    lines = history.run_history(oqa, "42", {})
+    assert "Earlier reviews of runs failing in the same module: x (label, job 41, build 1.2)." in lines
     assert [c.args[0] for c in get.call_args_list].count("https://srv/tests/42/ajax") == 1

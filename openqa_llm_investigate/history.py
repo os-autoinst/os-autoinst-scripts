@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -24,6 +25,8 @@ _REVIEWS_SHOWN = 5
 _COMMAND_MAX_CHARS = 80
 _BY_ID = itemgetter("id")
 _BEST_EFFORT_ERRORS = (AnalyzerError, AttributeError, KeyError, TypeError, ValueError)
+
+log = logging.getLogger(__name__)
 
 
 @dataclass
@@ -126,7 +129,7 @@ def _runs_text(label: str, runs: list[JsonDict], lookups: _Lookups) -> str:
 
 def _neighbour_summary(lookups: _Lookups, job_id: str) -> str | None:
     """Return the result of the previous/next runs shown in openQA's 'Next & previous results'."""
-    data = lookups.rows = lookups.oqa.json(f"/tests/{job_id}/ajax")["data"]
+    data = lookups.rows = fetch_rows(lookups.oqa, job_id)
     cur = int(job_id)
     done = {j["id"]: j for j in data if j.get("state") == "done" and j["id"] != cur}
     prev = sorted((j for i, j in done.items() if i < cur), key=_BY_ID, reverse=True)
@@ -213,6 +216,31 @@ def _sibling_summary(lookups: _Lookups, job_id: str, job: JsonDict) -> str | Non
     if ok == len(others):
         return f"Same group+build: everything else succeeded, all {ok} other jobs {where} passed or softfailed."
     return f"Same group+build: no other job {where} failed ({rest})."
+
+
+def fetch_rows(oqa: OpenQA, job_id: str, *, neighbours: bool = True) -> list[JsonDict]:
+    """Return the job's rows of openQA's 'Next & previous results', its own included ([] when they cannot be fetched).
+
+    Without `neighbours` openQA's smallest page (previous_limit=0, next_limit=0), e.g. to see whether the job was
+    reviewed meanwhile.
+    """
+    query = "" if neighbours else "?previous_limit=0&next_limit=0"
+    try:
+        return oqa.json(f"/tests/{job_id}/ajax{query}")["data"]
+    except _BEST_EFFORT_ERRORS as e:
+        log.warning("Could not fetch the next & previous results of job %s: %s", job_id, redact(repr(e)))
+        return []
+
+
+def is_reviewed(rows: list[JsonDict]) -> bool:
+    """Return whether the rows show the job as reviewed: one of its comments carries a bugref or a label.
+
+    openQA decides this itself, so comments with flag:verbatim, like our own summaries, do not count, while a
+    label:linked does: openQA adds it when someone opens the job from a ticket or PR.
+    """
+    current = next((j for j in rows if j.get("iscurrent")), {})
+    comment_data = current.get("comment_data")
+    return isinstance(comment_data, dict) and bool(comment_data.get("reviewed"))
 
 
 def run_history(oqa: OpenQA, job_id: str, job: JsonDict) -> list[str]:
