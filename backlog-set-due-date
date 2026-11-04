@@ -15,6 +15,9 @@ Usage: $0 [OPTIONS]
 This script sets the due date on tickets in Redmine based on
 specified conditions.
 
+By default it sets due dates on In Progress tickets. With --clear
+it removes due dates from Resolved tickets instead.
+
 If you want to run this for testing there are two options:
 1. Run the script without updating the tickets
 dry_run=1 ./backlog-set-due-date
@@ -24,16 +27,29 @@ dry_run=1 ./backlog-set-due-date <issues-json-file>
 
 Options:
  -h, --help         display this help
+ -c, --clear        remove due dates from Resolved tickets
 EOF
     exit "$1"
 }
 
+update-due-date() {
+    local due_date=$1 notes=$2 id=$3
+    $prefix curl -v -H "X-Redmine-API-Key: $redmine_api_key" -H 'Content-Type: application/json' -X PUT \
+        -d "{\"issue\": {\"due_date\": \"$due_date\", \"notes\": \"$notes\"}}" \
+        "$host/issues/$id.json"
+}
+
 main() {
-    opts=$(getopt -o h -l help -n "$0" -- "$@") || usage 1
+    local clear=0
+    opts=$(getopt -o hc -l help,clear -n "$0" -- "$@") || usage 1
     eval set -- "$opts"
     while true; do
         case "$1" in
             -h | --help) usage 0 ;;
+            -c | --clear)
+                clear=1
+                shift
+                ;;
             --)
                 shift
                 break
@@ -42,8 +58,13 @@ main() {
         esac
     done
 
-    issues=$(mktemp -t backlog-set-due-date-XXXX)
-    jquery=".issues | .[] | select(.priority.name!=\"$priority\" and .due_date==null and .assigned_to!=null and .status.name==\"$status\")"
+    if [ "$clear" = "1" ]; then
+        jquery=".issues | .[] | select(.due_date!=null and .status.name==\"Resolved\")"
+    else
+        jquery=".issues | .[] | select(.priority.name!=\"$priority\" and .due_date==null and .assigned_to!=null and .status.name==\"$status\")"
+    fi
+
+    issues=$(mktemp -t backlog-due-date-XXXX)
 
     if [ $# -eq 1 ] && [ -f "$1" ] && [ "$dry_run" = "1" ]; then
         jq -r "$jquery" "$1" > "$issues"
@@ -54,13 +75,18 @@ main() {
 
     [ "$dry_run" = "1" ] && prefix="echo"
 
-    for id in $(jq .id "$issues"); do
-        due_date=$(date -d"+$duration" +%Y-%m-%d)
-        echo "Updating ticket $id, new due date setup to $due_date"
-        $prefix curl -v -H "X-Redmine-API-Key: $redmine_api_key" -H 'Content-Type: application/json' -X PUT \
-            -d "{\"issue\": {\"due_date\": \"$due_date\", \"notes\": \"Setting due date based on mean cycle time of SUSE QE Tools\"}}" \
-            "$host/issues/$id.json"
-    done
+    if [ "$clear" = "1" ]; then
+        for id in $(jq .id "$issues"); do
+            echo "Clearing due date for resolved ticket $id"
+            update-due-date null "Removing due date because ticket is Resolved" "$id"
+        done
+    else
+        for id in $(jq .id "$issues"); do
+            due_date=$(date -d"+$duration" +%Y-%m-%d)
+            echo "Updating ticket $id, new due date setup to $due_date"
+            update-due-date "$due_date" "Setting due date based on mean cycle time of SUSE QE Tools" "$id"
+        done
+    fi
 }
 
 caller 0 > /dev/null || main "$@"
