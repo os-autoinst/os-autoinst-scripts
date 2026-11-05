@@ -247,6 +247,41 @@ def extract_obscpio(archive: pathlib.Path, target_dir: pathlib.Path) -> None:
         raise
 
 
+def extract_package_obscpio(archive: pathlib.Path, target_dir: pathlib.Path) -> None:
+    """Extract a package obscpio archive and place contents in target_dir."""
+    target_dir.parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(dir=target_dir.parent) as tmp_dir:
+        tmp_path = pathlib.Path(tmp_dir)
+        extract_obscpio(archive, tmp_path)
+        items = list(tmp_path.iterdir())
+        if len(items) == 1 and items[0].is_dir():
+            if target_dir.exists():
+                shutil.rmtree(target_dir)
+            shutil.move(str(items[0]), str(target_dir))
+        else:
+            if target_dir.exists():
+                shutil.rmtree(target_dir)
+            target_dir.mkdir(parents=True, exist_ok=True)
+            for item in items:
+                shutil.move(str(item), str(target_dir / item.name))
+
+
+def add_create_archive_directive(file: pathlib.Path, package: str) -> None:
+    """Ensure the spec file has a #!CreateArchive directive for the package."""
+    content = file.read_text(encoding="utf-8")
+
+    pattern = r"(?:^#!(?:CreateArchive|createarchive)[^\n]*\n)?^(Source0?:\s*.*)$"
+    new_content, count = re.subn(pattern, f"#!CreateArchive: {package}\n\\1", content, count=1, flags=re.MULTILINE)
+
+    if count > 0 and new_content != content:
+        file.write_text(new_content, encoding="utf-8")
+        log.info("Successfully updated %s with #!CreateArchive: %s", file.name, package)
+    elif count > 0:
+        log.info("%s already contains #!CreateArchive: %s; no changes made.", file.name, package)
+    else:
+        log.info("%s does not contain Source/Source0; no changes made.", file.name)
+
+
 def replace_node_modules_handling(file: pathlib.Path) -> None:
     content = file.read_text(encoding="utf-8")
 
@@ -562,9 +597,13 @@ class AutoSubmitter:
         for item in source_dir.iterdir():
             if item.name == "node_modules.obscpio":
                 extract_obscpio(item, target_dir=pathlib.Path() / "node_modules")
+            elif item.name.endswith(".obscpio"):
+                extract_package_obscpio(item, target_dir=pathlib.Path() / package)
             elif item.name.endswith(".spec"):
                 shutil.copy2(item, ".")
                 replace_node_modules_handling(pathlib.Path(item.name))
+                if item.name == f"{package}.spec" or not (source_dir / f"{package}.spec").exists():
+                    add_create_archive_directive(pathlib.Path(item.name), package)
             elif item.name == "node_modules.spec.inc":
                 pass
             elif item.is_file():
