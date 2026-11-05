@@ -438,6 +438,54 @@ def test_make_obs_submit_request_failure(mocker: MockerFixture) -> None:
         submitter.make_obs_submit_request("pkg", "Factory", "3.14")
 
 
+def test_make_obs_submit_request_no_push(mocker: MockerFixture) -> None:
+    mock_run = mocker.patch("auto_submit.run_osc_cmd")
+    submitter = auto_submit.AutoSubmitter(
+        dst_project="dst",
+        osc_cmd_str="osc",
+        no_push=True,
+    )
+    submitter.make_obs_submit_request("pkg", "Factory", "3.14")
+    mock_run.assert_not_called()
+
+
+def test_commit_and_push_no_push(mocker: MockerFixture) -> None:
+    mock_run = mocker.patch("auto_submit._run_cmd")
+    submitter = auto_submit.AutoSubmitter(
+        git_cmd_str="git",
+        no_push=True,
+    )
+    submitter._commit_and_push("Update to 3.14", "leap-16.0")
+    assert mock_run.call_count == 2
+    mock_run.assert_any_call(["git", "add", "--all"], check=True)
+    mock_run.assert_any_call(["git", "commit", "--message", "Update to 3.14"], check=True)
+
+
+def test_create_pull_request_no_push(mocker: MockerFixture) -> None:
+    mock_run = mocker.patch("auto_submit._run_cmd")
+    submitter = auto_submit.AutoSubmitter(
+        git_obs_no_retry_cmd_str="git-obs",
+        no_push=True,
+    )
+    submitter._create_pull_request("title", "description", "leap-16.0")
+    mock_run.assert_not_called()
+
+
+def test_commit_local_changes_no_push(mocker: MockerFixture) -> None:
+    mocker.patch(
+        "auto_submit.run_osc_cmd",
+        return_value=subprocess.CompletedProcess(["osc", "status"], 0, stdout="M pkg.spec\n"),
+    )
+    mock_wait = mocker.patch("auto_submit.AutoSubmitter.wait_for_package_build")
+    submitter = auto_submit.AutoSubmitter(
+        dst_project="dst",
+        no_push=True,
+    )
+    res = submitter._commit_local_changes("pkg", "3.14")
+    assert res == auto_submit.CommitResult.SUCCESS
+    mock_wait.assert_not_called()
+
+
 def test_last_revision(mocker: MockerFixture, caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO)
     sha = "c0f8ee6a233ed250dbc54c19dee50118"
@@ -557,6 +605,42 @@ def test_run_submissions_force(mocker: MockerFixture) -> None:
         text=False,
         check=True,
     )
+
+
+def test_run_submissions_work_dir_and_no_push(
+    tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    work_dir = tmp_path / "custom_work_dir"
+    mock_submitter = mocker.patch("auto_submit.AutoSubmitter")
+    instance = mock_submitter.return_value
+    instance.handle_auto_submit.return_value = True
+    instance.failed_packages = []
+
+    auto_submit._run_submissions(
+        src_project="devel:openQA",
+        dst_project="devel:openQA:tested",
+        staging_project="devel:openQA:testing",
+        submit_target="none",
+        dry_run=False,
+        force=False,
+        no_push=True,
+        work_dir=work_dir,
+        osc_poll_interval=2,
+        osc_build_start_poll_tries=90,
+        throttle_days=2,
+        throttle_days_leap_16=7,
+        git_user="user",
+        submit_target_extra="none",
+        packages="pkg1",
+        skip_wait_for_build=True,
+        cleanup_dir=True,
+    )
+
+    assert work_dir.exists()
+    mock_submitter.assert_called_once()
+    assert mock_submitter.call_args.kwargs["no_push"] is True
+    assert mock_submitter.call_args.kwargs["dir"] == work_dir.resolve()
 
 
 def test_run_osc_cmd_error_logging(caplog: pytest.LogCaptureFixture, mocker: MockerFixture) -> None:
