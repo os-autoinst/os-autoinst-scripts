@@ -356,6 +356,44 @@ def test_copy_files_to_clone(
     assert not (clonedir / ".osc").exists()
 
 
+def test_copy_files_to_clone_with_package_obscpio(
+    mocker: MockerFixture,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_extract_pkg = mocker.patch("auto_submit.extract_package_obscpio", return_value=None)
+    sourcedir = tmp_path / "dst" / "os-autoinst"
+    clonedir = tmp_path / "git" / "os-autoinst"
+    sourcedir.mkdir(parents=True)
+    clonedir.mkdir(parents=True)
+    (sourcedir / "os-autoinst-5.1.obscpio").touch()
+    (sourcedir / "os-autoinst.obsinfo").touch()
+    (sourcedir / "os-autoinst.changes").touch()
+    (sourcedir / "os-autoinst.spec").write_text("Source0:        %{name}-%{version}.tar.xz\n")
+    (sourcedir / "os-autoinst-test.spec").write_text("BuildRequires:  os-autoinst == %{version}\n")
+
+    monkeypatch.chdir(clonedir)
+    submitter = auto_submit.AutoSubmitter(
+        dir=tmp_path,
+        dst_project="dst",
+    )
+    submitter._copy_files_to_clone("os-autoinst")
+
+    mock_extract_pkg.assert_called_once_with(
+        sourcedir / "os-autoinst-5.1.obscpio",
+        target_dir=pathlib.Path("os-autoinst"),
+    )
+    assert not (clonedir / "os-autoinst-5.1.obscpio").exists()
+    assert (clonedir / "os-autoinst.obsinfo").exists()
+    assert (clonedir / "os-autoinst.changes").exists()
+
+    spec_content = (clonedir / "os-autoinst.spec").read_text()
+    assert spec_content == "#!CreateArchive: os-autoinst\nSource0:        %{name}-%{version}.tar.xz\n"
+
+    test_spec_content = (clonedir / "os-autoinst-test.spec").read_text()
+    assert test_spec_content == "BuildRequires:  os-autoinst == %{version}\n"
+
+
 def test_make_obs_submit_request_success(mocker: MockerFixture) -> None:
     mocker.patch("auto_submit.get_obs_sr_id", return_value="23")
     mock_run = mocker.patch("auto_submit.run_osc_cmd")
@@ -705,6 +743,89 @@ BuildRequires:  fdupes
     assert (
         caplog.records[0].getMessage() == "openQA.spec does not contain node_modules specific sources; no changes made."
     )
+
+
+def test_extract_package_obscpio(tmp_path: pathlib.Path) -> None:
+    cpio = pathlib.Path() / "tests" / "data" / "test.cpio"
+    target = tmp_path / "os-autoinst"
+
+    auto_submit.extract_package_obscpio(cpio, target_dir=target)
+    assert target.exists()
+    assert (target / "file1").exists()
+    assert (target / "subdir" / "file2").exists()
+
+
+def test_extract_package_obscpio_flat(mocker: MockerFixture, tmp_path: pathlib.Path) -> None:
+    def fake_extract(_archive: pathlib.Path, target_dir: pathlib.Path) -> None:
+        (target_dir / "fileA").touch()
+        (target_dir / "fileB").touch()
+
+    mocker.patch("auto_submit.extract_obscpio", side_effect=fake_extract)
+    target = tmp_path / "flat-pkg"
+
+    auto_submit.extract_package_obscpio(pathlib.Path("dummy.obscpio"), target_dir=target)
+    assert target.exists()
+    assert (target / "fileA").exists()
+    assert (target / "fileB").exists()
+
+
+def test_add_create_archive_directive(
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: pathlib.Path,
+) -> None:
+    caplog.set_level(logging.INFO)
+
+    specfile = tmp_path / "os-autoinst.spec"
+    content = """
+Source0:        %{name}-%{version}.tar.xz
+BuildRequires:  ninja
+"""
+    specfile.write_text(content)
+    expected = """
+#!CreateArchive: os-autoinst
+Source0:        %{name}-%{version}.tar.xz
+BuildRequires:  ninja
+"""
+    auto_submit.add_create_archive_directive(specfile, "os-autoinst")
+    assert specfile.read_text() == expected
+    assert caplog.records[0].getMessage() == "Successfully updated os-autoinst.spec with #!CreateArchive: os-autoinst"
+
+    caplog.clear()
+
+    # Already has matching #!CreateArchive: os-autoinst
+    auto_submit.add_create_archive_directive(specfile, "os-autoinst")
+    assert specfile.read_text() == expected
+    assert (
+        caplog.records[0].getMessage()
+        == "os-autoinst.spec already contains #!CreateArchive: os-autoinst; no changes made."
+    )
+
+    caplog.clear()
+
+    # Replaces bare #!CreateArchive before Source0
+    specfile.write_text("""
+#!CreateArchive
+Source0:        %{name}-%{version}.tar.xz
+""")
+    auto_submit.add_create_archive_directive(specfile, "os-autoinst")
+    assert (
+        specfile.read_text()
+        == """
+#!CreateArchive: os-autoinst
+Source0:        %{name}-%{version}.tar.xz
+"""
+    )
+
+    caplog.clear()
+
+    # Spec without Source / Source0
+    specfile.write_text("""
+Name:           test-spec
+BuildRequires:  fdupes
+""")
+    auto_submit.add_create_archive_directive(specfile, "test-pkg")
+    assert "test-pkg" not in specfile.read_text()
+    assert caplog.records[0].getMessage() == "os-autoinst.spec does not contain Source/Source0; no changes made."
 
 
 def test_diff_text_has_single_added_block() -> None:
