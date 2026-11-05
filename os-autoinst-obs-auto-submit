@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import difflib
 import json
@@ -380,6 +381,8 @@ class AutoSubmitter:
     staging_project: str = ""
     submit_target: str = "openSUSE:Factory"
     dry_run: bool = False
+    no_push: bool = False
+    force: bool = False
     osc_poll_interval: int = 2
     osc_build_start_poll_tries: int = 90
     throttle_days: int = 2
@@ -461,6 +464,10 @@ class AutoSubmitter:
         version: str,
     ) -> None:
         """Create an OBS submit request."""
+        if self.no_push:
+            log.info("[no-push] Skipping OBS submit request for %s to %s", package, target)
+            return
+
         req = get_obs_sr_id(target, self.dst_project, package, self.osc_cmd_str, dry_run=self.dry_run)
         cmd = [*shlex.split(self.osc_cmd_str), "sr"]
         if req:
@@ -626,6 +633,10 @@ class AutoSubmitter:
             log.info("[dry-run] Would execute: %s", " ".join(add_cmd))
             log.info("[dry-run] Would execute: %s", " ".join(commit_cmd))
             log.info("[dry-run] Would execute: %s", " ".join(push_cmd))
+        elif self.no_push:
+            _run_cmd(add_cmd, check=True)
+            _run_cmd(commit_cmd, check=True)
+            log.info("[no-push] Skipping git push to origin %s", branch)
         else:
             _run_cmd(add_cmd, check=True)
             _run_cmd(commit_cmd, check=True)
@@ -644,8 +655,9 @@ class AutoSubmitter:
             description,
             f"--target-branch={branch}",
         ]
-        if self.dry_run:
-            log.info("[dry-run] Would execute: %s", " ".join(pr_cmd))
+        if self.dry_run or self.no_push:
+            prefix = "[dry-run]" if self.dry_run else "[no-push]"
+            log.info("%s Would execute: %s", prefix, " ".join(pr_cmd))
             return
 
         sleep_time = 3
@@ -699,7 +711,7 @@ class AutoSubmitter:
         throttle_days_value = (
             self.throttle_days_leap_16 if throttle_var == "throttle_days_leap_16" else self.throttle_days
         )
-        if throttle_days_value == 0:
+        if throttle_days_value == 0 or self.no_push or self.force:
             return False
 
         log.info("has_pending_submission(%s, %s)", package, target)
@@ -833,7 +845,12 @@ class AutoSubmitter:
 
         if relevant_changes < 1:
             log.info("## Not updating package '%s/%s' as only changelogs were modified", self.dst_project, package)
-            return CommitResult.NO_CHANGES
+            if not (self.force or self.no_push):
+                return CommitResult.NO_CHANGES
+
+        if self.no_push:
+            log.info("[no-push] Skipping committing changes to OBS %s/%s", self.dst_project, package)
+            return CommitResult.SUCCESS
 
         ci_args = []
         if package == "os-autoinst-distri-opensuse-deps" or "container" in package:
@@ -975,6 +992,19 @@ class AutoSubmitter:
             dry_run=self.dry_run,
             mutating=False,
         )
+        target_path = pathlib.Path(project, package)
+        if target_path.exists():
+            up_args = ["up"]
+            if server_side:
+                up_args.append("--server-side-source-service-files")
+            up_args.append(str(target_path))
+            run_osc_cmd(
+                [*shlex.split(self.osc_cmd_str), *up_args],
+                dry_run=self.dry_run,
+                mutating=False,
+            )
+            return
+
         co_args = ["co"]
         if server_side:
             co_args.append("--server-side-source-service-files")
@@ -994,7 +1024,7 @@ class AutoSubmitter:
 
         self._osc_co(self.src_project, package, server_side=True)
 
-        if self._is_package_up_to_date(package):
+        if not self.force and self._is_package_up_to_date(package):
             return True
 
         self._osc_co(self.dst_project, package)
@@ -1077,6 +1107,8 @@ def _run_submissions(  # ruff: ignore[complex-structure, too-many-branches, too-
     *,
     dry_run: bool,
     force: bool,
+    no_push: bool = False,
+    work_dir: pathlib.Path | None = None,
     osc_poll_interval: int,
     osc_build_start_poll_tries: int,
     throttle_days: int,
@@ -1109,7 +1141,7 @@ def _run_submissions(  # ruff: ignore[complex-structure, too-many-branches, too-
     if submit_target_extra and submit_target_extra != "none":
         targets.extend(submit_target_extra.split(","))
 
-    if force:
+    if force and not no_push:
         skip_file = pathlib.Path("job_post_skip_submission")
         if skip_file.exists():
             log.info("Force mode enabled: removing '%s' upfront", skip_file)
@@ -1148,9 +1180,18 @@ def _run_submissions(  # ruff: ignore[complex-structure, too-many-branches, too-
         actual_src_project = staging_project
         must_cleanup_staging = True
 
-    with tempfile.TemporaryDirectory(
-        prefix="os-autoinst-obs-auto-submit-", dir=tmpdir_base, delete=cleanup_dir
-    ) as tmpdir_path:
+    work_dir_path: pathlib.Path | None = None
+    if work_dir is not None:
+        work_dir_path = pathlib.Path(work_dir).resolve()
+        work_dir_path.mkdir(parents=True, exist_ok=True)
+
+    tmp_ctx = (
+        contextlib.nullcontext(enter_result=str(work_dir_path))
+        if work_dir_path is not None
+        else tempfile.TemporaryDirectory(prefix="os-autoinst-obs-auto-submit-", dir=tmpdir_base, delete=cleanup_dir)
+    )
+
+    with tmp_ctx as tmpdir_path:
         submitter = AutoSubmitter(
             dir=pathlib.Path(tmpdir_path),
             src_project=actual_src_project,
@@ -1158,6 +1199,8 @@ def _run_submissions(  # ruff: ignore[complex-structure, too-many-branches, too-
             staging_project=staging_project,
             submit_target=submit_target,
             dry_run=dry_run,
+            no_push=no_push,
+            force=force,
             osc_poll_interval=osc_poll_interval,
             osc_build_start_poll_tries=osc_build_start_poll_tries,
             throttle_days=throttle_days,
@@ -1180,7 +1223,7 @@ def _run_submissions(  # ruff: ignore[complex-structure, too-many-branches, too-
                     submitter.failed_packages.append(package)
                 rc = 1
 
-            if must_cleanup_staging:
+            if must_cleanup_staging and not no_push:
                 del_cmd = [
                     *shlex.split(osc_cmd_str),
                     "rdelete",
@@ -1202,7 +1245,7 @@ def _run_submissions(  # ruff: ignore[complex-structure, too-many-branches, too-
     os.chdir(original_dir)
 
     # Cleanup obs project
-    if force or not pathlib.Path("job_post_skip_submission").exists():
+    if (force or not pathlib.Path("job_post_skip_submission").exists()) and not no_push:
         cleanup_cmd = ["cleanup-obs-project", "devel:openQA:testing", "I am sure"]
         if dry_run:
             log.info("[dry-run] Would execute: %s", " ".join(cleanup_cmd))
@@ -1220,6 +1263,8 @@ def main(  # ruff: ignore[too-many-arguments, too-many-positional-arguments]
     staging_project: Annotated[str, typer.Option(envvar="staging_project")] = "",
     submit_target: Annotated[str, typer.Option(envvar="submit_target")] = "openSUSE:Factory",
     dry_run: Annotated[bool, typer.Option(envvar="dry_run")] = False,
+    no_push: Annotated[bool, typer.Option("--no-push", envvar="no_push")] = False,
+    work_dir: Annotated[pathlib.Path | None, typer.Option("--work-dir", envvar="work_dir")] = None,
     osc_poll_interval: Annotated[int, typer.Option(envvar="osc_poll_interval")] = 2,
     osc_build_start_poll_tries: Annotated[int, typer.Option(envvar="osc_build_start_poll_tries")] = 90,
     throttle_days: Annotated[int, typer.Option(envvar="throttle_days")] = 2,
@@ -1253,6 +1298,8 @@ def main(  # ruff: ignore[too-many-arguments, too-many-positional-arguments]
         submit_target=submit_target,
         dry_run=dry_run,
         force=force,
+        no_push=no_push,
+        work_dir=work_dir,
         osc_poll_interval=osc_poll_interval,
         osc_build_start_poll_tries=osc_build_start_poll_tries,
         throttle_days=throttle_days,
