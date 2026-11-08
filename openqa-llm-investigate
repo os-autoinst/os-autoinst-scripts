@@ -244,6 +244,7 @@ class Options:
     force: bool = False
     dry: bool = False
     print_prompt: bool = False
+    job_id: str = ""
 
 
 def fetch_json(
@@ -386,7 +387,10 @@ def _call_llm_api(client: httpx.Client, opts: Options, messages: list[dict[str, 
     kind = _api_kind(opts)
     if kind == LlmApi.VERTEX:
         llm_url, llm_token = _vertex_request(client, llm_token, llm_model)
-    headers = {"Authorization": f"Bearer {llm_token}"} if llm_token else {}
+    # lets a load balancer send all requests of one job to the LLM server that has the chat in its prompt cache
+    headers = ({"X-Openqa-Job": opts.job_id} if opts.job_id else {}) | (
+        {"Authorization": f"Bearer {llm_token}"} if llm_token else {}
+    )
     try:
         res = client.post(llm_url, json=_llm_payload(opts, messages, temperature), headers=headers, timeout=timeout)
         res.raise_for_status()
@@ -900,6 +904,7 @@ def investigate(  # ruff: ignore[too-many-arguments, too-many-positional-argumen
         force=force,
         dry=dry,
         print_prompt=print_prompt,
+        job_id=job_id,
     )
     transport = RetryTransport(retries=retries)
     with httpx.Client(transport=transport, headers={"User-Agent": USER_AGENT}, timeout=openqa_timeout) as client:
