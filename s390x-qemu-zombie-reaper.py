@@ -524,6 +524,7 @@ def restart_failed_jobs(jobs: list[int], config: ReaperConfig) -> None:
         else:
             print(f"Retriggering job {job_id}...")
             run_cmd(retrigger_cmd, verbose=config.verbose, timeout=config.cmd_timeout)
+    print("Job retriggering complete.")
 
 
 def trigger_actions(
@@ -602,8 +603,7 @@ def find_critical(host: str, config: ReaperConfig) -> str | None:
                 key=lambda x: int(x) if x.isdigit() else x,
             )
             return f"!!! CRITICAL: Found persistent zombie processes on {host}: {', '.join(stuck_pids)}"
-        if config.verbose:
-            print(f"Zombies on {host} were transient or PIDs were reused.")
+        print(f"Zombies on {host} were transient or PIDs were reused. No persistent zombies found on {host}.")
 
     if not check_libvirt_health(host, config):
         return f"!!! CRITICAL: libvirt is unhealthy on {host}"
