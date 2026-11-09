@@ -148,6 +148,9 @@ docstring-code-format = true
 [tool.ty.analysis]
 allowed-unresolved-imports = ["netsnmp"]
 
+[tool.ty.environment]
+python-version = "3.12"
+
 [tool.ruff.lint.flake8-copyright]
 author = "SUSE LLC"
 notice-rgx = "Copyright"
@@ -156,7 +159,7 @@ notice-rgx = "Copyright"
 # sh uses __getattr__ to dynamically wrap system commands (e.g. ping), so its
 # members are not statically resolvable. netsnmp is a C extension installed as
 # a system package (python3-netsnmp) and has no stubs available on PyPI.
-unresolved-import = "ignore"
+import-not-found = "ignore"
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "os.system".msg = "Use `subprocess.run` or `sh` library instead."
