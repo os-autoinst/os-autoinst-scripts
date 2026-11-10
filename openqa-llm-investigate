@@ -718,6 +718,12 @@ def _perform_investigation(client: httpx.Client, base_url: str, job_id: str, opt
     if not opts.force and job.get("result") in {"passed", "softfailed"}:
         log.info("Job %s %s, skipping investigation.", job_id, job.get("result"))
         sys.exit(0)
+    # --force ignores NO_LLM_INVESTIGATION
+    if not opts.force and job.get("settings", {}).get("NO_LLM_INVESTIGATION") == "1":
+        log.info("Job %s has NO_LLM_INVESTIGATION=1, skipping the LLM investigation.", job_id)
+        # Hand over to standard investigation
+        typer.echo(f"{base_url}/tests/{job_id}")
+        return
     oqa = OpenQA(client, base_url)  # one instance, so the analysis reuses the rows fetched here from its cache
     if not (opts.force or opts.dry or opts.print_prompt) and is_reviewed(fetch_rows(oqa, job_id)):
         log.info("Job %s is already reviewed, skipping the LLM investigation.", job_id)

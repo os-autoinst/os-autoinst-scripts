@@ -171,6 +171,8 @@ following scripts are provided:
 
 It passes the optional openQA variable `LLM_PROMPT_EXTENSION` (per test suite or job group) to the LLM.
 
+It skips jobs with the openQA variable `NO_LLM_INVESTIGATION=1`.
+
 If `SMELT_GRAPHQL_URL` is set to a SMELT GraphQL endpoint, the submissions from the job's `*_TEST_ISSUES` settings and their packages are added to the prompt. If unset or unreachable, the section is omitted.
 To check it by hand without calling the LLM: `SMELT_GRAPHQL_URL=<url> ./openqa-llm-investigate --print-prompt <job URL>`
 
