@@ -148,6 +148,9 @@ docstring-code-format = true
 [tool.ty.analysis]
 allowed-unresolved-imports = ["netsnmp"]
 
+[tool.ty.environment]
+python-version = "3.12"
+
 [tool.ruff.lint.flake8-copyright]
 author = "SUSE LLC"
 notice-rgx = "Copyright"

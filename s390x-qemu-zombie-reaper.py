@@ -88,6 +88,8 @@ for entry in os.scandir('/proc'):
         continue
 """.strip()
 
+FAILED_JOB_RESULTS = frozenset({"failed", "incomplete", "parallel_failed", "timeout_exceeded"})
+
 
 @dataclass(frozen=True)
 class ReaperConfig:
@@ -217,6 +219,45 @@ def get_running_jobs(hypervisor_host: str, *, verbose: bool = False, timeout: in
                 jobs_to_restart.append(job_id)
 
     return list(set(jobs_to_restart))
+
+
+def get_job_info(job_id: int, *, verbose: bool = False) -> dict[str, Any] | None:
+    """Fetch job details from openQA."""
+    output = run_cmd(f"openqa-cli api --osd -X GET jobs/{job_id}", verbose=verbose)
+    if not output:
+        return None
+    try:
+        data: dict[str, Any] = json.loads(output)
+        return data.get("job")
+    except json.JSONDecodeError as e:
+        print(f"Failed to fetch job info for {job_id}: {e}")
+        return None
+
+
+def should_restart_job(job_id: int, *, verbose: bool = False) -> bool:
+    """Check whether a job has failed and needs to be restarted."""
+    job = get_job_info(job_id, verbose=verbose)
+    if not job:
+        print(f"Could not retrieve info for job {job_id}. Skipping restart.")
+        return False
+
+    state = job.get("state")
+    result = job.get("result")
+    clone_id = job.get("clone_id")
+
+    if clone_id:
+        print(f"Job {job_id} already cloned as job {clone_id}. Skipping restart.")
+        return False
+
+    if state != "done":
+        print(f"Job {job_id} is in state '{state}' (not done). Skipping restart.")
+        return False
+
+    if result not in FAILED_JOB_RESULTS:
+        print(f"Job {job_id} completed with result '{result}'. Skipping restart.")
+        return False
+
+    return True
 
 
 def wait_for_host(host: str, config: ReaperConfig, *, deadline: float | None = None) -> bool:
@@ -472,6 +513,20 @@ def recover_for_jobs(host: str, jobs: list[int], config: ReaperConfig, *, host_d
     return True
 
 
+def restart_failed_jobs(jobs: list[int], config: ReaperConfig) -> None:
+    """Restart jobs that have failed."""
+    for job_id in jobs:
+        if not should_restart_job(job_id, verbose=config.verbose):
+            continue
+        retrigger_cmd = f"openqa-cli api --osd -X POST jobs/{job_id}/restart"
+        if config.dry_run:
+            print(f"[DRY-RUN] Would execute: {retrigger_cmd}")
+        else:
+            print(f"Retriggering job {job_id}...")
+            run_cmd(retrigger_cmd, verbose=config.verbose, timeout=config.cmd_timeout)
+    print("Job retriggering complete.")
+
+
 def trigger_actions(
     host: str,
     jobs: list[int],
@@ -488,13 +543,7 @@ def trigger_actions(
     if (jobs or host_down) and not recover_for_jobs(host, jobs, config, host_down=host_down):
         return
 
-    for job_id in jobs:
-        retrigger_cmd = f"openqa-cli api --osd -X POST jobs/{job_id}/restart"
-        if config.dry_run:
-            print(f"[DRY-RUN] Would execute: {retrigger_cmd}")
-        else:
-            print(f"Retriggering job {job_id}...")
-            run_cmd(retrigger_cmd, verbose=config.verbose, timeout=config.cmd_timeout)
+    restart_failed_jobs(jobs, config)
 
 
 def check_libvirt_health(host: str, config: ReaperConfig) -> bool:
@@ -554,8 +603,7 @@ def find_critical(host: str, config: ReaperConfig) -> str | None:
                 key=lambda x: int(x) if x.isdigit() else x,
             )
             return f"!!! CRITICAL: Found persistent zombie processes on {host}: {', '.join(stuck_pids)}"
-        if config.verbose:
-            print(f"Zombies on {host} were transient or PIDs were reused.")
+        print(f"Zombies on {host} were transient or PIDs were reused. No persistent zombies found on {host}.")
 
     if not check_libvirt_health(host, config):
         return f"!!! CRITICAL: libvirt is unhealthy on {host}"
@@ -593,7 +641,7 @@ def handle_host(
         print(f"Identifying jobs which ran on {host}...")
         jobs = get_running_jobs(host, verbose=config.verbose, timeout=config.cmd_timeout)
         print(
-            f"Affected jobs to be retriggered: {', '.join(map(str, jobs))}"
+            f"Active jobs on {host} to check after reboot: {', '.join(map(str, jobs))}"
             if jobs
             else f"No active jobs found using {host}."
         )
