@@ -241,8 +241,18 @@ def test_investigate_cmd_with_token(mocker: MockerFixture) -> None:
     llm_investigate.investigate("123", llm_token="my-secret-token")
 
     assert client.post.call_count == 3
-    assert client.post.call_args[1]["headers"] == {"Authorization": "Bearer my-secret-token"}
+    assert client.post.call_args[1]["headers"] == {"X-Openqa-Job": "123", "Authorization": "Bearer my-secret-token"}
     mock_post.assert_called_once()
+
+
+def test_investigate_names_the_job_in_every_llm_request(mocker: MockerFixture) -> None:
+    mocker.patch("llm_investigate.post_comment")
+    mocker.patch("llm_investigate.typer.echo")
+    client = setup_mock_client(mocker)
+
+    llm_investigate.investigate("https://openqa.opensuse.org/tests/123")
+
+    assert [c.kwargs["headers"] for c in client.post.call_args_list] == [{"X-Openqa-Job": "123"}] * 3
 
 
 def test_investigate_cmd_passed_job(mocker: MockerFixture) -> None:
@@ -1133,6 +1143,7 @@ def test_investigate_ollama_payload_and_response(mocker: MockerFixture, url: str
     assert payload["stream"] is False
     assert payload["options"] == {"temperature": pytest.approx(0.3), "num_ctx": 8192}
     assert "temperature" not in payload
+    assert client.post.call_args.kwargs["headers"] == {"X-Openqa-Job": "123"}
     mock_print.assert_called_once_with("https://openqa.opensuse.org/tests/123")
 
 
@@ -1210,7 +1221,7 @@ def test_investigate_vertex_uses_refreshed_token_and_openai_payload(
     assert chat_call.args[0] == (
         "https://aiplatform.googleapis.com/v1/projects/proj/locations/global/endpoints/openapi/chat/completions"
     )
-    assert chat_call.kwargs["headers"] == {"Authorization": "Bearer tok"}
+    assert chat_call.kwargs["headers"] == {"X-Openqa-Job": "123", "Authorization": "Bearer tok"}
     assert chat_call.kwargs["json"]["temperature"] == pytest.approx(0.3)
 
 
@@ -1244,6 +1255,7 @@ def test_investigate_vertex_claude_uses_raw_predict(
 
     chat_call = client.post.call_args_list[0]
     assert chat_call.args[0].endswith("/locations/global/publishers/anthropic/models/claude-haiku-4-5:rawPredict")
+    assert chat_call.kwargs["headers"] == {"X-Openqa-Job": "123", "Authorization": "Bearer t"}
     payload = chat_call.kwargs["json"]
     assert payload["anthropic_version"] == "vertex-2023-10-16"
     assert payload["max_tokens"] == 4096

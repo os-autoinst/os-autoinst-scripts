@@ -182,6 +182,8 @@ To run it manually without posting a comment, with the dependencies from `pyproj
 Or with [uv](https://docs.astral.sh/uv/), which installs the dependencies for you:
 `LLM_API_URL=<url> LLM_MODEL=<model> LLM_API_TOKEN=<token> uv run python ./openqa-llm-investigate --dry https://openqa.opensuse.org/tests/123`
 
+Each LLM request names the job in the header `X-Openqa-Job`. With several LLM servers behind a load balancer, route by it so that all questions about one job, and their retries, reach the server that has the chat in its prompt cache, e.g. with `hash $http_x_openqa_job consistent;` in an nginx upstream. This replaces a method like `least_conn`: it trades load balancing for cache hits.
+
 For Google Vertex AI, set `GOOGLE_APPLICATION_CREDENTIALS` and `GCLOUD_PROJECT` (optionally `VERTEX_LOCATION`, default `global`), then e.g.
 `LLM_API=vertex LLM_MODEL=claude-sonnet-5-5@default ./openqa-llm-investigate https://openqa.opensuse.org/tests/123`.
 
