@@ -594,6 +594,8 @@ class AutoSubmitter:
         empty_git_dir(pathlib.Path())
 
         source_dir = self.dir / self.dst_project / package
+        primary_spec_file_name = f"{package}.spec"
+        primary_spec_file_exists = (source_dir / primary_spec_file_name).exists()
         for item in source_dir.iterdir():
             if item.name == "node_modules.obscpio":
                 extract_obscpio(item, target_dir=pathlib.Path() / "node_modules")
@@ -602,7 +604,9 @@ class AutoSubmitter:
             elif item.name.endswith(".spec"):
                 shutil.copy2(item, ".")
                 replace_node_modules_handling(pathlib.Path(item.name))
-                if item.name == f"{package}.spec" or not (source_dir / f"{package}.spec").exists():
+                # add `#!CreateArchive directive` to primary spec file (or fall back to checking every spec file
+                # if unable to determine primary)
+                if item.name == primary_spec_file_name or not primary_spec_file_exists:
                     add_create_archive_directive(pathlib.Path(item.name), package)
             elif item.name == "node_modules.spec.inc":
                 pass
