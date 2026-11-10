@@ -49,10 +49,12 @@ log = logging.getLogger(__name__)
 # Target-specific mappings
 git_branches = {
     "openSUSE:Leap:16.0": "leap-16.0",
+    "openSUSE:Leap:16.1": "leap-16.1",
 }
 
 throttle_variables = {
     "openSUSE:Leap:16.0": "throttle_days_leap_16",
+    "openSUSE:Leap:16.1": "throttle_days_leap_16_1",
 }
 
 
