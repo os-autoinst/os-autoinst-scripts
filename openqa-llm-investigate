@@ -28,6 +28,7 @@ from common.error_handling import is_404_str
 from common.smelt import submission_ids, submission_packages
 from openqa_llm_investigate.analysis import analyze_job
 from openqa_llm_investigate.commits import commits_section
+from openqa_llm_investigate.decision import decided_verdict
 from openqa_llm_investigate.history import fetch_rows, is_reviewed
 from openqa_llm_investigate.http import AnalyzerError, NoFailedModulesError, OpenQA
 from openqa_llm_investigate.text import redact
@@ -249,6 +250,7 @@ class Options:
     print_prompt: bool = False
     job_id: str = ""
     exclude_group_regex: str = DEFAULT_EXCLUDE_GROUP_REGEX
+    decision_url: str = ""
 
 
 def fetch_json(
@@ -785,11 +787,12 @@ def _perform_investigation(client: httpx.Client, base_url: str, job_id: str, opt
     if bisect is not False:
         typer.echo(f"{base_url}/tests/{job_id}")
 
-    comment = (
-        f"{COMMENT_MARKER}\n\n{lines}\n\n{brief}\n\n{verdict}{_comment_notes(cut_notes, opts, job_found=job_found)}"
-    )
     if opts.dry or bisect is not None:
-        _post_summary(client, base_url, job_id, comment, opts)
+        verdict = decided_verdict(
+            opts.decision_url, prompt, verdict, headers={"User-Agent": USER_AGENT}, timeout=opts.llm_timeout
+        )
+        notes = _comment_notes(cut_notes, opts, job_found=job_found)
+        _post_summary(client, base_url, job_id, f"{COMMENT_MARKER}\n\n{lines}\n\n{brief}\n\n{verdict}{notes}", opts)
 
 
 def _post_summary(client: httpx.Client, base_url: str, job_id: str, comment: str, opts: Options) -> None:
@@ -926,6 +929,18 @@ def investigate(  # ruff: ignore[too-many-arguments, too-many-positional-argumen
             " (not with --force, --dry or --print-prompt)",
         ),
     ] = DEFAULT_EXCLUDE_GROUP_REGEX,
+    decision_url: Annotated[
+        str,
+        typer.Option(
+            "--decision-url",
+            envvar="LLM_DECISION_URL",
+            help="URL of the /v1/systemone endpoint of a llama.cpp server with a decision model;"
+            " its answer to one more request (timeout of --timeout but at most 300 seconds) replaces the class in"
+            " the Classification line of the summary; without a usable answer the summary keeps the class of the"
+            ' LLM and adds the line "(no answer from the decision model)"; the questions of the request are'
+            " specific to openSUSE",
+        ),
+    ] = "",
 ) -> None:
     """CLI entry point to investigate a failed openQA job."""
     setup_logging(verbose, quiet=quiet)
@@ -952,6 +967,7 @@ def investigate(  # ruff: ignore[too-many-arguments, too-many-positional-argumen
         print_prompt=print_prompt,
         job_id=job_id,
         exclude_group_regex=exclude_group_regex,
+        decision_url=decision_url,
     )
     transport = RetryTransport(retries=retries)
     with httpx.Client(transport=transport, headers={"User-Agent": USER_AGENT}, timeout=openqa_timeout) as client:
