@@ -3,8 +3,12 @@
 
 from __future__ import annotations
 
+import contextlib
+import hashlib
+import json
 import logging
 import re
+import time
 from typing import Any
 
 import httpx
@@ -150,21 +154,46 @@ def _without_answer(verdict: str) -> str:
     return "\n".join(lines)
 
 
-def decided_verdict(url: str, prompt: str, verdict: str, *, headers: dict[str, str], timeout: float) -> str:
-    """Return the verdict with the class of the decision model at `url`, unchanged without a URL.
+def _sha8(text: str) -> str:
+    # a lone surrogate in the job text must not cost the summary
+    return hashlib.sha256(text.encode(errors="surrogatepass")).hexdigest()[:8]
+
+
+def _scores(answers: dict[str, dict[str, Any]]) -> dict[str, str]:
+    """Return the raw answers to `questions()` with 3 decimals, for the record."""
+    scores = {"env": f"{float(answers['env']['noul']):.3f}"}
+    for name in CLASS_NAMES:
+        # `decide` does not read all of them, so a reply without one is still an answer
+        with contextlib.suppress(KeyError, TypeError, ValueError, OverflowError):
+            scores[name] = f"{float(answers['guide']['probabilities'][name]):.3f}"
+    return scores
+
+
+def decided_verdict(
+    url: str, prompt: str, verdict: str, *, headers: dict[str, str], timeout: float
+) -> tuple[str, dict[str, Any]]:
+    """Return the verdict with the class of the decision model at `url`, and a record of its answer.
 
     `url` is the `/v1/systemone` endpoint of a llama.cpp server with a decision model, `prompt` the first LLM prompt.
     Without a usable answer the verdict keeps the class of the LLM and gets the line `NO_ANSWER`.
+    Without a URL the verdict is unchanged and the record empty.
     """
     if not url:
-        return verdict
+        return verdict, {}
     body = {"state": state_of(prompt), "questions": questions()}
+    # `rules` changes with the questions or the threshold, so that scores of different wordings are not mixed later
+    asked = {"state": _sha8(body["state"]), "rules": _sha8(json.dumps([body["questions"], ENV_THRESHOLD]))}
+    started = time.monotonic()
     try:
         # a single try: a retry would delay the summary further
         response = httpx.post(url, json=body, headers=headers, timeout=min(timeout, MAX_SECONDS))
         response.raise_for_status()
-        decided = decide(response.json()["answers"])
+        reply = response.json()
+        decided = decide(reply["answers"])
     except _NO_ANSWER_ERRORS as e:
         log.warning("No class from the decision model at %s, keeping the one of the LLM: %r", url, e)
-        return _without_answer(verdict)
-    return _with_class(verdict, CLASS_NAMES[decided])
+        verdict, answered = _without_answer(verdict), {"decision": "none"}
+    else:
+        verdict = _with_class(verdict, CLASS_NAMES[decided])
+        answered = {"decision": reply.get("model"), **_scores(reply["answers"])}
+    return verdict, answered | {"secs": f"{time.monotonic() - started:.1f}"} | asked
