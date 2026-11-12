@@ -106,7 +106,7 @@ transient (flaky timing, network, worker or external service) so that a rerun is
 
 TRUNCATED_NOTE = ", truncated to the first {log_lines} lines; do not guess about the omitted tail"
 CONTEXT_TRUNCATED_NOTE = ", truncated to fit {context_tokens} tokens; do not guess about the omitted tail"
-CHARS_PER_TOKEN = 2.5  # logs, paths and hashes tokenize denser than prose
+CHARS_PER_TOKEN = 1.9  # below the median of real prompts (2.28 with Gemma 4) so that nearly every cut prompt fits
 RESPONSE_RESERVE_TOKENS = 2048  # covers the three replies and the two follow-up questions
 OMISSION_NOTE_CHARS = 100
 COMMITS_MAX_SHARE = 0.1  # of the prompt characters; larger test commits are dropped before the analysis is cut
