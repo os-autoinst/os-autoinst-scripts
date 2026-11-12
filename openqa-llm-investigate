@@ -46,6 +46,8 @@ COMMENT_FOOTER = (
     "[openqa-llm-investigate](https://github.com/os-autoinst/os-autoinst-scripts/blob/master/openqa-llm-investigate)."
     " flag:verbatim"
 )
+# openQA refuses to delete a comment with this label even under flag:verbatim; "_" is a LIKE wildcard there
+FORCE_RESULT_LABEL_RE = re.compile(r"label:(?=force.result:)", re.DOTALL)
 OUTAGE_HINT = "\n(Note: {build_failures} failures across this build alone do not show a backend infrastructure outage.)"
 INTRO_TEMPLATE = """You are analyzing an openQA test run failure.
 Job details:
@@ -794,6 +796,7 @@ def _perform_investigation(client: httpx.Client, base_url: str, job_id: str, opt
 
 def _post_summary(client: httpx.Client, base_url: str, job_id: str, comment: str, opts: Options) -> None:
     """Print the summary on --dry, else post it unless the job was reviewed meanwhile (--force posts anyway)."""
+    comment = FORCE_RESULT_LABEL_RE.sub("label_", comment)
     if opts.dry:
         typer.echo(comment)
     elif not opts.force and is_reviewed(fetch_rows(OpenQA(client, base_url), job_id, neighbours=False)):
