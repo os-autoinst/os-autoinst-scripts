@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright SUSE LLC
-# ruff: file-ignore[missing-type-function-argument, missing-return-type-undocumented-public-function, strip-with-multi-characters, pep484-style-positional-only-parameter, hashlib-insecure-hash-function, verbose-log-message, boolean-default-value-positional-argument, uncapitalized-environment-variables]
+# ruff: file-ignore[missing-type-function-argument, missing-return-type-public-function, strip-with-multi-characters, pep484-style-positional-only-parameter, hashlib-insecure-hash-function, verbose-log-message, boolean-default-value-positional-argument, uncapitalized-environment-variables]
 """Trigger openQA tests bisecting maintenance updates.
 
 Determine which pending operating system maintenance update, called "incident",

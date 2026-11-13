@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright SUSE LLC
-# ruff: file-ignore[missing-type-function-argument, missing-return-type-undocumented-public-function, complex-structure, undocumented-public-module, read-whole-file, non-lowercase-variable-in-function, os-listdir, open-file-with-context-handler]
+# ruff: file-ignore[missing-type-function-argument, missing-return-type-public-function, complex-structure, undocumented-public-module, read-whole-file, non-lowercase-variable-in-function, os-listdir, open-file-with-context-handler]
 
 from __future__ import annotations
 
