@@ -152,6 +152,7 @@ def setup_mock_client(mocker: MockerFixture, overrides: dict[str, Any] | None = 
                 {"id": 123, "state": "done", "result": "failed"},
             ]
         },
+        "api/v1/jobs/100": {"job": {"id": 100, "result": "passed", "t_finished": "2026-11-10T03:12:45"}},
         "api/v1/jobs": {
             "job": {
                 "id": 123,
@@ -332,6 +333,15 @@ def test_investigate_cmd_print_prompt(mocker: MockerFixture) -> None:
     assert not any("/comments" in str(c.args[0]) for c in client.get.call_args_list)
     output = mock_print.call_args[0][0]
     assert all(s in output for s in ("Prompt 1/3", "Question 1", "Question 2", "Question 3"))
+
+
+def test_investigate_print_prompt_skips_the_verdict_question_without_last_good(mocker: MockerFixture) -> None:
+    mock_print = mocker.patch("llm_investigate.typer.echo")
+    setup_mock_client(mocker, overrides={"investigation_ajax": {"last_good": "not found"}})
+    llm_investigate.investigate("123", print_prompt=True)
+    output = mock_print.call_args[0][0]
+    assert "Prompt 2/2" in output
+    assert "Question 3" not in output
 
 
 def test_investigate_cmd_connection_error(mocker: MockerFixture) -> None:
@@ -1325,10 +1335,64 @@ def test_investigate_bisect_rule_forces_no_for_same_module_failures(mocker: Mock
     assert "Restart: NO" in comment
 
 
+LAST_GOOD = {"last_good": {"link": "/tests/100", "text": 100, "type": "link"}}
+
+
+def test_investigate_tells_the_llm_about_the_last_good_job(mocker: MockerFixture) -> None:
+    mocker.patch("llm_investigate.post_comment")
+    mocker.patch("llm_investigate.typer.echo")
+    client = setup_mock_client(mocker, overrides={"investigation_ajax": LAST_GOOD})
+    llm_investigate.investigate("123")
+    assert "Last good job: https://openqa.opensuse.org/tests/100 (passed, finished 2026-11-10T03:12:45 UTC)" in (
+        _prompt_sent(client)
+    )
+    assert client.post.call_count == 3
+
+
+@pytest.mark.parametrize(
+    "investigation",
+    [{"last_good": "not found"}, {"error": "No previous job in this scenario, cannot provide hints"}],
+)
+def test_investigate_without_last_good_is_a_test_issue_without_bisect_or_restart(
+    mocker: MockerFixture, investigation: dict[str, str]
+) -> None:
+    mock_post = mocker.patch("llm_investigate.post_comment")
+    mock_print = mocker.patch("llm_investigate.typer.echo")
+    client = setup_mock_client(mocker, overrides={"investigation_ajax": investigation})
+    llm_investigate.investigate("123")
+    assert "Last good job: none found" in _prompt_sent(client)
+    assert "Treat this failure as a test issue" in _prompt_sent(client)
+    assert client.post.call_count == 2
+    mock_print.assert_not_called()
+    assert llm_investigate.NO_LAST_GOOD_VERDICT in mock_post.call_args[0][2]
+
+
+def test_investigate_omits_the_last_good_time_without_t_finished(mocker: MockerFixture) -> None:
+    mocker.patch("llm_investigate.post_comment")
+    mocker.patch("llm_investigate.typer.echo")
+    last_good_job = {"job": {"id": 100, "result": "passed", "t_started": "2026-11-10T03:00:00"}}
+    client = setup_mock_client(mocker, overrides={"investigation_ajax": LAST_GOOD, "api/v1/jobs/100": last_good_job})
+    llm_investigate.investigate("123")
+    assert "tests/100 (passed). That job succeeded" in _prompt_sent(client)
+
+
+@pytest.mark.parametrize("investigation", [{}, {"diff_to_last_good": {}}, {"error": "No result directory"}])
+def test_investigate_with_unknown_last_good_asks_the_verdict(
+    mocker: MockerFixture, investigation: dict[str, str]
+) -> None:
+    mocker.patch("llm_investigate.post_comment")
+    mock_print = mocker.patch("llm_investigate.typer.echo")
+    client = setup_mock_client(mocker, overrides={"investigation_ajax": investigation})
+    llm_investigate.investigate("123")
+    assert "Last good job" not in _prompt_sent(client)
+    assert client.post.call_count == 3
+    mock_print.assert_called_once()
+
+
 @pytest.mark.parametrize(
     ("runs", "job", "overridden"),
     [
-        ((121, 122, 123), {}, True),
+        ((119, 120, 121, 122, 123), {}, True),
         ((120, 121, 122), {}, False),
         ((120, 121, 122, 123), {"result": "incomplete"}, False),
     ],
@@ -1348,7 +1412,7 @@ def test_investigate_overrides_bisect_and_restart_from_the_job_history(
     setup_mock_client(mocker, overrides={"test=": history, "investigation_ajax": last_good})
     llm_investigate.investigate("123")
     verdict = (
-        "BISECT: NO \u2014 failed at least 3 times in a row\nRestart: NO \u2014 failed at least 3 times in a row"
+        "BISECT: NO \u2014 failed at least 5 times in a row\nRestart: NO \u2014 failed at least 5 times in a row"
         if overridden
         else reply
     )
