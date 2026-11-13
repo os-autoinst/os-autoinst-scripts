@@ -1083,7 +1083,7 @@ def test_investigate_context_tokens_caps_prompt(mocker: MockerFixture) -> None:
     assert "--context-tokens budget reached" in prompt
     assert "truncated to fit 4096 tokens" in prompt
     assert "line00000" in prompt
-    assert len(prompt) <= (4096 - llm_investigate.RESPONSE_RESERVE_TOKENS) * 2.5
+    assert len(prompt) <= (4096 - llm_investigate.RESPONSE_RESERVE_TOKENS) * llm_investigate.CHARS_PER_TOKEN
 
 
 def test_investigate_context_tokens_keeps_short_analysis(mocker: MockerFixture) -> None:
