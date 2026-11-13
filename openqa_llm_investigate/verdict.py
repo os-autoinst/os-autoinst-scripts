@@ -1,5 +1,5 @@
 # Copyright SUSE LLC
-"""Read the BISECT verdict and override BISECT and Restart where the job's history rules them out."""
+"""Read the BISECT and Restart verdicts and override them where the job's history rules them out."""
 
 from __future__ import annotations
 
@@ -10,12 +10,21 @@ _RESTART_RE = re.compile(r"^(?:[\s*_`>#-]|\d+\.)*Restart[*_`]*:[\s*_`]*(YES|NO)(
 _DETERMINISTIC_STREAK = 3
 
 
-def bisect_verdict(verdict: str) -> bool | None:
-    """Return whether the last `BISECT: YES|NO` line of the verdict is YES, or None if it has none."""
+def _last_answer(verdict: str, pattern: re.Pattern[str]) -> bool | None:
     for ln in reversed(verdict.splitlines()):
-        if m := BISECT_RE.match(ln):
+        if m := pattern.match(ln):
             return m.group(1).upper() == "YES"
     return None
+
+
+def bisect_verdict(verdict: str) -> bool | None:
+    """Return whether the last `BISECT: YES|NO` line of the verdict is YES, or None if it has none."""
+    return _last_answer(verdict, BISECT_RE)
+
+
+def restart_verdict(verdict: str) -> bool | None:
+    """Return whether the last `Restart: YES|NO` line of the verdict is YES, or None if it has none."""
+    return _last_answer(verdict, _RESTART_RE)
 
 
 def _yes_to_no(verdict: str, pattern: re.Pattern[str], no: str) -> str:

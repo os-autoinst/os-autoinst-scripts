@@ -173,6 +173,8 @@ It passes the optional openQA variable `LLM_PROMPT_EXTENSION` (per test suite or
 
 It skips jobs with the openQA variable `NO_LLM_INVESTIGATION=1`.
 
+In `openqa-label-known-issues-and-investigate-hook` its verdict decides what follows. On `BISECT: YES` it prints the job URL and `openqa-investigate` runs in full; the same happens when there is no verdict to go by (job opted out or already reviewed, no `BISECT` line, or the script failed). On `BISECT: NO` with `Restart: YES` it prints `retry:<job URL>` and the hook triggers only the retry job (`openqa-investigate --retry-only`), which reports a likely sporadic failure on the job if it passes. On `BISECT: NO` without `Restart: YES` nothing is triggered.
+
 If `SMELT_GRAPHQL_URL` is set to a SMELT GraphQL endpoint, the submissions from the job's `*_TEST_ISSUES` settings and their packages are added to the prompt. If unset or unreachable, the section is omitted.
 To check it by hand without calling the LLM: `SMELT_GRAPHQL_URL=<url> ./openqa-llm-investigate --print-prompt <job URL>`
 

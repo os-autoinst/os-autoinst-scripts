@@ -682,14 +682,16 @@ def _trigger_regression_jobs(  # ruff: ignore[too-many-arguments, too-many-posit
         )
 
 
-def trigger_jobs(
+def trigger_jobs(  # ruff: ignore[too-many-arguments]
     client: OpenQAClient,
     job_id: int,
     extra_settings: list[str] | None,
     investigation_gid: int,
     prio_add: int,
+    *,
+    retry_only: bool = False,
 ) -> str:
-    """Trigger standard retry job and regression jobs."""
+    """Trigger standard retry job and, unless `retry_only`, regression jobs."""
     lines = []
 
     res = clone(
@@ -697,6 +699,8 @@ def trigger_jobs(
     )
     if res:
         lines.append(res)
+    if retry_only:
+        return "\n".join(lines)
 
     investigation = client.get_investigation_ajax(job_id)
     last_good_obj = investigation.get("last_good")
@@ -976,6 +980,7 @@ def run_investigation_logic(  # ruff: ignore[too-many-arguments, complex-structu
     exclude_group_regex: str = "Development.*/ ",
     force: bool = False,
     strict: bool | None = None,
+    retry_only: bool = False,
 ) -> None:
     """Run core investigation and bisection logic."""
     if strict is not None:
@@ -1021,7 +1026,7 @@ def run_investigation_logic(  # ruff: ignore[too-many-arguments, complex-structu
     comment_id_str = sync_via_investigation_comment(client, job_id, first_cluster_job_id, force=force)
 
     try:
-        out = trigger_jobs(client, job_id, extra_settings, investigation_gid, prio_add)
+        out = trigger_jobs(client, job_id, extra_settings, investigation_gid, prio_add, retry_only=retry_only)
     except typer.Exit:
         raise
     except Exception as e:
@@ -1145,6 +1150,14 @@ def main(  # ruff: ignore[too-many-arguments]
             help="Use strict history (isolate by history isolation keys).",
         ),
     ] = False,
+    retry_only: Annotated[
+        bool,
+        typer.Option(
+            "--retry-only",
+            envvar="retry_only",
+            help="Trigger only the retry job, no jobs with the last good tests or build.",
+        ),
+    ] = False,
     retries: Annotated[
         int,
         typer.Option(
@@ -1216,6 +1229,7 @@ def main(  # ruff: ignore[too-many-arguments]
         exclude_group_regex=exclude_group_regex,
         force=force,
         strict=strict,
+        retry_only=retry_only,
     )
 
 
