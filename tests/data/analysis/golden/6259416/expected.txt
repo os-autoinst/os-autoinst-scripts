@@ -14,7 +14,7 @@ Found 1 failed module(s)
 Failed Module: installation/resolve_dependency_issues
 ================================================================================
 
-Previous modules: installation/partitioning_finish (passed), installation/installer_timezone (passed), installation/user_settings (passed)
+Previous modules (newest first): installation/user_settings (passed), installation/installer_timezone (passed), installation/partitioning_finish (passed), installation/partitioning (passed), installation/system_role (passed), and 6 other modules
 
 The module has been failed by: "no candidate needle with tag(s) 'installation-settings-overview-loaded'" needle check.
 

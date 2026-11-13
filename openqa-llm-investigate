@@ -74,8 +74,12 @@ REASON has at most 20 words in plain language: name the failing component first,
 If no log line shows a cause, REASON only says which expected screen or command failed.
 Write `analysis unavailable` as REASON if the data is not sufficient.
 """
-BRIEF_QUESTION = """Question 2: Write a brief Markdown summary of at most 2 sentences that state only what the
-analysis shows. Use backticks for commands, files and errors."""
+BRIEF_QUESTION = """Question 2: Write a brief Markdown summary of at most 3 sentences and stop after the third.
+State what the analysis shows. Add the scenario (the `input before:` lines or steps right before the failure) in at
+most half a sentence, only if it makes the failure clearer. Mention `Previous modules` only if one also failed or the
+scenario is unclear; never say that modules passed or that this is the first module, and never copy the list. Take
+causes only from the analysis, never from the module order, the build name or earlier modules. Use backticks for
+commands, files, needles and errors."""
 VERDICT_QUESTION = """Question 3: Judge the failure with these job statistics:
 - Total failed jobs in this build (across all tests): {build_failures}{hint}
 - Other jobs in this build failing in the exact same module(s): {same_module_failures}
@@ -92,7 +96,8 @@ Restart: NO \u2014 the needle does not match the screen
 
 Classification, choose exactly one value. Product bug: the software under test is wrong, e.g. a kernel panic or
 segfault. Test issue: test code, needle or test data is wrong. Infrastructure problem: only if the analysis shows
-an error of the worker, its network or an external server, not of the tested system itself.
+an error of the worker, its network or an external server, not of the tested system itself. Earlier modules that
+passed do not make a Test issue more likely: a product bug or an infrastructure problem can show up in one module only.
 
 BISECT decides whether 'openqa-investigate' should schedule further bisect tests.
 - If other jobs in the same build fail in the exact same module, answer BISECT: NO. Another job likely triggered it.

@@ -31,7 +31,12 @@ def test_prompts_require_evidence_and_treat_needle_tags_as_expectations(mocker: 
     assert "If no log line shows a cause, REASON only says which expected screen or command failed." in intro
     assert "Likely cause" not in brief
     assert "Suggested actions" not in brief
-    assert "state only what the\nanalysis shows" in brief
+    assert "at most 3 sentences" in brief
+    assert "Add the scenario (the `input before:` lines or steps right before the failure)" in brief
+    assert "never say that modules passed" in brief
+    assert "never copy the list" in brief
+    assert "never from the module order" in brief
     assert "153 failures across this build alone do not show a backend infrastructure outage" in verdict
     assert "only if the analysis shows\nan error of the worker, its network or an external server" in verdict
     assert "not of the tested system itself." in verdict
+    assert "do not make a Test issue more likely" in verdict

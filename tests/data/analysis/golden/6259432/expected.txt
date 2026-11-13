@@ -31,13 +31,14 @@ ASSERT [HiiDatabase] Font.c(1742): GlyphBuf != ((void *) 0)
 Failed Module: installation/grub_test
 ================================================================================
 
-Previous modules: installation/await_install (passed), installation/logs_from_installation_system (passed), installation/reboot_after_installation (passed)
+Previous modules (newest first): installation/reboot_after_installation (passed), installation/logs_from_installation_system (passed), installation/await_install (passed), installation/start_install (passed), installation/disable_grub_timeout (passed), and 8 other modules
 
 The module has been failed by: "no candidate needle with tag(s) 'tianocore-boot_maintenance_manager'" needle check.
 
 Step context (last 20 command/needle/record_info steps)
   >>> The next step is the one that failed the test <<<
   #320 [FAIL]  no match for tags: tianocore-boot_maintenance_manager  (screenshot: grub_test-320.png)
+    input before: send_key f2 (x55), send_key down (x6)
   #321 [FAIL]  Failed  # Test died: no candidate needle with tag(s) 'tianocore-boot_maintenance_manager' matched
   #322  Post-fail
     Entering post fail hook

@@ -15,7 +15,7 @@ Found 1 failed module(s)
 Failed Module: containers/bats/skopeo
 ================================================================================
 
-Previous modules: installation/bootloader_zkvm (passed), boot/boot_to_desktop (passed)
+Previous modules (newest first): boot/boot_to_desktop (passed), installation/bootloader_zkvm (passed)
 
 The module has been failed by: "qr/Welcome to SUSE Linux Enterprise .*\(s390x\)/u" wait_serial marker.
 
@@ -44,7 +44,9 @@ Step context (last 20 command/needle/record_info steps)
   #50  wait_serial  command: curl --form upload=@/etc/default/grub --form upname=skopeo-grub --max-time 90 http://worker33.oqa.prg2.suse.org:20093/rFyuLNIDY_eV_pUE/uploadlog/grub  exit code: 0
     OK: skopeo-grub
   #57  screen match  needle: root-console-20170323 (100%)  tags: root-console
+    input before: switch to console root-console
   #60  screen match  needle: password-prompt-20210517 (100%)  tags: password-prompt
+    input before: enter_cmd "reboot", switch to console svirt
   #61  screen match  needle: text-logged-in-root-kgraft-20160727 (100%)  tags: text-logged-in-root
   #65  wait_serial  marker: "GNU GRUB|Welcome to GRUB!"
     ... (165 earlier output lines omitted)

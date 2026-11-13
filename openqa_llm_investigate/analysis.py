@@ -4,9 +4,10 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
+from .actions import Action, module_actions, step_notes
 from .failures import (
     CLUSTER_STEPS_SHOWN,
     extract_failed_modules,
@@ -73,6 +74,7 @@ _STEPS_BEFORE_SCAN = 70
 _STEPS_AFTER_SCAN = 30
 _AFTER_COMMANDS = 3
 _FAILING_OUTPUT_LINES = 50
+_NOTE_STEPS = 3  # input is only noted on the failure and this many steps above it
 _STEPS_BEFORE_SHOWN = 20
 _STEPS_AFTER_SHOWN = 3
 _OUTPUT_STEPS = 5
@@ -101,6 +103,7 @@ class _Job:
     autoinst: str
     context_lines: int
     booted_to_login: bool = False
+    actions: list[Action] = field(default_factory=list)
 
 
 def section_start(title: str) -> str:
@@ -241,10 +244,13 @@ def _repeat_notes(cluster: list[JsonDict], shown: list[JsonDict]) -> list[str]:
     return notes
 
 
-def _step_lines(step: JsonDict, *, output: bool, info_lines: int, fail_label: str, failure: list[str]) -> list[str]:
+def _step_lines(  # ruff: ignore[too-many-arguments]
+    step: JsonDict, *, output: bool, info_lines: int, fail_label: str, failure: list[str], notes: list[str]
+) -> list[str]:
     """Render a step: record_info as title plus `info_lines` body lines, a command with its output tail if `output`.
 
     `failure` is the text under a failing step; its first line is dropped when the step line already shows it.
+    `notes` are the input lines (keys, typed text, clicks) shown right under the step line.
     """
     if is_record_info(step):
         head = f"#{step.get('num', '?')}  {' '.join(str(step['display_title']).split())}"
@@ -255,7 +261,7 @@ def _step_lines(step: JsonDict, *, output: bool, info_lines: int, fail_label: st
         if body and body[0] in head:
             body = body[1:]
         body = body or (step_output_tail(step.get("text_data") or "") if output else [])
-    return [f"  {redact(head)}", *(f"    {redact(ln)}" for ln in body)]
+    return [f"  {redact(head)}", *(f"    {redact(ln)}" for ln in [*notes, *body])]
 
 
 def _marker_step(shown: list[JsonDict], failing: JsonDict) -> JsonDict | None:
@@ -274,12 +280,22 @@ def _fail_label(step: JsonDict, cluster: list[JsonDict], post_start: int | None)
     return "FAIL, post-fail hook" if is_secondary(step, post_start) else "FAIL, non-fatal"
 
 
-def _step_context(
+def _near_notes(actions: list[Action], visible: list[JsonDict], marker: JsonDict) -> dict[int, list[str]]:
+    """Return the input notes: keys, text and clicks on screens near the failure, console switches everywhere.
+
+    Steps with a text (commands, record_info) show what they ran, so only the failing one also gets notes.
+    """
+    first = max(0, next((i for i, d in enumerate(visible) if d is marker), 0) - _NOTE_STEPS)
+    return step_notes(actions, visible, {id(d) for d in visible[first:] if d is marker or not d.get("text_data")})
+
+
+def _step_context(  # ruff: ignore[too-many-arguments, too-many-positional-arguments]
     all_details: list[JsonDict],
     cluster: list[JsonDict],
     before: list[JsonDict],
     after: list[JsonDict],
     bodies: dict[int, list[str]],
+    actions: list[Action],
 ) -> list[str]:
     """Render the steps around a cluster; a long cluster keeps only its first and last steps and those with a body.
 
@@ -297,6 +313,7 @@ def _step_context(
     with_info |= {id(d) for d in after}
     with_output |= {id(d) for d in after if has_command(d.get("text_data") or "")}
     post_start = post_fail_start(all_details)
+    notes = _near_notes(actions, [d for d in shown if id(d) not in hidden], marker or failing_step(cluster))
     out = [f"Step context (last {_STEPS_BEFORE_SHOWN} command/needle/record_info steps)"]
     skipped = 0
     for step in shown:
@@ -315,6 +332,7 @@ def _step_context(
             info_lines=info_lines,
             fail_label=_fail_label(step, cluster, post_start),
             failure=bodies.get(id(step), []),
+            notes=notes.get(id(step), []),
         )
     return [*out, ""]
 
@@ -349,26 +367,39 @@ def _cluster_report(
         shown = ", ".join(f"#{n}" for n in retries[:_RETRIES_SHOWN])
         more = f" ... (+{len(retries) - _RETRIES_SHOWN})" if len(retries) > _RETRIES_SHOWN else ""
         out += [f"The failure below was retried {len(retries)} more times before this attempt: {shown}{more}", ""]
-    before, after = get_context_steps(
+    scanned, after = get_context_steps(
         all_details,
         cluster[0].get("num", 0),
         cluster[-1].get("num", 0),
         before=_STEPS_BEFORE_SCAN,
         after=_STEPS_AFTER_SCAN,
     )
-    before = [d for d in before if not is_noise_step(d)][-_STEPS_BEFORE_SHOWN:]
+    kept = [d for d in scanned if not is_noise_step(d)]
+    before = kept[-_STEPS_BEFORE_SHOWN:]
+    # input older than the shown steps (or the scan) or after the failure is dropped; bare screenshots pass theirs on
+    cut = kept[-_STEPS_BEFORE_SHOWN - 1] if len(kept) > _STEPS_BEFORE_SHOWN else None
+    cut = cut or (scanned[0] if len(scanned) == _STEPS_BEFORE_SCAN else None)
+    first, last = (cut.get("num", 0) if cut else 0), cluster[-1].get("num", 0)
+    actions = [a for a in job.actions if first < a.num <= last]
     after = _steps_until_commands([d for d in after if not is_noise_step(d)], _AFTER_COMMANDS)
     bodies, sections = _step_bodies(job, cluster, category)
     out += _repeat_notes(cluster, [d for d in cluster if id(d) in bodies])
-    out += _step_context(all_details, cluster, before, after, bodies)
+    out += _step_context(all_details, cluster, before, after, bodies, actions)
     out += _autoinst_range(job, cluster, before, after[:_STEPS_AFTER_SHOWN])
     return out + sections
 
 
+def _previous_result(module: JsonDict) -> str:
+    result = module.get("result", "unknown")
+    return "also failed" if result == "failed" else result
+
+
 def _previous_modules_line(all_modules: list[JsonDict], module: JsonDict) -> str:
-    previous = previous_modules(all_modules, module)
-    listed = ", ".join(f"{_module_title(m)} ({m.get('result', 'unknown')})" for m in previous)
-    return f"Previous modules: {listed or 'none (first module)'}"
+    previous, earlier = previous_modules(all_modules, module)
+    listed = [f"{_module_title(m)} ({_previous_result(m)})" for m in reversed(previous)]
+    if earlier:
+        listed.append(f"and {earlier} other module{'s' if earlier != 1 else ''}")
+    return f"Previous modules (newest first): {', '.join(listed) or 'none (first module)'}"
 
 
 def _module_report(
@@ -387,6 +418,7 @@ def _module_report(
     if category == "IPA":
         return out + _ipa_report(job, all_details, module.get("name", "unknown"))
     if failing:
+        job = replace(job, actions=module_actions(job.autoinst, module.get("name", "")))
         out += _cluster_report(job, all_details, *failing, category)
     return out + format_uploaded_logs(uploads)
 

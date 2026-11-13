@@ -195,10 +195,13 @@ def is_record_info(step: JsonDict) -> bool:
     )
 
 
-def previous_modules(all_modules: list[JsonDict], module: JsonDict, n: int = 3) -> list[JsonDict]:
-    """Return the up to `n` modules that ran before `module` (found by identity, as names repeat)."""
+def previous_modules(all_modules: list[JsonDict], module: JsonDict, n: int = 5) -> tuple[list[JsonDict], int]:
+    """Return the up to `n` modules that ran before `module` (found by identity) and the number of earlier ones."""
     idx = next((i for i, m in enumerate(all_modules) if m is module), None)
-    return [] if idx is None else all_modules[max(0, idx - n) : idx]
+    if idx is None:
+        return [], 0
+    start = max(0, idx - n)
+    return all_modules[start:idx], start
 
 
 def _failure_key(detail: JsonDict) -> str:
