@@ -155,7 +155,9 @@ def test_commands_follow_module_header(make_openqa: Any, category: str) -> None:
         [_step(1, text="# Command: zypper patch\n# Exit code: 1"), _step(2, "ok", title="Post-fail")],
         category=category,
     )
-    header = f"Failed Module: {category}/m\n" + "=" * 80 + "\n\nPrevious modules: none (first module)\n\n"
+    header = (
+        f"Failed Module: {category}/m\n" + "=" * 80 + "\n\nPrevious modules (newest first): none (first module)\n\n"
+    )
     assert header + 'The module has been failed by: "zypper patch" command (exit 1).\n' in out
     assert out.count("been failed by") == 1
 
@@ -245,7 +247,78 @@ def test_previous_modules_line(make_openqa: Any) -> None:
     mods += [{"name": "p", "category": "c", "result": "passed", "details": []}] * 2
     mods.append(_module([_step(1, title="Failed", text="# Test died: x")], name="f"))
     out = _analyze(make_openqa, {"modules": mods})
-    assert "Previous modules: c/b (softfailed), c/p (passed), c/p (passed)\n" in out
+    assert "Previous modules (newest first): c/p (passed), c/p (passed), c/b (softfailed), c/a (passed)\n" in out
+
+
+def test_previous_modules_line_counts_the_older_ones_and_marks_failures(make_openqa: Any) -> None:
+    mods = [{"name": f"m{i}", "category": "c", "result": "passed", "details": []} for i in range(7)]
+    mods[5]["result"] = "failed"
+    mods += [_module([_step(1, title="Failed", text="# Test died: x")], name="f")]
+    mods += [{"name": "x", "category": "c", "result": "passed", "details": []}]
+    line = "Previous modules (newest first): c/m6 (passed), c/m5 (also failed), c/m4 (passed), c/m3 (passed)"
+    line += ", c/m2 (passed)"
+    assert f"{line}, and 2 other modules\n" in _analyze(make_openqa, {"modules": mods})
+    mods.pop(0)
+    assert f"{line}, and 1 other module\n" in _analyze(make_openqa, {"modules": mods})
+
+
+_LOG_TS = "[2026-11-12T11:34:06.440889Z] [debug] [pid:42]"
+
+
+def _autoinst(*calls: tuple[int, str, str]) -> str:
+    """Return an autoinst-log.txt of module `m` with the calls (step marker, testapi function, logged call)."""
+    lines = [f"{_LOG_TS} ||| starting m tests/c/m.pm"]
+    for step, function, call in calls:
+        lines += [
+            f"{_LOG_TS} [step:c,m,{step}] tests/c/m.pm:1 called testapi::{function}",
+            f"{_LOG_TS} <<< testapi::{call}",
+        ]
+    return "\n".join(lines) + "\n"
+
+
+def _needle(num: int) -> dict[str, Any]:
+    return {"num": num, "result": "ok", "needle": f"n-{num}", "area": [{"similarity": 100}], "tags": ["t"]}
+
+
+def test_step_context_shows_the_input_before_and_clicks_on_a_step(make_openqa: Any) -> None:
+    details = [_needle(1), _needle(2), _step(3, title="Failed", text="# Test died: x")]
+    log = _autoinst(
+        (2, "send_key", 'send_key(key="ret")'),
+        (2, "send_key", 'send_key(key="ret")'),
+        (3, "enter_cmd", 'type_string(string="ls\\n")'),
+        (2, "mouse_set", "mouse_set(x=7, y=8)"),
+        (2, "assert_and_click", 'mouse_click(button="left")'),
+    )
+    ctx = _context(_module_report(make_openqa, details, {"autoinst-log.txt": log}))
+    assert ctx[1:5] == [
+        "  #1  screen match  needle: n-1 (100%)  tags: t",
+        "    clicked (7,8)",
+        "  #2  screen match  needle: n-2 (100%)  tags: t",
+        "    input before: send_key ret (x2)",
+    ]
+    assert '    input before: enter_cmd "ls"' in ctx
+
+
+def test_step_context_has_no_input_without_the_log(make_openqa: Any) -> None:
+    details = [_needle(1), _step(2, title="Failed", text="# Test died: x")]
+    assert "input before" not in _module_report(make_openqa, details, {"autoinst-log.txt": "unrelated\n"})
+    assert "input before" not in _module_report(make_openqa, details)
+
+
+def test_input_older_than_the_shown_steps_is_dropped(make_openqa: Any) -> None:
+    details = [_cmd(n, f"cmd{n}") for n in range(1, 26)] + [_step(26, title="Failed", text="# Test died: x")]
+    log = _autoinst((3, "send_key", 'send_key(key="old")'), (24, "send_key", 'send_key(key="new")'))
+    out = _module_report(make_openqa, details, {"autoinst-log.txt": log})
+    assert "send_key new" in out
+    assert "send_key old" not in out
+
+
+def test_input_before_bare_screenshots_goes_to_the_next_step(make_openqa: Any) -> None:
+    details = [{"num": n, "result": "ok"} for n in range(1, 81)] + [_step(81, title="Failed", text="# Test died: x")]
+    log = _autoinst((5, "send_key", 'send_key(key="old")'), (50, "send_key", 'send_key(key="new")'))
+    ctx = _context(_module_report(make_openqa, details, {"autoinst-log.txt": log}))
+    assert "    input before: send_key new" in ctx
+    assert "send_key old" not in "\n".join(ctx)
 
 
 _DIED_ZYPPER = "# Test died: 'zypper in x' failed with code 4\n\nRelated zypper logs:\n"
