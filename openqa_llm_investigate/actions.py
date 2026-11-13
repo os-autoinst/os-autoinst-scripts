@@ -19,9 +19,11 @@ _BLOCKS = {"wait_screen_change", "assert_screen_change"}
 _TRANSPARENT = {"send_key_until_needlematch"}
 _FIRST_VALUE = {"x11_start_program": "program", "select_console": "testapi_console"}
 _NEWLINE = "\\n"
+_MASK = "****"  # a single typed word that mixes letters and digits is taken for a password
 _STRING_MAX = 80
 _BLOCK_MAX = 4
-_ITEMS_MAX = 6
+_ITEMS_MAX = 4
+_SECRET_RE = re.compile(r"[A-Za-z]\d[A-Za-z]")
 
 
 class Action(NamedTuple):
@@ -43,7 +45,10 @@ def _text(name: str, args: dict[str, str], mouse: tuple[str, str] | None) -> str
         return f"send_key {_value(args, 'key')}"
     if name in {"type_string", "enter_cmd"}:
         typed = _value(args, "string")
-        return f'{name} "{typed.removesuffix(_NEWLINE) if name == "enter_cmd" else typed}"'
+        typed = typed.removesuffix(_NEWLINE) if name == "enter_cmd" else typed
+        if "$pty" in typed:  # svirt serial plumbing, no information about the test
+            return None
+        return f'{name} "{_MASK if _SECRET_RE.search(typed) and " " not in typed else typed}"'
     if name in _FIRST_VALUE:
         return f"{name} {_value(args, _FIRST_VALUE[name])}"
     if name == "mouse_click":
@@ -123,10 +128,17 @@ def collapse(items: list[str]) -> list[str]:
     return out
 
 
-def step_notes(actions: list[Action], shown: list[JsonDict]) -> dict[int, list[str]]:
+def _newest(items: list[str]) -> list[str]:
+    return (
+        [f"... ({len(items) - _ITEMS_MAX} earlier omitted)", *items[-_ITEMS_MAX:]] if len(items) > _ITEMS_MAX else items
+    )
+
+
+def step_notes(actions: list[Action], shown: list[JsonDict], console_on: set[int]) -> dict[int, list[str]]:
     """Return the note lines of the steps in `shown` (id(step) -> lines): the input before each step, a click on it.
 
-    Input before a step that is not shown (a bare screenshot) goes to the next shown one.
+    Input before a step that is not shown (a bare screenshot) goes to the next shown one. A select_console is
+    only noted on the steps in `console_on` (the id of the failing ones); a note equal to the one above is dropped.
     """
     if not shown:
         return {}
@@ -138,12 +150,19 @@ def step_notes(actions: list[Action], shown: list[JsonDict]) -> dict[int, list[s
             if target is not None:
                 clicks.setdefault(id(target), []).append(action.text)
         else:
-            target = next((d for d in shown if d.get("num", 0) >= action.num), shown[-1])
-            before.setdefault(id(target), []).append(action.text)
+            idx = next((i for i, d in enumerate(shown) if d.get("num", 0) >= action.num), len(shown) - 1)
+            # x11_start_program matches the desktop-runner needle itself, so its input belongs to the step after
+            target = shown[min(idx + action.text.startswith("x11_start_program "), len(shown) - 1)]
+            if id(target) in console_on or not action.text.startswith("select_console "):
+                before.setdefault(id(target), []).append(action.text)
     notes: dict[int, list[str]] = {}
-    for key in before.keys() | clicks.keys():
-        items = collapse(before.get(key, []))
-        if len(items) > _ITEMS_MAX:
-            items = [f"... ({len(items) - _ITEMS_MAX} earlier omitted)", *items[-_ITEMS_MAX:]]
-        notes[key] = ([f"input before: {', '.join(items)}"] if items else []) + clicks.get(key, [])
+    last: list[str] = []
+    for step in shown:
+        key = id(step)
+        items = _newest(collapse(before.get(key, [])))
+        if items == last:
+            items = []
+        last = items or last
+        if lines := ([f"input before: {', '.join(items)}"] if items else []) + clicks.get(key, []):
+            notes[key] = lines
     return notes

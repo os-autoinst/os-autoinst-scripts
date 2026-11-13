@@ -43,7 +43,6 @@ Step context (last 20 command/needle/record_info steps)
   #322  Post-fail
     Entering post fail hook
   #323 [FAIL, post-fail hook]  wait_serial  marker: qr/login:\s*$/ui
-    input before: select_console root-virtio-terminal
   #324 [FAIL, post-fail hook]  Failed
 (post)  # Post fail hook died: Failed to wait for login prompt at opensuse/lib/serial_terminal.pm line 179, <$isotovideo> line 1
 

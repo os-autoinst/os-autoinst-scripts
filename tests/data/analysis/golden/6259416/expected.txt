@@ -25,7 +25,6 @@ Step context (last 20 command/needle/record_info steps)
   #5  Post-fail
     Entering post fail hook
   #6  screen match  needle: text-logged-in-root-simple_prompt-20190301 (100%)  tags: text-logged-in-root, tty6-selected
-    input before: select_console root-console
   #7  screen match  needle: text-logged-in-root-simple_prompt-20190301 (100%)  tags: text-logged-in-root
   #8  screen match  needle: root-console-no_color-20200130 (100%)  tags: root-console
   #10  wait_serial  marker: qr/BASH:([^:]*):/u
@@ -33,7 +32,6 @@ Step context (last 20 command/needle/record_info steps)
   #13  screen match  needle: root-console-no_color-20200130 (100%)  tags: root-console
   #15  wait_serial  command: pkill zypper  exit code: 1
   #17  wait_serial  command: zypper -n patch --debug-solver --with-interactive -l  exit code: 127
-    input before: select_console root-console, select_console root-virtio-terminal
 
 --- Stack trace ---
 testapi::assert_screen('installation-settings-overview-loaded', 420) called at tests/installation/resolve_dependency_issues.pm line 20

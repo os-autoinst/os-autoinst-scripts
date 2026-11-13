@@ -125,21 +125,59 @@ def _shown(*nums: int, needle: bool = False) -> list[dict[str, Any]]:
 
 def test_step_notes_go_to_the_next_shown_step() -> None:
     shown = _shown(2, 5)
-    notes = ac.step_notes([ac.Action(1, "send_key a"), ac.Action(4, "send_key b"), ac.Action(9, "send_key c")], shown)
+    notes = ac.step_notes(
+        [ac.Action(1, "send_key a"), ac.Action(4, "send_key b"), ac.Action(9, "send_key c")], shown, set()
+    )
     assert notes == {id(shown[0]): ["input before: send_key a"], id(shown[1]): ["input before: send_key b, send_key c"]}
 
 
 def test_step_notes_click_goes_to_the_needle_step_before() -> None:
     shown = [{"num": 1}, *_shown(4, needle=True)]
-    notes = ac.step_notes([ac.Action(5, "clicked (1,2)", clicked=True), ac.Action(5, "send_key x")], shown)
+    notes = ac.step_notes([ac.Action(5, "clicked (1,2)", clicked=True), ac.Action(5, "send_key x")], shown, set())
     assert notes == {id(shown[1]): ["input before: send_key x", "clicked (1,2)"]}
-    assert ac.step_notes([ac.Action(5, "clicked (1,2)", clicked=True)], _shown(1, 4)) == {}
-    assert ac.step_notes([ac.Action(1, "send_key a")], []) == {}
+    assert ac.step_notes([ac.Action(5, "clicked (1,2)", clicked=True)], _shown(1, 4), set()) == {}
+    assert ac.step_notes([ac.Action(1, "send_key a")], [], set()) == {}
 
 
 def test_step_notes_keep_the_newest_items() -> None:
     shown = _shown(100)
-    notes = ac.step_notes([ac.Action(n, f"send_key k{n}") for n in range(8)], shown)
+    notes = ac.step_notes([ac.Action(n, f"send_key k{n}") for n in range(8)], shown, set())
     assert notes[id(shown[0])] == [
-        "input before: ... (2 earlier omitted), " + ", ".join(f"send_key k{n}" for n in range(2, 8))
+        "input before: ... (4 earlier omitted), " + ", ".join(f"send_key k{n}" for n in range(4, 8))
     ]
+
+
+def test_step_notes_show_select_console_only_on_the_failing_steps() -> None:
+    shown = _shown(2, 5)
+    actions = [ac.Action(1, "select_console a"), ac.Action(4, "select_console b"), ac.Action(4, "send_key x")]
+    assert ac.step_notes(actions, shown, {id(shown[1])}) == {
+        id(shown[1]): ["input before: select_console b, send_key x"]
+    }
+    assert ac.step_notes(actions, shown, set()) == {id(shown[1]): ["input before: send_key x"]}
+
+
+def test_step_notes_drop_a_note_equal_to_the_one_above() -> None:
+    shown = _shown(2, 5, 8)
+    actions = [ac.Action(1, "send_key a"), ac.Action(4, "send_key a"), ac.Action(7, "send_key b")]
+    notes = ac.step_notes(actions, shown, set())
+    assert notes == {id(shown[0]): ["input before: send_key a"], id(shown[2]): ["input before: send_key b"]}
+
+
+def test_typed_words_that_look_like_passwords_are_masked_and_pty_plumbing_is_left_out() -> None:
+    enter = "testapi::enter_cmd"
+    log = _log(
+        _call(1, enter, 'type_string(string="nots3cr3t\\n", max_interval=250)'),
+        _call(2, enter, 'type_string(string="python3 -V\\n", max_interval=250)'),
+        _call(3, enter, 'type_string(string="echo x > $pty\\n", max_interval=250)'),
+    )
+    assert _texts(log) == ['enter_cmd "****"', 'enter_cmd "python3 -V"']
+
+
+def test_step_notes_put_x11_start_program_after_its_own_runner_needle() -> None:
+    shown = _shown(2, 5)
+    assert ac.step_notes([ac.Action(1, "x11_start_program xterm")], shown, set()) == {
+        id(shown[1]): ["input before: x11_start_program xterm"]
+    }
+    assert ac.step_notes([ac.Action(9, "x11_start_program xterm")], shown, set()) == {
+        id(shown[1]): ["input before: x11_start_program xterm"]
+    }

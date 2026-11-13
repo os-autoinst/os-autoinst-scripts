@@ -74,6 +74,7 @@ _STEPS_BEFORE_SCAN = 70
 _STEPS_AFTER_SCAN = 30
 _AFTER_COMMANDS = 3
 _FAILING_OUTPUT_LINES = 50
+_NOTE_STEPS = 3  # input is only noted on the failure and this many steps above it
 _STEPS_BEFORE_SHOWN = 20
 _STEPS_AFTER_SHOWN = 3
 _OUTPUT_STEPS = 5
@@ -279,6 +280,16 @@ def _fail_label(step: JsonDict, cluster: list[JsonDict], post_start: int | None)
     return "FAIL, post-fail hook" if is_secondary(step, post_start) else "FAIL, non-fatal"
 
 
+def _near_notes(
+    actions: list[Action], visible: list[JsonDict], marker: JsonDict, cluster: list[JsonDict]
+) -> dict[int, list[str]]:
+    """Return the input notes of the failing step and the `_NOTE_STEPS` steps above it."""
+    notes = step_notes(actions, visible, {id(marker), id(failing_step(cluster))})
+    first = max(0, next((i for i, d in enumerate(visible) if d is marker), 0) - _NOTE_STEPS)
+    near = {id(d) for d in visible[first:]}
+    return {k: v for k, v in notes.items() if k in near}
+
+
 def _step_context(  # ruff: ignore[too-many-arguments, too-many-positional-arguments]
     all_details: list[JsonDict],
     cluster: list[JsonDict],
@@ -303,7 +314,7 @@ def _step_context(  # ruff: ignore[too-many-arguments, too-many-positional-argum
     with_info |= {id(d) for d in after}
     with_output |= {id(d) for d in after if has_command(d.get("text_data") or "")}
     post_start = post_fail_start(all_details)
-    notes = step_notes(actions, [d for d in shown if id(d) not in hidden])
+    notes = _near_notes(actions, [d for d in shown if id(d) not in hidden], marker or failing_step(cluster), cluster)
     out = [f"Step context (last {_STEPS_BEFORE_SHOWN} command/needle/record_info steps)"]
     skipped = 0
     for step in shown:
@@ -366,10 +377,11 @@ def _cluster_report(
     )
     kept = [d for d in scanned if not is_noise_step(d)]
     before = kept[-_STEPS_BEFORE_SHOWN:]
-    # input older than the steps shown (or the scan) is dropped; input before bare screenshots goes to the next step
+    # input older than the shown steps (or the scan) or after the failure is dropped; bare screenshots pass theirs on
     cut = kept[-_STEPS_BEFORE_SHOWN - 1] if len(kept) > _STEPS_BEFORE_SHOWN else None
     cut = cut or (scanned[0] if len(scanned) == _STEPS_BEFORE_SCAN else None)
-    actions = [a for a in job.actions if a.num > (cut.get("num", 0) if cut else 0)]
+    first, last = (cut.get("num", 0) if cut else 0), cluster[-1].get("num", 0)
+    actions = [a for a in job.actions if first < a.num <= last]
     after = _steps_until_commands([d for d in after if not is_noise_step(d)], _AFTER_COMMANDS)
     bodies, sections = _step_bodies(job, cluster, category)
     out += _repeat_notes(cluster, [d for d in cluster if id(d) in bodies])
