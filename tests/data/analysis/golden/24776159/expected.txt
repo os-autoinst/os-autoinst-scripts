@@ -49,7 +49,6 @@ Step context (last 20 command/needle/record_info steps)
     input before: enter_cmd "reboot", switch to console svirt
   #61  screen match  needle: text-logged-in-root-kgraft-20160727 (100%)  tags: text-logged-in-root
   #65  wait_serial  marker: "GNU GRUB|Welcome to GRUB!"
-    input before: enter_cmd "pty=`virsh ttyconsole openQA-SUT-4`"
     ... (165 earlier output lines omitted)
     Using virtio-blk.
     Using SCSI scheme.

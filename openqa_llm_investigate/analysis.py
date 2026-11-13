@@ -281,9 +281,12 @@ def _fail_label(step: JsonDict, cluster: list[JsonDict], post_start: int | None)
 
 
 def _near_notes(actions: list[Action], visible: list[JsonDict], marker: JsonDict) -> dict[int, list[str]]:
-    """Return the input notes: keys, text and clicks only near the failure, console switches everywhere."""
+    """Return the input notes: keys, text and clicks on screens near the failure, console switches everywhere.
+
+    Steps with a text (commands, record_info) show what they ran, so only the failing one also gets notes.
+    """
     first = max(0, next((i for i, d in enumerate(visible) if d is marker), 0) - _NOTE_STEPS)
-    return step_notes(actions, visible, {id(d) for d in visible[first:]})
+    return step_notes(actions, visible, {id(d) for d in visible[first:] if d is marker or not d.get("text_data")})
 
 
 def _step_context(  # ruff: ignore[too-many-arguments, too-many-positional-arguments]

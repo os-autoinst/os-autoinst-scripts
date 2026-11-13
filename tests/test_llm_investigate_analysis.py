@@ -306,15 +306,23 @@ def test_step_context_has_no_input_without_the_log(make_openqa: Any) -> None:
 
 
 def test_input_is_only_noted_near_the_failure(make_openqa: Any) -> None:
-    details = [_cmd(n, f"cmd{n}") for n in range(1, 11)] + [_step(11, title="Failed", text="# Test died: x")]
+    details = [_needle(n) for n in range(1, 11)] + [_step(11, title="Failed", text="# Test died: x")]
     log = _autoinst((2, "send_key", 'send_key(key="far")'), (8, "send_key", 'send_key(key="near")'))
     out = _module_report(make_openqa, details, {"autoinst-log.txt": log})
     assert "send_key near" in out
     assert "send_key far" not in out
 
 
+def test_input_is_not_noted_on_command_steps(make_openqa: Any) -> None:
+    details = [_cmd(1, "cmd1"), _needle(2), _step(3, title="Failed", text="# Test died: x")]
+    log = _autoinst((1, "send_key", 'send_key(key="cmd")'), (2, "send_key", 'send_key(key="screen")'))
+    out = _module_report(make_openqa, details, {"autoinst-log.txt": log})
+    assert "send_key screen" in out
+    assert "send_key cmd" not in out
+
+
 def test_input_older_than_the_shown_steps_is_dropped(make_openqa: Any) -> None:
-    details = [_cmd(n, f"cmd{n}") for n in range(1, 26)] + [_step(26, title="Failed", text="# Test died: x")]
+    details = [_needle(n) for n in range(1, 26)] + [_step(26, title="Failed", text="# Test died: x")]
     log = _autoinst((3, "send_key", 'send_key(key="old")'), (24, "send_key", 'send_key(key="new")'))
     out = _module_report(make_openqa, details, {"autoinst-log.txt": log})
     assert "send_key new" in out
