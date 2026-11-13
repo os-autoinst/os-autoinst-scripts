@@ -39,3 +39,4 @@ def test_prompts_require_evidence_and_treat_needle_tags_as_expectations(mocker: 
     assert "153 failures across this build alone do not show a backend infrastructure outage" in verdict
     assert "only if the analysis shows\nan error of the worker, its network or an external server" in verdict
     assert "not of the tested system itself." in verdict
+    assert "do not make a Test issue more likely" in verdict

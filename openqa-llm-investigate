@@ -96,7 +96,8 @@ Restart: NO \u2014 the needle does not match the screen
 
 Classification, choose exactly one value. Product bug: the software under test is wrong, e.g. a kernel panic or
 segfault. Test issue: test code, needle or test data is wrong. Infrastructure problem: only if the analysis shows
-an error of the worker, its network or an external server, not of the tested system itself.
+an error of the worker, its network or an external server, not of the tested system itself. Earlier modules that
+passed do not make a Test issue more likely: a product bug or an infrastructure problem can show up in one module only.
 
 BISECT decides whether 'openqa-investigate' should schedule further bisect tests.
 - If other jobs in the same build fail in the exact same module, answer BISECT: NO. Another job likely triggered it.
