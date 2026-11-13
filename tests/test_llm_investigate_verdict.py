@@ -47,8 +47,8 @@ def test_bisect_verdict_reads_the_last_bisect_line(reply: str, *, expected: bool
 
 @pytest.mark.parametrize(
     ("streak", "expected"),
-    [(95, _both_no(95)), (3, _both_no(3)), (1, _REPLY), (2, _REPLY), (None, _REPLY)],
-    ids=["long-streak", "three-failures", "first-failure", "two-failures", "not-in-history"],
+    [(95, _both_no(95)), (5, _both_no(5)), (1, _REPLY), (4, _REPLY), (None, _REPLY)],
+    ids=["long-streak", "five-failures", "first-failure", "four-failures", "not-in-history"],
 )
 def test_enforce_history_rules(streak: int | None, expected: str) -> None:
     assert verdict.enforce_history_rules(_REPLY, streak) == expected
@@ -70,8 +70,8 @@ def test_enforce_history_rules_keeps_the_reason_of_a_no() -> None:
     ],
 )
 def test_enforce_history_rules_rewrites_emphasized_lines(bisect: str, restart: str) -> None:
-    out = verdict.enforce_history_rules(f"{bisect}\n{restart}", 3)
-    assert out == _both_no(3).split("\n", 1)[1]
+    out = verdict.enforce_history_rules(f"{bisect}\n{restart}", 5)
+    assert out == _both_no(5).split("\n", 1)[1]
 
 
 def test_investigate_without_a_bisect_line_skips_the_check_before_posting(mocker: MockerFixture) -> None:

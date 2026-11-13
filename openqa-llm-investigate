@@ -60,7 +60,7 @@ Job details:
 - Flavor: {flavor}
 - Result: {result}{prompt_extension_text}
 
-{submission_section}{investigation_section}{commits_section}\
+{submission_section}{last_good_section}{investigation_section}{commits_section}\
 Failure analysis (context window of {context_lines} lines{truncated}):
 {analysis}
 
@@ -103,6 +103,12 @@ BISECT decides whether 'openqa-investigate' should schedule further bisect tests
 Restart decides whether the job should be restarted automatically. Answer Restart: YES only if the failure looks
 transient (flaky timing, network, worker or external service) so that a rerun is likely to pass, else Restart: NO.
 """
+
+NO_LAST_GOOD_VERDICT = """Classification: Test issue
+BISECT: NO \u2014 no last good job
+Restart: NO \u2014 no last good job
+
+No last good job was found for this scenario, so it is treated as a test issue. Bisection and restart are skipped."""
 
 TRUNCATED_NOTE = ", truncated to the first {log_lines} lines; do not guess about the omitted tail"
 CONTEXT_TRUNCATED_NOTE = ", truncated to fit {context_tokens} tokens; do not guess about the omitted tail"
@@ -611,6 +617,31 @@ def _investigation_text(diff: Any) -> str:  # ruff: ignore[any-type]
     return redact(diff if isinstance(diff, str) else json.dumps(diff, indent=2))
 
 
+def _no_last_good(investigation: dict[str, Any]) -> bool:
+    """Return whether openQA says the scenario has no good job; a missing or odd answer is not a "no"."""
+    return investigation.get("last_good") == "not found" or str(investigation.get("error", "")).startswith(
+        "No previous job"
+    )
+
+
+def _last_good_section(client: httpx.Client, base_url: str, investigation: dict[str, Any]) -> str:
+    """Return the prompt section on the last good job: its link, result and finish time (UTC)."""
+    if _no_last_good(investigation):
+        return "Last good job: none found, this scenario has no recent successful run.\n\n"
+    last_good = investigation.get("last_good")
+    job_id = str(last_good.get("text", "")) if isinstance(last_good, dict) else ""
+    if not job_id.isdigit():
+        return ""
+    job = fetch_json(client, f"{base_url}/api/v1/jobs/{job_id}").get("job", {})
+    finished = job.get("t_finished") or job.get("t_started")
+    when = f", finished {finished} UTC" if finished else ""
+    result = job.get("result") or "passed or softfailed"
+    return (
+        f"Last good job: {base_url}/tests/{job_id} ({result}{when}). That job succeeded: "
+        "the scenario worked then and fails now.\n\n"
+    )
+
+
 def _investigation_section(info: str) -> str:
     return f"Investigation info (diff to last good):\n{info.rstrip()}\n\n" if info.strip() else ""
 
@@ -672,6 +703,7 @@ def _build_prompt(job: dict[str, Any], analysis: str, stats: dict[str, Any], opt
         "analysis": analysis,
         "truncated": TRUNCATED_NOTE.format(log_lines=opts.log_lines) if truncated else "",
         "submission_section": _submission_section(stats.get("submission_info", {})),
+        "last_good_section": stats.get("last_good_section", ""),
         "investigation_section": _investigation_section(stats["investigation_info"]),
         "commits_section": commits,
         "prompt_extension_text": extension_text,
@@ -700,6 +732,8 @@ def _gather_stats(
         "same_module_failures": same_module_failures,
         "consecutive_failures": consecutive_str,
         "streak": consecutive_failures if job_found and job.get("result") == "failed" else None,
+        "no_last_good": _no_last_good(investigation),
+        "last_good_section": _last_good_section(client, base_url, investigation),
         "investigation_info": _investigation_text(investigation.get("diff_to_last_good")),
         "investigation": investigation,
         "submission_info": _submissions(client, job),
@@ -734,6 +768,15 @@ def _opted_out(job_id: str, job: dict[str, Any], opts: Options) -> bool:
         return True
     manual = opts.force or opts.dry or opts.print_prompt
     return not manual and _in_excluded_group(job_id, job, opts.exclude_group_regex)
+
+
+def _verdict(client: httpx.Client, opts: Options, messages: list[dict[str, str]], stats: dict[str, Any]) -> str:
+    """Return the verdict; a scenario without a last good job is a test issue, so the LLM is not asked."""
+    if stats["no_last_good"]:
+        return NO_LAST_GOOD_VERDICT
+    verdict = _ask(client, opts, messages, _verdict_question(stats, opts), 0.0)
+    verdict = _enforce_bisect_rule(_drop_placeholder_reasons(verdict), stats["same_module_failures"])
+    return enforce_history_rules(verdict, stats["streak"])
 
 
 def _perform_investigation(client: httpx.Client, base_url: str, job_id: str, opts: Options) -> None:
@@ -771,9 +814,7 @@ def _perform_investigation(client: httpx.Client, base_url: str, job_id: str, opt
     messages: list[dict[str, str]] = []
     lines = _ask(client, opts, messages, prompt, TEMPERATURE)
     brief = _ask(client, opts, messages, BRIEF_QUESTION, TEMPERATURE)
-    verdict = _ask(client, opts, messages, _verdict_question(stats, opts), 0.0)
-    verdict = _enforce_bisect_rule(_drop_placeholder_reasons(verdict), stats["same_module_failures"])
-    verdict = enforce_history_rules(verdict, stats["streak"])
+    verdict = _verdict(client, opts, messages, stats)
     bisect = bisect_verdict(verdict)
     if bisect is None:
         log.info(

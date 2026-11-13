@@ -7,7 +7,7 @@ import re
 
 BISECT_RE = re.compile(r"^(?:[\s*_`>#-]|\d+\.)*BISECT[*_`]*:[\s*_`]*(YES|NO)(?![a-z0-9])", re.IGNORECASE)
 _RESTART_RE = re.compile(r"^(?:[\s*_`>#-]|\d+\.)*Restart[*_`]*:[\s*_`]*(YES|NO)(?![a-z0-9])", re.IGNORECASE)
-_DETERMINISTIC_STREAK = 3
+_DETERMINISTIC_STREAK = 5
 
 
 def bisect_verdict(verdict: str) -> bool | None:
