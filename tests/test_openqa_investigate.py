@@ -806,6 +806,13 @@ def test_trigger_jobs(mocker: MockerFixture) -> None:
     mock_regr.assert_called_once()
     assert mock_regr.call_args[1]["strict"] is False
 
+    # retry_only -> only the retry job, the last good job is not even looked up
+    mock_regr.reset_mock()
+    mock_ajax = mocker.patch.object(client, "get_investigation_ajax")
+    assert openqa_investigate.trigger_jobs(client, 1, None, 0, 100, retry_only=True) == "retry_line"
+    mock_ajax.assert_not_called()
+    mock_regr.assert_not_called()
+
     # Valid last_good with strict=True
     client_strict = openqa_investigate.OpenQAClient("https://openqa.opensuse.org", strict=True)
     mock_get_ajax = mocker.patch.object(
@@ -1329,8 +1336,22 @@ def test_run_investigation_logic_strict(mocker: MockerFixture) -> None:
 
     openqa_investigate.run_investigation_logic(client, 2, strict=True)
     assert client.strict is True
-    mock_trig.assert_called_once_with(client, 2, None, 0, 100)
+    mock_trig.assert_called_once_with(client, 2, None, 0, 100, retry_only=False)
     mock_fin.assert_called_once_with(client, 2, 1, "123", "out text")
+
+
+def test_run_investigation_logic_retry_only(mocker: MockerFixture) -> None:
+    client = openqa_investigate.OpenQAClient("https://openqa.opensuse.org")
+    mocker.patch.object(client, "get_job", return_value={"job": {"test": "foo"}})
+    mocker.patch.object(openqa_investigate, "_should_exclude_job", return_value=False)
+    mocker.patch.object(openqa_investigate, "query_dependency_data_or_postpone", return_value={"cluster": [[1, 2]]})
+    mocker.patch.object(openqa_investigate, "sync_via_investigation_comment", return_value="123")
+    mock_trig = mocker.patch.object(openqa_investigate, "trigger_jobs", return_value="retry line")
+    mock_fin = mocker.patch.object(openqa_investigate, "finalize_investigation_comment")
+
+    openqa_investigate.run_investigation_logic(client, 2, retry_only=True)
+    mock_trig.assert_called_once_with(client, 2, None, 0, 100, retry_only=True)
+    mock_fin.assert_called_once_with(client, 2, 1, "123", "retry line")
 
 
 def test_main(mocker: MockerFixture) -> None:
@@ -1376,6 +1397,12 @@ def test_main(mocker: MockerFixture) -> None:
     assert kwargs["exclude_group_regex"] == "group_excl"
     assert kwargs["force"] is True
     assert kwargs["strict"] is False
+    assert kwargs["retry_only"] is False
+
+    # Invocation with --retry-only
+    mock_run.reset_mock()
+    openqa_investigate.main("1234", retry_only=True)
+    assert mock_run.call_args[1]["retry_only"] is True
 
     # Invocation with --strict
     mock_run.reset_mock()

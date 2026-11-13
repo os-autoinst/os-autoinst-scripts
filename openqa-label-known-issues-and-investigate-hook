@@ -34,6 +34,12 @@ investigate-and-bisect() {
 
     [[ -z "$investigate_target" ]] && return 0
 
+    # The LLM expects a transient failure and no regression: the retry job alone shows whether it is sporadic
+    if [[ "$investigate_target" == retry:* ]]; then
+        openqa-investigate --retry-only "${investigate_target#retry:}" || rc=$?
+        return "$rc"
+    fi
+
     openqa-investigate "$investigate_target" || rc=$?
     [[ "$rc" -eq 142 ]] && return "$rc"
     openqa-trigger-bisect-jobs -v --url "$investigate_target" || rc=$?
