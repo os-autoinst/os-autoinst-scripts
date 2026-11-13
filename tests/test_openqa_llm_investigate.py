@@ -335,6 +335,15 @@ def test_investigate_cmd_print_prompt(mocker: MockerFixture) -> None:
     assert all(s in output for s in ("Prompt 1/3", "Question 1", "Question 2", "Question 3"))
 
 
+def test_investigate_print_prompt_skips_the_verdict_question_without_last_good(mocker: MockerFixture) -> None:
+    mock_print = mocker.patch("llm_investigate.typer.echo")
+    setup_mock_client(mocker, overrides={"investigation_ajax": {"last_good": "not found"}})
+    llm_investigate.investigate("123", print_prompt=True)
+    output = mock_print.call_args[0][0]
+    assert "Prompt 2/2" in output
+    assert "Question 3" not in output
+
+
 def test_investigate_cmd_connection_error(mocker: MockerFixture) -> None:
     mock_log = mocker.patch("llm_investigate.log")
     client = setup_mock_client(mocker)
@@ -1352,9 +1361,19 @@ def test_investigate_without_last_good_is_a_test_issue_without_bisect_or_restart
     client = setup_mock_client(mocker, overrides={"investigation_ajax": investigation})
     llm_investigate.investigate("123")
     assert "Last good job: none found" in _prompt_sent(client)
+    assert "Treat this failure as a test issue" in _prompt_sent(client)
     assert client.post.call_count == 2
     mock_print.assert_not_called()
     assert llm_investigate.NO_LAST_GOOD_VERDICT in mock_post.call_args[0][2]
+
+
+def test_investigate_omits_the_last_good_time_without_t_finished(mocker: MockerFixture) -> None:
+    mocker.patch("llm_investigate.post_comment")
+    mocker.patch("llm_investigate.typer.echo")
+    last_good_job = {"job": {"id": 100, "result": "passed", "t_started": "2026-11-10T03:00:00"}}
+    client = setup_mock_client(mocker, overrides={"investigation_ajax": LAST_GOOD, "api/v1/jobs/100": last_good_job})
+    llm_investigate.investigate("123")
+    assert "tests/100 (passed). That job succeeded" in _prompt_sent(client)
 
 
 @pytest.mark.parametrize("investigation", [{}, {"diff_to_last_good": {}}, {"error": "No result directory"}])

@@ -627,14 +627,16 @@ def _no_last_good(investigation: dict[str, Any]) -> bool:
 def _last_good_section(client: httpx.Client, base_url: str, investigation: dict[str, Any]) -> str:
     """Return the prompt section on the last good job: its link, result and finish time (UTC)."""
     if _no_last_good(investigation):
-        return "Last good job: none found, this scenario has no recent successful run.\n\n"
+        return (
+            "Last good job: none found, this scenario has no recent successful run.\n"
+            "Treat this failure as a test issue: neither a bisection nor a restart is needed.\n\n"
+        )
     last_good = investigation.get("last_good")
     job_id = str(last_good.get("text", "")) if isinstance(last_good, dict) else ""
     if not job_id.isdigit():
         return ""
     job = fetch_json(client, f"{base_url}/api/v1/jobs/{job_id}").get("job", {})
-    finished = job.get("t_finished") or job.get("t_started")
-    when = f", finished {finished} UTC" if finished else ""
+    when = f", finished {job['t_finished']} UTC" if job.get("t_finished") else ""
     result = job.get("result") or "passed or softfailed"
     return (
         f"Last good job: {base_url}/tests/{job_id} ({result}{when}). That job succeeded: "
@@ -808,8 +810,8 @@ def _perform_investigation(client: httpx.Client, base_url: str, job_id: str, opt
     stats, job_found = _gather_stats(client, base_url, job_id, job, opts)
     prompt, cut_notes = _build_prompt(job, analysis, stats, opts)
     if opts.print_prompt:
-        prompts = [prompt, BRIEF_QUESTION, _verdict_question(stats, opts)]
-        typer.echo("\n\n".join(f"===== Prompt {i}/3 =====\n{p}" for i, p in enumerate(prompts, 1)))
+        prompts = [prompt, BRIEF_QUESTION] + ([] if stats["no_last_good"] else [_verdict_question(stats, opts)])
+        typer.echo("\n\n".join(f"===== Prompt {i}/{len(prompts)} =====\n{p}" for i, p in enumerate(prompts, 1)))
         return
     messages: list[dict[str, str]] = []
     lines = _ask(client, opts, messages, prompt, TEMPERATURE)
