@@ -46,6 +46,20 @@ def test_bisect_verdict_reads_the_last_bisect_line(reply: str, *, expected: bool
 
 
 @pytest.mark.parametrize(
+    ("reply", "expected"),
+    [
+        (_REPLY, True),
+        ("Restart: YES?\n**Restart:** NO \u2014 needle mismatch", False),
+        ("- restart: yes \u2014 flaky", True),
+        ("Classification: Test issue\nBISECT: YES", None),
+        ("A Restart: YES would not help.", None),
+    ],
+)
+def test_restart_verdict_reads_the_last_restart_line(reply: str, *, expected: bool | None) -> None:
+    assert verdict.restart_verdict(reply) is expected
+
+
+@pytest.mark.parametrize(
     ("streak", "expected"),
     [(95, _both_no(95)), (3, _both_no(3)), (1, _REPLY), (2, _REPLY), (None, _REPLY)],
     ids=["long-streak", "three-failures", "first-failure", "two-failures", "not-in-history"],

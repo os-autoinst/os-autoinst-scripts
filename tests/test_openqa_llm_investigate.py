@@ -999,6 +999,29 @@ def test_investigate_bisect_gate_uses_last_verdict(mocker: MockerFixture, respon
     assert (call("https://openqa.opensuse.org/tests/123") in mock_print.call_args_list) is printed
 
 
+@pytest.mark.parametrize(
+    ("verdict", "printed"),
+    [
+        ("BISECT: NO \u2014 known\nRestart: YES \u2014 flaky network", ["retry:https://openqa.opensuse.org/tests/123"]),
+        ("BISECT: YES \u2014 isolated\nRestart: YES \u2014 flaky network", ["https://openqa.opensuse.org/tests/123"]),
+        ("BISECT: NO \u2014 known\nRestart: NO \u2014 needle mismatch", []),
+        ("BISECT: NO \u2014 known", []),
+    ],
+    ids=["retry-alone", "bisect-includes-the-retry", "neither", "no-restart-line"],
+)
+def test_investigate_asks_for_the_retry_alone_on_restart_without_bisect(
+    mocker: MockerFixture, verdict: str, printed: list[str]
+) -> None:
+    mocker.patch("llm_investigate.post_comment")
+    mock_print = mocker.patch("llm_investigate.typer.echo")
+    mocker.patch.dict(CHAT_REPLIES, {5: f"Classification: Infrastructure problem\n{verdict}"})
+    setup_mock_client(mocker)
+
+    llm_investigate.investigate("123")
+
+    assert [c.args[0] for c in mock_print.call_args_list] == printed
+
+
 @pytest.mark.parametrize("dry", [False, True])
 def test_investigate_without_a_bisect_verdict_falls_back_without_a_comment(mocker: MockerFixture, *, dry: bool) -> None:
     mock_log = mocker.patch("llm_investigate.log")
@@ -1323,6 +1346,18 @@ def test_investigate_bisect_rule_forces_no_for_same_module_failures(mocker: Mock
     assert "BISECT: NO \u2014 1 other job(s) in this build fail in the same module" in comment
     assert "BISECT: YES" not in comment
     assert "Restart: NO" in comment
+
+
+def test_investigate_same_module_failures_do_not_rule_out_the_retry(mocker: MockerFixture) -> None:
+    mocker.patch("llm_investigate.post_comment")
+    mock_print = mocker.patch("llm_investigate.typer.echo")
+    mocker.patch("llm_investigate._build_failures", return_value=(2, 1))
+    mocker.patch.dict(CHAT_REPLIES, {5: "BISECT: YES \u2014 isolated\nRestart: YES \u2014 mirror unreachable"})
+    setup_mock_client(mocker)
+
+    llm_investigate.investigate("123")
+
+    mock_print.assert_called_once_with("retry:https://openqa.opensuse.org/tests/123")
 
 
 @pytest.mark.parametrize(

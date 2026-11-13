@@ -31,7 +31,7 @@ from openqa_llm_investigate.commits import commits_section
 from openqa_llm_investigate.history import fetch_rows, is_reviewed
 from openqa_llm_investigate.http import AnalyzerError, NoFailedModulesError, OpenQA
 from openqa_llm_investigate.text import redact
-from openqa_llm_investigate.verdict import BISECT_RE, bisect_verdict, enforce_history_rules
+from openqa_llm_investigate.verdict import BISECT_RE, bisect_verdict, enforce_history_rules, restart_verdict
 
 USER_AGENT = "openqa-llm-investigate (https://github.com/os-autoinst/os-autoinst-scripts)"
 DEFAULT_OPENQA_TIMEOUT: float = 90.0
@@ -736,6 +736,16 @@ def _opted_out(job_id: str, job: dict[str, Any], opts: Options) -> bool:
     return not manual and _in_excluded_group(job_id, job, opts.exclude_group_regex)
 
 
+def _hook_target(verdict: str, url: str, *, bisect: bool | None) -> str | None:
+    """Return what the hook investigates: the job in full, or `retry:` plus the job for the retry job alone.
+
+    A failure that looks transient needs no bisection, but only a rerun shows whether it is sporadic.
+    """
+    if bisect is not False:
+        return url
+    return f"retry:{url}" if restart_verdict(verdict) else None
+
+
 def _perform_investigation(client: httpx.Client, base_url: str, job_id: str, opts: Options) -> None:
     comments = [] if opts.print_prompt else fetch_json(client, f"{base_url}/api/v1/jobs/{job_id}/comments", default=[])
     if (
@@ -782,8 +792,9 @@ def _perform_investigation(client: httpx.Client, base_url: str, job_id: str, opt
 
     # Print the job URL to stdout unless BISECT: NO is recommended; without a verdict the standard investigation runs
     # This makes the script act as a gatekeeper, similar to `openqa-label-known-issues`
-    if bisect is not False:
-        typer.echo(f"{base_url}/tests/{job_id}")
+    # On BISECT: NO a Restart: YES still asks the hook for the retry job
+    if target := _hook_target(verdict, f"{base_url}/tests/{job_id}", bisect=bisect):
+        typer.echo(target)
 
     comment = (
         f"{COMMENT_MARKER}\n\n{lines}\n\n{brief}\n\n{verdict}{_comment_notes(cut_notes, opts, job_found=job_found)}"
