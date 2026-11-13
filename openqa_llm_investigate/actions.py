@@ -17,7 +17,8 @@ _ARG_RE = re.compile(r'(\w+)=("(?:[^"\\]|\\.)*"|[^,]*)')
 _CHAIN_RE = re.compile(r"called (\S+)")
 _BLOCKS = {"wait_screen_change", "assert_screen_change"}
 _TRANSPARENT = {"send_key_until_needlematch"}
-_FIRST_VALUE = {"x11_start_program": "program", "select_console": "testapi_console"}
+_CONSOLE = "switch to console "
+_FIRST_VALUE = {"x11_start_program": ("x11_start_program ", "program"), "select_console": (_CONSOLE, "testapi_console")}
 _NEWLINE = "\\n"
 _MASK = "****"  # a single typed word that mixes letters and digits is taken for a password
 _STRING_MAX = 80
@@ -50,7 +51,8 @@ def _text(name: str, args: dict[str, str], mouse: tuple[str, str] | None) -> str
             return None
         return f'{name} "{_MASK if _SECRET_RE.search(typed) and " " not in typed else typed}"'
     if name in _FIRST_VALUE:
-        return f"{name} {_value(args, _FIRST_VALUE[name])}"
+        label, key = _FIRST_VALUE[name]
+        return f"{label}{_value(args, key)}"
     if name == "mouse_click":
         return f"click ({mouse[0]},{mouse[1]})" if mouse else "click"
     return None
@@ -134,11 +136,12 @@ def _newest(items: list[str]) -> list[str]:
     )
 
 
-def step_notes(actions: list[Action], shown: list[JsonDict], console_on: set[int]) -> dict[int, list[str]]:
+def step_notes(actions: list[Action], shown: list[JsonDict], near: set[int]) -> dict[int, list[str]]:
     """Return the note lines of the steps in `shown` (id(step) -> lines): the input before each step, a click on it.
 
-    Input before a step that is not shown (a bare screenshot) goes to the next shown one. A select_console is
-    only noted on the steps in `console_on` (the id of the failing ones); a note equal to the one above is dropped.
+    Input before a step that is not shown (a bare screenshot) goes to the next shown one. Only the steps in `near`
+    (ids) get keys, text and clicks, but a console switch is always noted (it tells who runs the commands). A note
+    equal to the one above is dropped.
     """
     if not shown:
         return {}
@@ -147,13 +150,13 @@ def step_notes(actions: list[Action], shown: list[JsonDict], console_on: set[int
     for action in actions:
         if action.clicked:
             target = next((d for d in reversed(shown) if d.get("num", 0) < action.num and d.get("needle")), None)
-            if target is not None:
+            if target is not None and id(target) in near:
                 clicks.setdefault(id(target), []).append(action.text)
         else:
             idx = next((i for i, d in enumerate(shown) if d.get("num", 0) >= action.num), len(shown) - 1)
             # x11_start_program matches the desktop-runner needle itself, so its input belongs to the step after
             target = shown[min(idx + action.text.startswith("x11_start_program "), len(shown) - 1)]
-            if id(target) in console_on or not action.text.startswith("select_console "):
+            if id(target) in near or action.text.startswith(_CONSOLE):
                 before.setdefault(id(target), []).append(action.text)
     notes: dict[int, list[str]] = {}
     last: list[str] = []

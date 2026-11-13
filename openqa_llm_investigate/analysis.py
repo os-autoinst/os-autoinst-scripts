@@ -280,14 +280,10 @@ def _fail_label(step: JsonDict, cluster: list[JsonDict], post_start: int | None)
     return "FAIL, post-fail hook" if is_secondary(step, post_start) else "FAIL, non-fatal"
 
 
-def _near_notes(
-    actions: list[Action], visible: list[JsonDict], marker: JsonDict, cluster: list[JsonDict]
-) -> dict[int, list[str]]:
-    """Return the input notes of the failing step and the `_NOTE_STEPS` steps above it."""
-    notes = step_notes(actions, visible, {id(marker), id(failing_step(cluster))})
+def _near_notes(actions: list[Action], visible: list[JsonDict], marker: JsonDict) -> dict[int, list[str]]:
+    """Return the input notes: keys, text and clicks only near the failure, console switches everywhere."""
     first = max(0, next((i for i, d in enumerate(visible) if d is marker), 0) - _NOTE_STEPS)
-    near = {id(d) for d in visible[first:]}
-    return {k: v for k, v in notes.items() if k in near}
+    return step_notes(actions, visible, {id(d) for d in visible[first:]})
 
 
 def _step_context(  # ruff: ignore[too-many-arguments, too-many-positional-arguments]
@@ -314,7 +310,7 @@ def _step_context(  # ruff: ignore[too-many-arguments, too-many-positional-argum
     with_info |= {id(d) for d in after}
     with_output |= {id(d) for d in after if has_command(d.get("text_data") or "")}
     post_start = post_fail_start(all_details)
-    notes = _near_notes(actions, [d for d in shown if id(d) not in hidden], marker or failing_step(cluster), cluster)
+    notes = _near_notes(actions, [d for d in shown if id(d) not in hidden], marker or failing_step(cluster))
     out = [f"Step context (last {_STEPS_BEFORE_SHOWN} command/needle/record_info steps)"]
     skipped = 0
     for step in shown:
