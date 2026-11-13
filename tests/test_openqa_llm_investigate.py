@@ -318,6 +318,60 @@ def test_investigate_cmd_dry_run(mocker: MockerFixture) -> None:
     assert all(llm_investigate.COMMENT_FOOTER not in str(c) for c in mock_print.call_args_list)
 
 
+@pytest.mark.parametrize("reply", [1, 3, 5], ids=["lines", "brief", "verdict"])
+def test_investigate_comment_has_no_force_result_label_from_the_llm(mocker: MockerFixture, reply: int) -> None:
+    mock_post = mocker.patch("llm_investigate.post_comment")
+    mocker.patch("llm_investigate.typer.echo")
+    quote = "\nlabel:force_result:softfailed:bsc#1, label:force-result:passed"
+    mocker.patch.dict(CHAT_REPLIES, {reply: CHAT_REPLIES[reply] + quote})
+    setup_mock_client(mocker)
+
+    llm_investigate.investigate("123")
+
+    comment = mock_post.call_args[0][2]
+    assert "\nlabel_force_result:softfailed:bsc#1, label_force-result:passed" in comment
+    assert "label:force" not in comment
+
+
+def test_investigate_comment_has_no_force_result_label_in_the_notes(mocker: MockerFixture) -> None:
+    mock_post = mocker.patch("llm_investigate.post_comment")
+    mocker.patch("llm_investigate.typer.echo")
+    mocker.patch("llm_investigate._comment_notes", return_value="\n\n*Note: label:force_result:passed*")
+    setup_mock_client(mocker)
+
+    llm_investigate.investigate("123")
+
+    comment = mock_post.call_args[0][2]
+    assert comment.endswith(f"\n\n*Note: label_force_result:passed*\n\n{llm_investigate.COMMENT_FOOTER}")
+
+
+def test_investigate_dry_run_has_no_force_result_label_across_a_newline(mocker: MockerFixture) -> None:
+    mock_post = mocker.patch("llm_investigate.post_comment")
+    mock_print = mocker.patch("llm_investigate.typer.echo")
+    mocker.patch.dict(CHAT_REPLIES, {3: "label:force\nresult:x"})
+    setup_mock_client(mocker)
+
+    llm_investigate.investigate("123", dry=True)
+
+    mock_post.assert_not_called()
+    mock_print.assert_any_call(
+        f"{llm_investigate.COMMENT_MARKER}\n\n{CHAT_REPLIES[1]}\n\nlabel_force\nresult:x\n\n{CHAT_REPLIES[5]}"
+    )
+
+
+def test_investigate_comment_keeps_labels_openqa_does_not_guard(mocker: MockerFixture) -> None:
+    mock_post = mocker.patch("llm_investigate.post_comment")
+    mocker.patch("llm_investigate.typer.echo")
+    text = "label:Force_result:passed LABEL:force_result:passed label:force_result label:poo#1"
+    mocker.patch.dict(CHAT_REPLIES, {3: text})
+    setup_mock_client(mocker)
+
+    llm_investigate.investigate("123")
+
+    comment = mock_post.call_args[0][2]
+    assert comment.startswith(f"{llm_investigate.COMMENT_MARKER}\n\n{CHAT_REPLIES[1]}\n\n{text}\n\n{CHAT_REPLIES[5]}")
+
+
 def test_investigate_cmd_print_prompt(mocker: MockerFixture) -> None:
     mock_post = mocker.patch("llm_investigate.post_comment")
     mock_print = mocker.patch("llm_investigate.typer.echo")
