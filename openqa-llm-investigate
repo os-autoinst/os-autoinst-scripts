@@ -28,6 +28,7 @@ from common.error_handling import is_404_str
 from common.smelt import submission_ids, submission_packages
 from openqa_llm_investigate.analysis import analyze_job
 from openqa_llm_investigate.commits import commits_section
+from openqa_llm_investigate.decision import decided_verdict
 from openqa_llm_investigate.history import fetch_rows, is_reviewed
 from openqa_llm_investigate.http import AnalyzerError, NoFailedModulesError, OpenQA
 from openqa_llm_investigate.text import redact
@@ -46,6 +47,8 @@ COMMENT_FOOTER = (
     "[openqa-llm-investigate](https://github.com/os-autoinst/os-autoinst-scripts/blob/master/openqa-llm-investigate)."
     " flag:verbatim"
 )
+# a name that a server reports must not close the HTML comment of the record or add text to the summary
+_NOT_RECORDED_RE = re.compile(r"[^\w.:/@+-]", re.ASCII)
 OUTAGE_HINT = "\n(Note: {build_failures} failures across this build alone do not show a backend infrastructure outage.)"
 INTRO_TEMPLATE = """You are analyzing an openQA test run failure.
 Job details:
@@ -249,6 +252,7 @@ class Options:
     print_prompt: bool = False
     job_id: str = ""
     exclude_group_regex: str = DEFAULT_EXCLUDE_GROUP_REGEX
+    decision_url: str = ""
 
 
 def fetch_json(
@@ -386,7 +390,10 @@ def _vertex_request(client: httpx.Client, token: str | None, model: str = "") ->
     return url, token or _google_access_token(client)
 
 
-def _call_llm_api(client: httpx.Client, opts: Options, messages: list[dict[str, str]], temperature: float) -> str:
+def _call_llm_api(
+    client: httpx.Client, opts: Options, messages: list[dict[str, str]], temperature: float
+) -> tuple[str, Any]:
+    """Return the reply of the LLM and the model name that its server reports."""
     llm_url, llm_model, llm_token, timeout = opts.llm_url, opts.llm_model, opts.llm_token, opts.llm_timeout
     kind = _api_kind(opts)
     if kind == LlmApi.VERTEX:
@@ -400,8 +407,9 @@ def _call_llm_api(client: httpx.Client, opts: Options, messages: list[dict[str, 
         res.raise_for_status()
         res_json = res.json()
         if _is_claude(opts):
-            return res_json["content"][0]["text"]
-        return res_json["message"]["content"] if kind == LlmApi.OLLAMA else res_json["choices"][0]["message"]["content"]
+            return res_json["content"][0]["text"], res_json.get("model")
+        message = res_json["message"] if kind == LlmApi.OLLAMA else res_json["choices"][0]["message"]
+        return message["content"], res_json.get("model")
     except (KeyError, IndexError, TypeError):
         log.exception("LLM API %s (%s) sent no usable %s chat response", llm_url, llm_model, kind)
         sys.exit(1)
@@ -505,12 +513,30 @@ def _fit_context(fields: dict[str, Any], opts: Options) -> dict[str, Any]:
     return fields | {"analysis": cut, "truncated": note}
 
 
-def _ask(client: httpx.Client, opts: Options, messages: list[dict[str, str]], question: str, temperature: float) -> str:
-    """Append `question` to the chat, ask the LLM and keep its reply in the chat for the next question."""
+def _ask(
+    client: httpx.Client, opts: Options, messages: list[dict[str, str]], question: str, temperature: float
+) -> tuple[str, Any]:
+    """Append `question` to the chat, ask the LLM and keep its reply in the chat for the next question.
+
+    Return the reply and the model name that the server reports.
+    """
     messages.append({"role": "user", "content": question})
-    reply = _call_llm_api(client, opts, messages, temperature).strip()
+    reply, model = _call_llm_api(client, opts, messages, temperature)
+    reply = reply.strip()
     messages.append({"role": "assistant", "content": reply})
-    return reply
+    return reply, model
+
+
+def _chat(client: httpx.Client, opts: Options, prompt: str, verdict_question: str) -> tuple[str, str, Any]:
+    """Ask the LLM the three questions of a summary in one chat.
+
+    Return its first two replies as the summary shows them, its verdict and the model name that the server reports.
+    """
+    messages: list[dict[str, str]] = []
+    lines, _ = _ask(client, opts, messages, prompt, TEMPERATURE)
+    brief, _ = _ask(client, opts, messages, BRIEF_QUESTION, TEMPERATURE)
+    verdict, model = _ask(client, opts, messages, verdict_question, 0.0)
+    return f"{lines}\n\n{brief}", verdict, model
 
 
 def _drop_placeholder_reasons(verdict: str) -> str:
@@ -712,6 +738,25 @@ def _comment_notes(cut_notes: list[str], opts: Options, *, job_found: bool) -> s
     return "".join(f"\n\n*Note: {n}*" for n in (cut_notes if job_found else [streak, *cut_notes]))
 
 
+def _record_line(llm_model: object, record: dict[str, Any]) -> str:
+    """Return the HTML comment that records which models answered and the raw answers of the decision model.
+
+    openQA does not render it. It is empty without a record; a field without a value is left out, and so is a name
+    that is no string.
+    """
+    if not record:
+        return ""
+    values = {
+        # no "--": XML allows none inside a comment
+        # no "label:": openQA refuses to delete a comment with label:force_result in it, flag:verbatim or not
+        k: re.sub(r"-{2,}", "-", _NOT_RECORDED_RE.sub("", v)).replace("label:", "label_")[:80]
+        for k, v in ({"llm": llm_model} | record).items()
+        if isinstance(v, str)
+    }
+    fields = " ".join(f"{k}={v}" for k, v in values.items() if v)
+    return f"\n\n<!-- openqa-llm-investigate {fields} -->"
+
+
 def _in_excluded_group(job_id: str, job: dict[str, Any], regex: str) -> bool:
     """Return whether the regex matches the job group as openqa-investigate formats it: "<parent> / <group>"."""
     group = f"{job.get('parent_group') or ''} / {job.get('group') or ''}"
@@ -768,10 +813,7 @@ def _perform_investigation(client: httpx.Client, base_url: str, job_id: str, opt
         prompts = [prompt, BRIEF_QUESTION, _verdict_question(stats, opts)]
         typer.echo("\n\n".join(f"===== Prompt {i}/3 =====\n{p}" for i, p in enumerate(prompts, 1)))
         return
-    messages: list[dict[str, str]] = []
-    lines = _ask(client, opts, messages, prompt, TEMPERATURE)
-    brief = _ask(client, opts, messages, BRIEF_QUESTION, TEMPERATURE)
-    verdict = _ask(client, opts, messages, _verdict_question(stats, opts), 0.0)
+    replies, verdict, llm_model = _chat(client, opts, prompt, _verdict_question(stats, opts))
     verdict = _enforce_bisect_rule(_drop_placeholder_reasons(verdict), stats["same_module_failures"])
     verdict = enforce_history_rules(verdict, stats["streak"])
     bisect = bisect_verdict(verdict)
@@ -785,11 +827,12 @@ def _perform_investigation(client: httpx.Client, base_url: str, job_id: str, opt
     if bisect is not False:
         typer.echo(f"{base_url}/tests/{job_id}")
 
-    comment = (
-        f"{COMMENT_MARKER}\n\n{lines}\n\n{brief}\n\n{verdict}{_comment_notes(cut_notes, opts, job_found=job_found)}"
-    )
     if opts.dry or bisect is not None:
-        _post_summary(client, base_url, job_id, comment, opts)
+        verdict, record = decided_verdict(
+            opts.decision_url, prompt, verdict, headers={"User-Agent": USER_AGENT}, timeout=opts.llm_timeout
+        )
+        notes = _record_line(llm_model, record) + _comment_notes(cut_notes, opts, job_found=job_found)
+        _post_summary(client, base_url, job_id, f"{COMMENT_MARKER}\n\n{replies}\n\n{verdict}{notes}", opts)
 
 
 def _post_summary(client: httpx.Client, base_url: str, job_id: str, comment: str, opts: Options) -> None:
@@ -926,6 +969,18 @@ def investigate(  # ruff: ignore[too-many-arguments, too-many-positional-argumen
             " (not with --force, --dry or --print-prompt)",
         ),
     ] = DEFAULT_EXCLUDE_GROUP_REGEX,
+    decision_url: Annotated[
+        str,
+        typer.Option(
+            "--decision-url",
+            envvar="LLM_DECISION_URL",
+            help="URL of the /v1/systemone endpoint of a llama.cpp server with a decision model;"
+            " its answer to one more request (timeout of --timeout but at most 300 seconds) replaces the class in"
+            " the Classification line of the summary; without a usable answer the summary keeps the class of the"
+            ' LLM and adds the line "(no answer from the decision model)"; the questions of the request are'
+            " specific to openSUSE",
+        ),
+    ] = "",
 ) -> None:
     """CLI entry point to investigate a failed openQA job."""
     setup_logging(verbose, quiet=quiet)
@@ -952,6 +1007,7 @@ def investigate(  # ruff: ignore[too-many-arguments, too-many-positional-argumen
         print_prompt=print_prompt,
         job_id=job_id,
         exclude_group_regex=exclude_group_regex,
+        decision_url=decision_url,
     )
     transport = RetryTransport(retries=retries)
     with httpx.Client(transport=transport, headers={"User-Agent": USER_AGENT}, timeout=openqa_timeout) as client:
