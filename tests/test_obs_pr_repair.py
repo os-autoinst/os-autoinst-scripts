@@ -1441,3 +1441,297 @@ def test_diagnostics_fetch_repo_workflow(desc: str, returncode: int, stdout: str
     runner = MagicMock(return_value=make_completed_process(returncode=returncode, stdout=stdout))
     wf = sut.fetch_repo_workflow("os-autoinst", "openQA", runner=runner)
     assert (wf is not None) is expected_found, desc
+
+
+@pytest.mark.parametrize(
+    ("desc", "status", "dry_run", "expected_actions", "expected_success"),
+    [
+        (
+            "not found dry run returns recreate_project",
+            sut.HealthStatus.NOT_FOUND,
+            True,
+            ["recreate_project"],
+            True,
+        ),
+        (
+            "empty project dry run returns configure_repositories and repair_branch",
+            sut.HealthStatus.BROKEN_EMPTY_PROJECT,
+            True,
+            ["configure_repositories", "repair_branch"],
+            True,
+        ),
+        (
+            "excluded or disabled dry run returns repair_branch",
+            sut.HealthStatus.BROKEN_EXCLUDED_OR_DISABLED,
+            True,
+            ["repair_branch"],
+            True,
+        ),
+        (
+            "stale sha with missing repos dry run returns both actions",
+            sut.HealthStatus.BROKEN_STALE_SHA,
+            True,
+            ["configure_repositories", "repair_branch"],
+            True,
+        ),
+        (
+            "missing repositories dry run returns configure_repositories",
+            sut.HealthStatus.MISSING_REPOSITORIES,
+            True,
+            ["configure_repositories"],
+            True,
+        ),
+        (
+            "missing checks dry run returns rebuild_project",
+            sut.HealthStatus.MISSING_CHECKS,
+            True,
+            ["rebuild_project"],
+            True,
+        ),
+        (
+            "healthy status returns empty actions",
+            sut.HealthStatus.HEALTHY,
+            False,
+            [],
+            True,
+        ),
+    ],
+)
+def test_auto_repair_dry_run_and_healthy(
+    desc: str,
+    status: sut.HealthStatus,
+    *,
+    dry_run: bool,
+    expected_actions: list[str],
+    expected_success: bool,
+) -> None:
+    ctx = openqa_context()
+    report = sut.DiagnosticReport(
+        project_exists=True,
+        status=status,
+        pr_head_sha="abc12345",
+        missing_repositories=["16.1"] if status == sut.HealthStatus.BROKEN_STALE_SHA else [],
+    )
+    runner = MagicMock(return_value=make_completed_process())
+    success, actions = sut.auto_repair(ctx, report, runner=runner, dry_run=dry_run)
+    assert success is expected_success, desc
+    assert actions == expected_actions, desc
+    assert not runner.called, desc
+
+
+def test_auto_repair_not_found_live_execution() -> None:
+    ctx = openqa_context()
+    report = sut.DiagnosticReport(project_exists=False, status=sut.HealthStatus.NOT_FOUND)
+    with patch.object(sut, "recreate_project", return_value=True) as mock_recreate:
+        success, actions = sut.auto_repair(ctx, report, dry_run=False)
+        assert success is True
+        assert actions == ["recreate_project"]
+        assert mock_recreate.called
+
+
+def test_auto_repair_empty_project_live_execution() -> None:
+    ctx = openqa_context()
+    report = sut.DiagnosticReport(project_exists=True, status=sut.HealthStatus.BROKEN_EMPTY_PROJECT)
+    with (
+        patch.object(sut, "configure_repositories", return_value=True) as mock_cfg,
+        patch.object(sut, "repair_branch", return_value=True) as mock_rep,
+    ):
+        success, actions = sut.auto_repair(ctx, report, dry_run=False)
+        assert success is True
+        assert actions == ["configure_repositories", "repair_branch"]
+        assert mock_cfg.called
+        assert mock_rep.called
+
+
+def test_auto_repair_excluded_or_disabled_fallback_flow() -> None:
+    ctx = openqa_context()
+    report = sut.DiagnosticReport(project_exists=True, status=sut.HealthStatus.BROKEN_EXCLUDED_OR_DISABLED)
+    with (
+        patch.object(sut, "repair_branch", return_value=False),
+        patch.object(sut, "recreate_project", return_value=True) as mock_recreate,
+    ):
+        success, actions = sut.auto_repair(ctx, report, dry_run=False)
+        assert success is True
+        assert actions == ["recreate_project"]
+        assert mock_recreate.called
+
+    with (
+        patch.object(sut, "repair_branch", return_value=False),
+        patch.object(sut, "recreate_project", return_value=False),
+    ):
+        success, actions = sut.auto_repair(ctx, report, dry_run=False)
+        assert success is False
+        assert actions == []
+
+
+def test_auto_repair_stale_sha_live_execution() -> None:
+    ctx = openqa_context()
+    report = sut.DiagnosticReport(
+        project_exists=True,
+        status=sut.HealthStatus.BROKEN_STALE_SHA,
+        missing_repositories=["16.1"],
+        pr_head_sha="77bfa16e",
+    )
+    with (
+        patch.object(sut, "configure_repositories", return_value=True) as mock_cfg,
+        patch.object(sut, "repair_branch", return_value=True) as mock_rep,
+    ):
+        success, actions = sut.auto_repair(ctx, report, dry_run=False)
+        assert success is True
+        assert actions == ["configure_repositories", "repair_branch"]
+        assert mock_cfg.called
+        assert mock_rep.called
+
+
+def test_auto_repair_missing_checks_live_execution() -> None:
+    ctx = openqa_context()
+    report = sut.DiagnosticReport(project_exists=True, status=sut.HealthStatus.MISSING_CHECKS)
+    with patch.object(sut, "rebuild_project", return_value=True) as mock_reb:
+        success, actions = sut.auto_repair(ctx, report, dry_run=False)
+        assert success is True
+        assert actions == ["rebuild_project"]
+        assert mock_reb.called
+
+
+@pytest.mark.parametrize(
+    ("desc", "comments", "sha", "expected_skip"),
+    [
+        ("empty sha does not skip", [], "", False),
+        (
+            "matching bot comment within 24 hours skips",
+            [
+                {
+                    "body": f"{sut.BOT_MARKER}\nPR Head SHA: `sha12345`",
+                    "createdAt": datetime.now(UTC).isoformat(),
+                }
+            ],
+            "sha12345",
+            True,
+        ),
+        (
+            "matching bot comment older than 24 hours does not skip",
+            [
+                {
+                    "body": f"{sut.BOT_MARKER}\nPR Head SHA: `sha12345`",
+                    "createdAt": "2020-01-01T00:00:00Z",
+                }
+            ],
+            "sha12345",
+            False,
+        ),
+        (
+            "matching bot comments at max count skips regardless of age",
+            [
+                {"body": f"{sut.BOT_MARKER} sha12345", "createdAt": "2020-01-01T00:00:00Z"},
+                {"body": f"{sut.BOT_MARKER} sha12345", "createdAt": "2020-01-01T00:00:00Z"},
+                {"body": f"{sut.BOT_MARKER} sha12345", "createdAt": "2020-01-01T00:00:00Z"},
+            ],
+            "sha12345",
+            True,
+        ),
+        (
+            "comment for different sha does not skip",
+            [
+                {
+                    "body": f"{sut.BOT_MARKER}\nPR Head SHA: `other_sha`",
+                    "createdAt": datetime.now(UTC).isoformat(),
+                }
+            ],
+            "sha12345",
+            False,
+        ),
+        (
+            "non-bot comment does not skip",
+            [
+                {
+                    "body": "Human comment mentioning sha12345",
+                    "createdAt": datetime.now(UTC).isoformat(),
+                }
+            ],
+            "sha12345",
+            False,
+        ),
+    ],
+)
+def test_comment_should_skip_deduplication(
+    desc: str, comments: list[dict[str, str]], sha: str, *, expected_skip: bool
+) -> None:
+    assert sut.should_skip_comment(comments, sha) is expected_skip, desc
+
+
+def test_comment_fetch_pr_comments_success_and_failures() -> None:
+    ctx = openqa_context()
+    runner = MagicMock(return_value=make_completed_process(stdout='{"comments": [{"body": "hello"}]}'))
+    res = sut.fetch_pr_comments(ctx, runner=runner)
+    assert len(res) == 1
+
+    runner_err = MagicMock(return_value=make_completed_process(returncode=1, stderr="error"))
+    assert sut.fetch_pr_comments(ctx, runner=runner_err) == []
+
+    runner_bad_json = MagicMock(return_value=make_completed_process(stdout="not-json"))
+    assert sut.fetch_pr_comments(ctx, runner=runner_bad_json) == []
+
+
+def test_comment_post_pr_comment_flow() -> None:
+    ctx = openqa_context()
+    report = sut.DiagnosticReport(
+        project_exists=True,
+        status=sut.HealthStatus.BROKEN_STALE_SHA,
+        pr_head_sha="77bfa16e",
+    )
+
+    assert sut.post_pr_comment(ctx, report, actions_taken=[]) is True
+
+    runner_dry = MagicMock()
+    with patch.object(sut, "fetch_pr_comments", return_value=[]):
+        assert sut.post_pr_comment(ctx, report, ["repair_branch"], runner=runner_dry, dry_run=True) is True
+        assert not runner_dry.called
+
+    existing_bot_comments = [
+        {
+            "body": f"{sut.BOT_MARKER}\nPR Head SHA: `77bfa16e`",
+            "createdAt": datetime.now(UTC).isoformat(),
+        }
+    ]
+    with patch.object(sut, "fetch_pr_comments", return_value=existing_bot_comments):
+        runner_dedup = MagicMock()
+        assert sut.post_pr_comment(ctx, report, ["repair_branch"], runner=runner_dedup, dry_run=False) is True
+        assert not runner_dedup.called
+
+    with patch.object(sut, "fetch_pr_comments", return_value=[]):
+        runner_success = MagicMock(return_value=make_completed_process(returncode=0))
+        assert sut.post_pr_comment(ctx, report, ["repair_branch"], runner=runner_success, dry_run=False) is True
+        assert runner_success.called
+
+    with patch.object(sut, "fetch_pr_comments", return_value=[]):
+        runner_failure = MagicMock(return_value=make_completed_process(returncode=1, stderr="gh fail"))
+        assert sut.post_pr_comment(ctx, report, ["repair_branch"], runner=runner_failure, dry_run=False) is False
+
+
+def test_auto_repair_cli_dispatch() -> None:
+    base_args = [
+        "--repo",
+        "os-autoinst/openQA",
+        "--pr",
+        "7985",
+        "--workflow",
+        str(Path(__file__).resolve().parent / "fixtures" / "workflows.yml"),
+        "--skip-auth-check",
+    ]
+    report = sut.DiagnosticReport(
+        project_exists=True,
+        status=sut.HealthStatus.BROKEN_STALE_SHA,
+        pr_head_sha="abc12345",
+    )
+    with (
+        patch.object(sut, "diagnose", return_value=report),
+        patch.object(sut, "auto_repair", return_value=(True, ["repair_branch"])) as mock_repair,
+        patch.object(sut, "post_pr_comment", return_value=True) as mock_comment,
+    ):
+        exit_code = sut.main([*base_args, "--auto-repair", "--comment", "--dry-run"])
+        assert exit_code == 0
+        assert mock_repair.called
+        assert mock_comment.called
+
+    exit_bad = sut.main([*base_args, "--auto-repair", "--rebuild"])
+    assert exit_bad == 1

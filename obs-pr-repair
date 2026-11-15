@@ -182,9 +182,7 @@ def parse_workflow_file(workflow_path: Path) -> WorkflowConfig:
     return parse_workflow_content(workflow_path.read_text(encoding="utf-8"))
 
 
-def fetch_repo_workflow(
-    owner: str, repo: str, runner: CommandRunner = default_runner
-) -> WorkflowConfig | None:
+def fetch_repo_workflow(owner: str, repo: str, runner: CommandRunner = default_runner) -> WorkflowConfig | None:
     """Fetch and parse .obs/workflows.yml directly from GitHub repository."""
     res = runner(["gh", "api", f"/repos/{owner}/{repo}/contents/.obs/workflows.yml", "--jq", ".content"])
     if res.returncode == 0 and res.stdout.strip():
@@ -472,9 +470,7 @@ def check_all_results_excluded_or_disabled(project: str, runner: CommandRunner =
     return all(c in {"excluded", "disabled"} for c in codes)
 
 
-def fetch_branch_request(
-    context: ProjectContext, runner: CommandRunner = default_runner
-) -> dict[str, Any] | None:
+def fetch_branch_request(context: ProjectContext, runner: CommandRunner = default_runner) -> dict[str, Any] | None:
     """Fetch and parse _branch_request JSON from OBS for the primary package."""
     pkg = context.workflow.source_package
     if not pkg:
@@ -510,9 +506,7 @@ def extract_branch_request_sha(data: dict[str, Any] | None) -> str:
     return sha_direct if isinstance(sha_direct, str) else ""
 
 
-def fetch_pr_details(
-    context: ProjectContext, runner: CommandRunner = default_runner
-) -> dict[str, Any]:
+def fetch_pr_details(context: ProjectContext, runner: CommandRunner = default_runner) -> dict[str, Any]:
     """Retrieve PR head commit, repo name, and update timestamp from GitHub."""
     repo_arg = f"{context.owner}/{context.repo}"
     res = runner([
@@ -534,9 +528,7 @@ def fetch_pr_details(
         return {}
 
 
-def check_commit_status_checks(
-    context: ProjectContext, runner: CommandRunner = default_runner
-) -> list[dict[str, Any]]:
+def check_commit_status_checks(context: ProjectContext, runner: CommandRunner = default_runner) -> list[dict[str, Any]]:
     """Inspect status checks and check runs on GitHub for the PR."""
     repo_arg = f"{context.owner}/{context.repo}"
     res = runner([
@@ -562,11 +554,7 @@ def is_obs_status_check(check: dict[str, Any]) -> bool:
     """Check if a check run or status check originates from OBS."""
     link = str(check.get("link", ""))
     name = str(check.get("name", ""))
-    return (
-        "build.opensuse.org" in link
-        or name.startswith("OBS")
-        or "continuous-integration/obs-helper" in name
-    )
+    return "build.opensuse.org" in link or name.startswith("OBS") or "continuous-integration/obs-helper" in name
 
 
 def is_pr_grace_period_expired(updated_at_str: str, grace_seconds: int = 900) -> bool:
@@ -896,6 +884,228 @@ def rebuild_project(context: ProjectContext, runner: CommandRunner = default_run
     return True
 
 
+BOT_MARKER = "<!-- obs-pr-repair -->"
+MAX_REPAIRS_PER_SHA = 3
+
+
+def repair_not_found(
+    context: ProjectContext, _report: DiagnosticReport, runner: CommandRunner, *, dry_run: bool
+) -> tuple[bool, list[str]]:
+    """Handle repair for NOT_FOUND status."""
+    if dry_run:
+        log.info("[dry-run] Would recreate project %s and cycle PR #%d", context.obs_project, context.pr_number)
+        return True, ["recreate_project"]
+    success = recreate_project(context, auto_confirm=True, runner=runner)
+    return success, ["recreate_project"] if success else []
+
+
+def repair_empty_project(
+    context: ProjectContext, _report: DiagnosticReport, runner: CommandRunner, *, dry_run: bool
+) -> tuple[bool, list[str]]:
+    """Handle repair for BROKEN_EMPTY_PROJECT status."""
+    if dry_run:
+        log.info("[dry-run] Would configure repositories for %s", context.obs_project)
+        log.info("[dry-run] Would repair branch and synchronize _branch_request for %s", context.obs_project)
+        return True, ["configure_repositories", "repair_branch"]
+    actions: list[str] = []
+    if configure_repositories(context, runner=runner):
+        actions.append("configure_repositories")
+    if repair_branch(context, runner=runner):
+        actions.append("repair_branch")
+    return bool(actions), actions
+
+
+def repair_excluded_or_disabled(
+    context: ProjectContext, _report: DiagnosticReport, runner: CommandRunner, *, dry_run: bool
+) -> tuple[bool, list[str]]:
+    """Handle repair for BROKEN_EXCLUDED_OR_DISABLED status."""
+    if dry_run:
+        log.info("[dry-run] Would repair branch for %s", context.obs_project)
+        return True, ["repair_branch"]
+    if repair_branch(context, runner=runner):
+        return True, ["repair_branch"]
+    if recreate_project(context, auto_confirm=True, runner=runner):
+        return True, ["recreate_project"]
+    return False, []
+
+
+def repair_stale_sha_or_unbranched(
+    context: ProjectContext, report: DiagnosticReport, runner: CommandRunner, *, dry_run: bool
+) -> tuple[bool, list[str]]:
+    """Handle repair for BROKEN_STALE_SHA and BROKEN_UNBRANCHED_PACKAGE statuses."""
+    actions: list[str] = []
+    if dry_run:
+        if report.missing_repositories:
+            log.info("[dry-run] Would configure missing repositories (%s)", ", ".join(report.missing_repositories))
+            actions.append("configure_repositories")
+        log.info("[dry-run] Would repair branch and update _branch_request for SHA %s", report.pr_head_sha[:8])
+        actions.append("repair_branch")
+        return True, actions
+
+    if report.missing_repositories and configure_repositories(context, runner=runner):
+        actions.append("configure_repositories")
+    if repair_branch(context, runner=runner):
+        actions.append("repair_branch")
+    return bool(actions), actions
+
+
+def repair_missing_repositories(
+    context: ProjectContext, report: DiagnosticReport, runner: CommandRunner, *, dry_run: bool
+) -> tuple[bool, list[str]]:
+    """Handle repair for MISSING_REPOSITORIES status."""
+    if dry_run:
+        log.info("[dry-run] Would configure missing repositories (%s)", ", ".join(report.missing_repositories))
+        return True, ["configure_repositories"]
+    success = configure_repositories(context, runner=runner)
+    return success, ["configure_repositories"] if success else []
+
+
+def repair_missing_checks(
+    context: ProjectContext, _report: DiagnosticReport, runner: CommandRunner, *, dry_run: bool
+) -> tuple[bool, list[str]]:
+    """Handle repair for MISSING_CHECKS status."""
+    if dry_run:
+        log.info("[dry-run] Would trigger rebuild for %s", context.obs_project)
+        return True, ["rebuild_project"]
+    success = rebuild_project(context, runner=runner)
+    return success, ["rebuild_project"] if success else []
+
+
+AUTO_REPAIR_HANDLERS: dict[HealthStatus, Callable[..., tuple[bool, list[str]]]] = {
+    HealthStatus.NOT_FOUND: repair_not_found,
+    HealthStatus.BROKEN_EMPTY_PROJECT: repair_empty_project,
+    HealthStatus.BROKEN_EXCLUDED_OR_DISABLED: repair_excluded_or_disabled,
+    HealthStatus.BROKEN_STALE_SHA: repair_stale_sha_or_unbranched,
+    HealthStatus.BROKEN_UNBRANCHED_PACKAGE: repair_stale_sha_or_unbranched,
+    HealthStatus.MISSING_REPOSITORIES: repair_missing_repositories,
+    HealthStatus.MISSING_CHECKS: repair_missing_checks,
+}
+
+
+def auto_repair(
+    context: ProjectContext,
+    report: DiagnosticReport,
+    runner: CommandRunner = default_runner,
+    *,
+    dry_run: bool = False,
+) -> tuple[bool, list[str]]:
+    """Determine and execute the necessary sequence of repairs non-interactively."""
+    handler = AUTO_REPAIR_HANDLERS.get(report.status)
+    if not handler:
+        return True, []
+    return handler(context, report, runner, dry_run=dry_run)
+
+
+def fetch_pr_comments(context: ProjectContext, runner: CommandRunner = default_runner) -> list[dict[str, Any]]:
+    """Retrieve PR comments from GitHub."""
+    repo_arg = f"{context.owner}/{context.repo}"
+    res = runner([
+        "gh",
+        "pr",
+        "view",
+        str(context.pr_number),
+        "--repo",
+        repo_arg,
+        "--json",
+        "comments",
+    ])
+    if res.returncode != 0:
+        return []
+    try:
+        data = json.loads(res.stdout)
+        comments = data.get("comments")
+        return comments if isinstance(comments, list) else []
+    except (json.JSONDecodeError, ValueError):
+        return []
+
+
+def should_skip_comment(
+    comments: list[dict[str, Any]],
+    sha: str,
+    max_count: int = MAX_REPAIRS_PER_SHA,
+    cooldown_hours: float = 24.0,
+) -> bool:
+    """Check if comment should be skipped due to deduplication or repair limit."""
+    if not sha:
+        return False
+    bot_comments = [
+        c
+        for c in comments
+        if isinstance(c, dict)
+        and BOT_MARKER in str(c.get("body", ""))
+        and (sha in str(c.get("body", "")) or sha[:8] in str(c.get("body", "")))
+    ]
+    if len(bot_comments) >= max_count:
+        return True
+    now = datetime.now(UTC)
+    for c in bot_comments:
+        created_str = str(c.get("createdAt", ""))
+        if not created_str:
+            continue
+        try:
+            created_dt = datetime.fromisoformat(created_str)
+            if (now - created_dt).total_seconds() < cooldown_hours * 3600:
+                return True
+        except (ValueError, TypeError):
+            continue
+    return False
+
+
+def build_comment_body(context: ProjectContext, report: DiagnosticReport, actions_taken: list[str]) -> str:
+    """Generate Markdown comment for automated repair reporting."""
+    obs_url = f"https://build.opensuse.org/project/show/{context.obs_project}"
+    actions_list = "\n".join(f"- `{act}`" for act in actions_taken) if actions_taken else "- None"
+    sha_str = report.pr_head_sha or "unknown"
+    return (
+        f"{BOT_MARKER}\n"
+        f"### OBS PR Repair Automation Report\n\n"
+        f"- **OBS Project**: [{context.obs_project}]({obs_url})\n"
+        f"- **PR Head SHA**: `{sha_str}`\n"
+        f"- **Initial Health Status**: `{report.status.value}`\n\n"
+        f"**Actions Executed:**\n"
+        f"{actions_list}\n"
+    )
+
+
+def post_pr_comment(
+    context: ProjectContext,
+    report: DiagnosticReport,
+    actions_taken: list[str],
+    runner: CommandRunner = default_runner,
+    *,
+    dry_run: bool = False,
+) -> bool:
+    """Post deduplicated repair comment on GitHub PR."""
+    if not actions_taken:
+        return True
+
+    sha = report.pr_head_sha
+    comments = fetch_pr_comments(context, runner=runner)
+    if should_skip_comment(comments, sha):
+        return True
+
+    body = build_comment_body(context, report, actions_taken)
+    if dry_run:
+        log.info("[dry-run] Would post PR comment:\n%s", body)
+        return True
+
+    repo_arg = f"{context.owner}/{context.repo}"
+    res = runner([
+        "gh",
+        "pr",
+        "comment",
+        str(context.pr_number),
+        "--repo",
+        repo_arg,
+        "--body",
+        body,
+    ])
+    if res.returncode != 0:
+        log.error("Error posting PR comment: %s", res.stderr.strip())
+        return False
+    return True
+
+
 def create_parser() -> argparse.ArgumentParser:
     """Build CLI argument parser."""
     parser = argparse.ArgumentParser(
@@ -951,8 +1161,17 @@ def create_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Trigger package rebuild in OBS PR project",
     )
+    action_group.add_argument(
+        "--auto-repair",
+        action="store_true",
+        help="Automatically diagnose and execute necessary repair actions",
+    )
 
     target_group = parser.add_argument_group("context overrides")
+    target_group.add_argument(
+        "--org",
+        help="GitHub organization to sweep for all repositories with .obs/workflows.yml",
+    )
     target_group.add_argument(
         "--repo",
         help="GitHub repository in <owner/repo> format (auto-detected if omitted)",
@@ -994,7 +1213,16 @@ def create_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Skip pre-flight authentication verification",
     )
-
+    options_group.add_argument(
+        "--comment",
+        action="store_true",
+        help="Post automated repair report comment to PR (with deduplication)",
+    )
+    options_group.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Simulate repairs and PR comments without modifying state",
+    )
     options_group.add_argument(
         "-v",
         "--verbose",
@@ -1012,17 +1240,31 @@ def setup_logging(verbose: int = 0) -> None:
     logging.basicConfig(level=level, format="%(message)s", stream=sys.stderr, force=True)
 
 
-def run_action(context: ProjectContext, args: argparse.Namespace) -> int:
+def run_action(
+    context: ProjectContext,
+    args: argparse.Namespace,
+    runner: CommandRunner = default_runner,
+) -> int:
     """Run the single requested action, or diagnose and print the report when none is given."""
-    if args.recreate:
-        return 0 if recreate_project(context, auto_confirm=args.yes) else 1
-    if args.configure_repos:
-        return 0 if configure_repositories(context) else 1
-    if args.repair_branch:
-        return 0 if repair_branch(context) else 1
-    if args.rebuild:
-        return 0 if rebuild_project(context) else 1
-    report = diagnose(context)
+    actions_map: dict[str, Callable[[], bool]] = {
+        "recreate": lambda: recreate_project(context, auto_confirm=args.yes, runner=runner),
+        "configure_repos": lambda: configure_repositories(context, runner=runner),
+        "repair_branch": lambda: repair_branch(context, runner=runner),
+        "rebuild": lambda: rebuild_project(context, runner=runner),
+    }
+    for flag, func in actions_map.items():
+        if getattr(args, flag, False):
+            return 0 if func() else 1
+
+    if args.auto_repair:
+        report = diagnose(context, runner=runner)
+        sys.stdout.write(f"{format_report(report, context)}\n")
+        success, actions = auto_repair(context, report, runner=runner, dry_run=args.dry_run)
+        if args.comment and actions:
+            post_pr_comment(context, report, actions, runner=runner, dry_run=args.dry_run)
+        return 0 if success else 1
+
+    report = diagnose(context, runner=runner)
     sys.stdout.write(f"{format_report(report, context)}\n")
     return 0 if report.status == HealthStatus.HEALTHY else 2
 
@@ -1047,10 +1289,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         args.configure_repos,
         args.repair_branch,
         args.rebuild,
+        args.auto_repair,
     ]
     if sum(bool(a) for a in actions_specified) > 1:
         log.error(
-            "Error: Only one of --recreate, --configure-repos, --repair-branch, or --rebuild may be specified."
+            "Error: Only one of --recreate, --configure-repos, --repair-branch, --rebuild, "
+            "or --auto-repair may be specified."
         )
         return 1
 
