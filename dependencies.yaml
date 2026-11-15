@@ -43,6 +43,7 @@ main_requires:
   python3-httpx:
   python3-markdown-it-py:
   python3-openqa_client:
+  python3-PyYAML:
   retry:
   sed:
   sudo:
