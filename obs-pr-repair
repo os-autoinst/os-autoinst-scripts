@@ -9,6 +9,7 @@ projects across repositories using .obs/workflows.yml.
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import logging
 import re
@@ -20,6 +21,7 @@ import time
 import xml.etree.ElementTree as ET  # ruff: ignore[suspicious-xml-etree-import]
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Any
@@ -40,6 +42,9 @@ class HealthStatus(StrEnum):
     BROKEN_EMPTY_PROJECT = "BROKEN_EMPTY_PROJECT"
     BROKEN_UNBRANCHED_PACKAGE = "BROKEN_UNBRANCHED_PACKAGE"
     BROKEN_EXCLUDED_OR_DISABLED = "BROKEN_EXCLUDED_OR_DISABLED"
+    BROKEN_STALE_SHA = "BROKEN_STALE_SHA"
+    MISSING_REPOSITORIES = "MISSING_REPOSITORIES"
+    MISSING_CHECKS = "MISSING_CHECKS"
     NOT_FOUND = "NOT_FOUND"
     UNKNOWN = "UNKNOWN"
 
@@ -87,6 +92,12 @@ class DiagnosticReport:
     all_results_excluded_or_disabled: bool = False
     status: HealthStatus = HealthStatus.UNKNOWN
     suggested_action: str = ""
+    pr_head_sha: str = ""
+    obs_branch_sha: str = ""
+    missing_repositories: list[str] = field(default_factory=list)
+    obs_checks_count: int = 0
+    total_checks_count: int = 0
+    pr_updated_at: str = ""
 
 
 CommandRunner = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
@@ -171,6 +182,20 @@ def parse_workflow_file(workflow_path: Path) -> WorkflowConfig:
     return parse_workflow_content(workflow_path.read_text(encoding="utf-8"))
 
 
+def fetch_repo_workflow(
+    owner: str, repo: str, runner: CommandRunner = default_runner
+) -> WorkflowConfig | None:
+    """Fetch and parse .obs/workflows.yml directly from GitHub repository."""
+    res = runner(["gh", "api", f"/repos/{owner}/{repo}/contents/.obs/workflows.yml", "--jq", ".content"])
+    if res.returncode == 0 and res.stdout.strip():
+        try:
+            content = base64.b64decode(res.stdout.strip()).decode("utf-8")
+            return parse_workflow_content(content)
+        except (ValueError, UnicodeDecodeError):
+            return None
+    return None
+
+
 def parse_github_remote_url(url: str) -> tuple[str, str] | None:
     """Extract (owner, repo) from GitHub remote URL."""
     match = GITHUB_REMOTE_REGEX.search(url.strip())
@@ -217,6 +242,43 @@ def generate_obs_project_name(target_project: str, owner: str, repo: str, pr_num
     return f"{target_project}:{owner}:{repo}:PR-{pr_number}"
 
 
+def resolve_pr_number(args: argparse.Namespace, runner: CommandRunner = default_runner) -> int:
+    """Resolve PR number from CLI args or detect from active git branch."""
+    if args.pr is not None:
+        pr_str = str(args.pr).strip().lstrip("#")
+        if pr_str.upper().startswith("PR-"):
+            pr_str = pr_str[3:]
+        if not pr_str.isdigit():
+            msg = f"Invalid PR number '{args.pr}'."
+            raise ValueError(msg)
+        return int(pr_str)
+    return detect_pr_number(runner=runner)
+
+
+def resolve_base_workflow(
+    args: argparse.Namespace, owner: str, repo: str, runner: CommandRunner = default_runner
+) -> WorkflowConfig:
+    """Resolve workflow configuration from file, repository, or defaults."""
+    if args.workflow:
+        workflow_path = Path(args.workflow).resolve()
+        if workflow_path.is_file():
+            return parse_workflow_file(workflow_path)
+    elif args.repo:
+        wf = fetch_repo_workflow(owner, repo, runner=runner)
+        if wf:
+            return wf
+
+    workflow_path = find_workflow_file()
+    if workflow_path and workflow_path.is_file():
+        return parse_workflow_file(workflow_path)
+
+    return WorkflowConfig(
+        target_project="",
+        source_project=args.source_project or "devel:openQA",
+        source_package=args.source_package or repo,
+    )
+
+
 def resolve_context(args: argparse.Namespace, runner: CommandRunner = default_runner) -> ProjectContext:
     """Resolve repository, PR, workflow, and OBS project context."""
     if args.repo:
@@ -227,34 +289,14 @@ def resolve_context(args: argparse.Namespace, runner: CommandRunner = default_ru
     else:
         owner, repo = detect_github_repo(runner=runner)
 
-    if args.pr is not None:
-        pr_str = str(args.pr).strip().lstrip("#")
-        if pr_str.upper().startswith("PR-"):
-            pr_str = pr_str[3:]
-        if not pr_str.isdigit():
-            msg = f"Invalid PR number '{args.pr}'."
-            raise ValueError(msg)
-        pr_number = int(pr_str)
-    else:
-        pr_number = detect_pr_number(runner=runner)
-
-    workflow_path = Path(args.workflow).resolve() if args.workflow else find_workflow_file()
-    base_workflow = (
-        parse_workflow_file(workflow_path)
-        if workflow_path and workflow_path.is_file()
-        else WorkflowConfig(
-            target_project="",
-            source_project=args.source_project or "devel:openQA",
-            source_package=args.source_package or repo,
-        )
-    )
+    pr_number = resolve_pr_number(args, runner=runner)
+    base_workflow = resolve_base_workflow(args, owner, repo, runner=runner)
 
     target_project = (
         args.target_project
         if args.target_project is not None
         else (base_workflow.target_project or "devel:openQA:GitHub")
     )
-
     workflow = WorkflowConfig(
         target_project=target_project,
         source_project=args.source_project or base_workflow.source_project,
@@ -430,6 +472,130 @@ def check_all_results_excluded_or_disabled(project: str, runner: CommandRunner =
     return all(c in {"excluded", "disabled"} for c in codes)
 
 
+def fetch_branch_request(
+    context: ProjectContext, runner: CommandRunner = default_runner
+) -> dict[str, Any] | None:
+    """Fetch and parse _branch_request JSON from OBS for the primary package."""
+    pkg = context.workflow.source_package
+    if not pkg:
+        return None
+    api_path = f"/source/{context.obs_project}/{pkg}/_branch_request"
+    res = runner(["osc", "api", api_path])
+    if res.returncode != 0:
+        return None
+    try:
+        data = json.loads(res.stdout)
+        return data if isinstance(data, dict) else None
+    except (json.JSONDecodeError, ValueError):
+        return None
+
+
+def extract_branch_request_sha(data: dict[str, Any] | None) -> str:
+    """Extract head commit SHA from parsed _branch_request dictionary."""
+    if not data or not isinstance(data, dict):
+        return ""
+    pr_data = data.get("pull_request")
+    if isinstance(pr_data, dict):
+        head = pr_data.get("head")
+        if isinstance(head, dict):
+            sha = head.get("sha")
+            if isinstance(sha, str):
+                return sha
+    head_data = data.get("head")
+    if isinstance(head_data, dict):
+        sha = head_data.get("sha")
+        if isinstance(sha, str):
+            return sha
+    sha_direct = data.get("sha")
+    return sha_direct if isinstance(sha_direct, str) else ""
+
+
+def fetch_pr_details(
+    context: ProjectContext, runner: CommandRunner = default_runner
+) -> dict[str, Any]:
+    """Retrieve PR head commit, repo name, and update timestamp from GitHub."""
+    repo_arg = f"{context.owner}/{context.repo}"
+    res = runner([
+        "gh",
+        "pr",
+        "view",
+        str(context.pr_number),
+        "--repo",
+        repo_arg,
+        "--json",
+        "headRefOid,headRepository,updatedAt",
+    ])
+    if res.returncode != 0:
+        return {}
+    try:
+        data = json.loads(res.stdout)
+        return data if isinstance(data, dict) else {}
+    except (json.JSONDecodeError, ValueError):
+        return {}
+
+
+def check_commit_status_checks(
+    context: ProjectContext, runner: CommandRunner = default_runner
+) -> list[dict[str, Any]]:
+    """Inspect status checks and check runs on GitHub for the PR."""
+    repo_arg = f"{context.owner}/{context.repo}"
+    res = runner([
+        "gh",
+        "pr",
+        "checks",
+        str(context.pr_number),
+        "--repo",
+        repo_arg,
+        "--json",
+        "bucket,name,state,link",
+    ])
+    if not res.stdout.strip():
+        return []
+    try:
+        data = json.loads(res.stdout)
+        return data if isinstance(data, list) else []
+    except (json.JSONDecodeError, ValueError):
+        return []
+
+
+def is_obs_status_check(check: dict[str, Any]) -> bool:
+    """Check if a check run or status check originates from OBS."""
+    link = str(check.get("link", ""))
+    name = str(check.get("name", ""))
+    return (
+        "build.opensuse.org" in link
+        or name.startswith("OBS")
+        or "continuous-integration/obs-helper" in name
+    )
+
+
+def is_pr_grace_period_expired(updated_at_str: str, grace_seconds: int = 900) -> bool:
+    """Return True if updatedAt is valid and more than grace_seconds ago."""
+    if not updated_at_str:
+        return False
+    try:
+        updated_dt = datetime.fromisoformat(updated_at_str)
+        now = datetime.now(UTC)
+        return (now - updated_dt).total_seconds() >= grace_seconds
+    except (ValueError, TypeError):
+        return False
+
+
+def classify_missing_sources_health(report: DiagnosticReport) -> None:
+    """Classify health when package sources are unbranched or missing."""
+    if report.all_results_excluded_or_disabled:
+        report.status = HealthStatus.BROKEN_EXCLUDED_OR_DISABLED
+        report.suggested_action = (
+            "All results have state excluded/disabled (package sources missing or unbranched). "
+            "Run with --repair-branch to force-branch package or --recreate to purge and cycle PR."
+        )
+    else:
+        report.status = HealthStatus.BROKEN_UNBRANCHED_PACKAGE
+        report.suggested_action = (
+            "Package sources missing or unbranched. Run with --repair-branch to force-branch package."
+        )
+
+
 def classify_health(report: DiagnosticReport, context: ProjectContext) -> None:
     """Classify health status and derive suggested action."""
     if not report.project_exists:
@@ -440,7 +606,6 @@ def classify_health(report: DiagnosticReport, context: ProjectContext) -> None:
     has_repos = len(report.repositories) > 0
     has_package = context.workflow.source_package in report.packages or bool(report.packages)
     source_files = [f for f in report.package_files if f != "_branch_request"]
-    has_files = len(source_files) > 0
 
     if not has_repos:
         report.status = HealthStatus.BROKEN_EMPTY_PROJECT
@@ -448,21 +613,37 @@ def classify_health(report: DiagnosticReport, context: ProjectContext) -> None:
             "Project has no build targets configured. Run with --configure-repos to apply the "
             "workflow repositories, or --recreate to purge and cycle PR."
         )
-    elif not has_package or not has_files:
-        if report.all_results_excluded_or_disabled:
-            report.status = HealthStatus.BROKEN_EXCLUDED_OR_DISABLED
-            report.suggested_action = (
-                "All results have state excluded/disabled (package sources missing or unbranched). "
-                "Run with --repair-branch to force-branch package or --recreate to purge and cycle PR."
-            )
-        else:
-            report.status = HealthStatus.BROKEN_UNBRANCHED_PACKAGE
-            report.suggested_action = (
-                "Package sources missing or unbranched. Run with --repair-branch to force-branch package."
-            )
+    elif not has_package or not source_files:
+        classify_missing_sources_health(report)
     elif report.all_results_excluded_or_disabled:
         report.status = HealthStatus.BROKEN_EXCLUDED_OR_DISABLED
         report.suggested_action = "All results have state excluded/disabled. Run with --recreate to purge and cycle PR."
+    elif report.pr_head_sha and report.obs_branch_sha and report.pr_head_sha != report.obs_branch_sha:
+        report.status = HealthStatus.BROKEN_STALE_SHA
+        actions = ["--repair-branch"]
+        reasons = [
+            (
+                f"OBS _branch_request points to stale commit {report.obs_branch_sha[:8]}, "
+                f"while PR head is {report.pr_head_sha[:8]}"
+            )
+        ]
+        if report.missing_repositories:
+            actions.append("--configure-repos")
+            reasons.append(f"missing repositories ({', '.join(report.missing_repositories)})")
+        report.suggested_action = f"{'; '.join(reasons)}. Run with {' and '.join(actions)}."
+    elif report.missing_repositories:
+        report.status = HealthStatus.MISSING_REPOSITORIES
+        missing_str = ", ".join(report.missing_repositories)
+        report.suggested_action = (
+            f"Project is missing configured repositories: {missing_str}. "
+            "Run with --configure-repos to apply missing targets."
+        )
+    elif report.obs_checks_count == 0 and report.pr_head_sha and is_pr_grace_period_expired(report.pr_updated_at):
+        report.status = HealthStatus.MISSING_CHECKS
+        report.suggested_action = (
+            "No OBS status checks registered on GitHub for PR head commit after grace period. "
+            "Run with --repair-branch or --rebuild."
+        )
     else:
         report.status = HealthStatus.HEALTHY
         report.suggested_action = "Project is healthy. Use --rebuild if a rebuild is desired."
@@ -477,22 +658,29 @@ def diagnose(context: ProjectContext, runner: CommandRunner = default_runner) ->
         return report
 
     packages = list_packages(context.obs_project, runner=runner)
-    primary_package = (
+    primary = (
         context.workflow.source_package
         if context.workflow.source_package in packages
         else (packages[0] if packages else "")
     )
-    files = list_package_files(context.obs_project, primary_package, runner=runner) if primary_package else []
-    results = get_build_results(context.obs_project, runner=runner)
-    all_excluded = check_all_results_excluded_or_disabled(context.obs_project, runner=runner)
+    files = list_package_files(context.obs_project, primary, runner=runner) if primary else []
+    branch_req = fetch_branch_request(context, runner=runner)
+    pr_details = fetch_pr_details(context, runner=runner)
+    checks = check_commit_status_checks(context, runner=runner)
 
     report = DiagnosticReport(
         project_exists=True,
         repositories=repos,
         packages=packages,
         package_files=files,
-        build_results=results,
-        all_results_excluded_or_disabled=all_excluded,
+        build_results=get_build_results(context.obs_project, runner=runner),
+        all_results_excluded_or_disabled=check_all_results_excluded_or_disabled(context.obs_project, runner=runner),
+        pr_head_sha=str(pr_details.get("headRefOid", "")),
+        obs_branch_sha=extract_branch_request_sha(branch_req),
+        missing_repositories=[r for r in context.workflow.target_repositories if r not in repos],
+        obs_checks_count=len([c for c in checks if is_obs_status_check(c)]),
+        total_checks_count=len(checks),
+        pr_updated_at=str(pr_details.get("updatedAt", "")),
     )
     classify_health(report, context)
     return report
@@ -512,12 +700,21 @@ def format_report(report: DiagnosticReport, context: ProjectContext) -> str:
     ]
 
     if report.project_exists:
+        if report.pr_head_sha:
+            lines.append(f"{'PR Head SHA:':<22} {report.pr_head_sha}")
+        if report.obs_branch_sha:
+            stale_marker = " (STALE)" if report.pr_head_sha and report.pr_head_sha != report.obs_branch_sha else ""
+            lines.append(f"{'OBS Branch SHA:':<22} {report.obs_branch_sha}{stale_marker}")
+
         repos_str = (
             f"{', '.join(report.repositories)} ({len(report.repositories)} configured)"
             if report.repositories
             else "None"
         )
         lines.append(f"{'Repositories:':<22} {repos_str}")
+
+        if report.missing_repositories:
+            lines.append(f"{'Missing Repositories:':<22} {', '.join(report.missing_repositories)}")
 
         source_files = [f for f in report.package_files if f != "_branch_request"]
         file_desc = (
@@ -527,6 +724,10 @@ def format_report(report: DiagnosticReport, context: ProjectContext) -> str:
         )
         pkgs_summary = f"{', '.join(report.packages)} ({file_desc})" if report.packages else "None"
         lines.append(f"{'Packages:':<22} {pkgs_summary}")
+
+        if report.total_checks_count or report.obs_checks_count:
+            checks_msg = f"{report.obs_checks_count} OBS checks (out of {report.total_checks_count} total)"
+            lines.append(f"{'Status Checks:':<22} {checks_msg}")
 
         if report.build_results:
             lines.extend(["Build Results:", report.build_results])

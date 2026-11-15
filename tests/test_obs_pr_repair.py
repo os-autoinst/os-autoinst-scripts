@@ -1,12 +1,14 @@
 # Copyright SUSE LLC
 """Tests for obs-pr-repair: workflow parsing, repository checks and the repair actions."""
 
+import base64
 import importlib.machinery
 import importlib.util
 import json
 import subprocess
 import sys
 from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -1147,3 +1149,295 @@ def test_main_dispatch_flows() -> None:
     )
     with patch.object(sut, "diagnose", return_value=unhealthy_report):
         assert sut.main(base_args) == 2
+
+
+@pytest.mark.parametrize(
+    ("desc", "pkg", "returncode", "stdout", "expected"),
+    [
+        (
+            "successful fetch returns parsed dictionary",
+            "openQA",
+            0,
+            '{"action": "opened", "pull_request": {"head": {"sha": "abc1234"}}}',
+            {"action": "opened", "pull_request": {"head": {"sha": "abc1234"}}},
+        ),
+        (
+            "empty source package returns None",
+            "",
+            0,
+            '{"action": "opened"}',
+            None,
+        ),
+        (
+            "command failure returns None",
+            "openQA",
+            1,
+            "",
+            None,
+        ),
+        (
+            "invalid json returns None",
+            "openQA",
+            0,
+            "not-json",
+            None,
+        ),
+        (
+            "non-dict json returns None",
+            "openQA",
+            0,
+            '["not", "a", "dict"]',
+            None,
+        ),
+    ],
+)
+def test_diagnostics_fetch_branch_request(
+    desc: str, pkg: str, returncode: int, stdout: str, expected: dict[str, object] | None
+) -> None:
+    ctx = sut.ProjectContext(
+        owner="os-autoinst",
+        repo="openQA",
+        pr_number=1,
+        workflow=sut.WorkflowConfig(target_project="tgt", source_project="src", source_package=pkg),
+        obs_project="tgt:proj",
+    )
+    runner = MagicMock(return_value=make_completed_process(returncode=returncode, stdout=stdout))
+    assert sut.fetch_branch_request(ctx, runner=runner) == expected, desc
+
+
+@pytest.mark.parametrize(
+    ("desc", "data", "expected_sha"),
+    [
+        (
+            "nested pull_request head sha",
+            {"pull_request": {"head": {"sha": "sha123"}}},
+            "sha123",
+        ),
+        (
+            "direct head sha",
+            {"head": {"sha": "sha456"}},
+            "sha456",
+        ),
+        (
+            "top level sha",
+            {"sha": "sha789"},
+            "sha789",
+        ),
+        (
+            "empty dict returns empty string",
+            {},
+            "",
+        ),
+        (
+            "none input returns empty string",
+            None,
+            "",
+        ),
+    ],
+)
+def test_diagnostics_extract_branch_request_sha(desc: str, data: dict[str, object] | None, expected_sha: str) -> None:
+    assert sut.extract_branch_request_sha(data) == expected_sha, desc
+
+
+@pytest.mark.parametrize(
+    ("desc", "returncode", "stdout", "expected_len"),
+    [
+        (
+            "valid checks list returned",
+            0,
+            '[{"name": "test", "bucket": "pass"}]',
+            1,
+        ),
+        (
+            "empty stdout returns empty list",
+            0,
+            "",
+            0,
+        ),
+        (
+            "invalid json returns empty list",
+            0,
+            "not json",
+            0,
+        ),
+        (
+            "non-list json returns empty list",
+            0,
+            '{"name": "single"}',
+            0,
+        ),
+    ],
+)
+def test_diagnostics_check_commit_status_checks(desc: str, returncode: int, stdout: str, expected_len: int) -> None:
+    ctx = openqa_context()
+    runner = MagicMock(return_value=make_completed_process(returncode=returncode, stdout=stdout))
+    res = sut.check_commit_status_checks(ctx, runner=runner)
+    assert len(res) == expected_len, desc
+
+
+@pytest.mark.parametrize(
+    ("desc", "check", "expected"),
+    [
+        (
+            "link with build.opensuse.org is obs check",
+            {"link": "https://build.opensuse.org/package/show/foo", "name": "build"},
+            True,
+        ),
+        (
+            "name starting with OBS is obs check",
+            {"link": "", "name": "OBS: openQA - 16.0"},
+            True,
+        ),
+        (
+            "name with continuous-integration/obs-helper is obs check",
+            {"link": "", "name": "continuous-integration/obs-helper"},
+            True,
+        ),
+        (
+            "regular check is not obs check",
+            {"link": "https://circleci.com/gh/foo", "name": "ci/circleci: fullstack"},
+            False,
+        ),
+    ],
+)
+def test_diagnostics_is_obs_status_check(desc: str, check: dict[str, str], *, expected: bool) -> None:
+    assert sut.is_obs_status_check(check) is expected, desc
+
+
+@pytest.mark.parametrize(
+    ("desc", "updated_at", "grace_seconds", "expected"),
+    [
+        ("empty timestamp returns False", "", 900, False),
+        ("invalid timestamp returns False", "not-a-date", 900, False),
+        (
+            "recent update within grace period returns False",
+            datetime.now(UTC).isoformat(),
+            900,
+            False,
+        ),
+        (
+            "old update past grace period returns True",
+            "2020-01-01T00:00:00Z",
+            900,
+            True,
+        ),
+    ],
+)
+def test_diagnostics_is_pr_grace_period_expired(
+    desc: str, updated_at: str, grace_seconds: int, *, expected: bool
+) -> None:
+    assert sut.is_pr_grace_period_expired(updated_at, grace_seconds=grace_seconds) is expected, desc
+
+
+def test_diagnostics_stale_sha_classification() -> None:
+    ctx = openqa_context()
+    report = sut.DiagnosticReport(
+        project_exists=True,
+        repositories=["openSUSE_Tumbleweed", "SLE_15_SP7_Backports", "16.0"],
+        packages=["openQA"],
+        package_files=["_service", "_branch_request"],
+        pr_head_sha="77bfa16e90b10c31a33f54792ca7ceea26578f71",
+        obs_branch_sha="611ee923331a69146536b7a4a16f9b54ed302990",
+    )
+    sut.classify_health(report, ctx)
+    assert report.status == sut.HealthStatus.BROKEN_STALE_SHA
+    assert "--repair-branch" in report.suggested_action
+
+
+def test_diagnostics_missing_repositories_classification() -> None:
+    ctx = openqa_context()
+    report = sut.DiagnosticReport(
+        project_exists=True,
+        repositories=["openSUSE_Tumbleweed"],
+        missing_repositories=["SLE_15_SP7_Backports", "16.0"],
+        packages=["openQA"],
+        package_files=["_service", "_branch_request"],
+    )
+    sut.classify_health(report, ctx)
+    assert report.status == sut.HealthStatus.MISSING_REPOSITORIES
+    assert "--configure-repos" in report.suggested_action
+
+
+def test_diagnostics_stale_sha_and_missing_repos_combined() -> None:
+    ctx = openqa_context()
+    report = sut.DiagnosticReport(
+        project_exists=True,
+        repositories=["openSUSE_Tumbleweed"],
+        missing_repositories=["16.1"],
+        packages=["openQA"],
+        package_files=["_service", "_branch_request"],
+        pr_head_sha="77bfa16e",
+        obs_branch_sha="611ee923",
+    )
+    sut.classify_health(report, ctx)
+    assert report.status == sut.HealthStatus.BROKEN_STALE_SHA
+    assert "--repair-branch" in report.suggested_action
+    assert "--configure-repos" in report.suggested_action
+
+
+def test_diagnostics_missing_checks_classification() -> None:
+    ctx = openqa_context()
+    report = sut.DiagnosticReport(
+        project_exists=True,
+        repositories=["openSUSE_Tumbleweed", "SLE_15_SP7_Backports", "16.0"],
+        packages=["openQA"],
+        package_files=["_service", "_branch_request"],
+        pr_head_sha="77bfa16e",
+        obs_branch_sha="77bfa16e",
+        obs_checks_count=0,
+        pr_updated_at="2020-01-01T00:00:00Z",
+    )
+    sut.classify_health(report, ctx)
+    assert report.status == sut.HealthStatus.MISSING_CHECKS
+    assert "--repair-branch or --rebuild" in report.suggested_action
+
+
+def test_diagnostics_format_report_displays_all_fields() -> None:
+    ctx = openqa_context()
+    report = sut.DiagnosticReport(
+        project_exists=True,
+        repositories=["openSUSE_Tumbleweed"],
+        missing_repositories=["16.1"],
+        packages=["openQA"],
+        package_files=["_service", "_branch_request"],
+        pr_head_sha="77bfa16e",
+        obs_branch_sha="611ee923",
+        obs_checks_count=2,
+        total_checks_count=5,
+        status=sut.HealthStatus.BROKEN_STALE_SHA,
+        suggested_action="Run with --repair-branch.",
+    )
+    formatted = sut.format_report(report, ctx)
+    assert "PR Head SHA:           77bfa16e" in formatted
+    assert "OBS Branch SHA:        611ee923 (STALE)" in formatted
+    assert "Missing Repositories:  16.1" in formatted
+    assert "Status Checks:         2 OBS checks (out of 5 total)" in formatted
+
+
+@pytest.mark.parametrize(
+    ("desc", "returncode", "stdout", "expected_found"),
+    [
+        (
+            "successful fetch decodes base64 content",
+            0,
+            base64.b64encode(SAMPLE_OPENQA_WORKFLOW.encode("utf-8")).decode("ascii"),
+            True,
+        ),
+        (
+            "command failure returns None",
+            1,
+            "",
+            False,
+        ),
+        (
+            "invalid base64 content returns None",
+            0,
+            "not-base64???",
+            False,
+        ),
+    ],
+)
+def test_diagnostics_fetch_repo_workflow(desc: str, returncode: int, stdout: str, *, expected_found: bool) -> None:
+    runner = MagicMock(return_value=make_completed_process(returncode=returncode, stdout=stdout))
+    wf = sut.fetch_repo_workflow("os-autoinst", "openQA", runner=runner)
+    assert (wf is not None) is expected_found, desc
