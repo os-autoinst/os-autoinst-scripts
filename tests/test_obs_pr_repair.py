@@ -1,6 +1,7 @@
 # Copyright SUSE LLC
 """Tests for obs-pr-repair: workflow parsing, repository checks and the repair actions."""
 
+import argparse
 import base64
 import importlib.machinery
 import importlib.util
@@ -961,6 +962,11 @@ def test_main_multiple_actions_error() -> None:
     assert sut.main(["--configure-repos", "--rebuild", "--skip-auth-check"]) == 1
 
 
+def test_main_exception_returns_one() -> None:
+    with patch.object(sut, "resolve_context", side_effect=RuntimeError("boom")):
+        assert sut.main(["--repo", "os-autoinst/openQA", "--pr", "123", "--skip-auth-check"]) == 1
+
+
 def test_find_and_parse_workflow_file(tmp_path: Path) -> None:
     obs_dir = tmp_path / ".obs"
     obs_dir.mkdir()
@@ -1735,3 +1741,408 @@ def test_auto_repair_cli_dispatch() -> None:
 
     exit_bad = sut.main([*base_args, "--auto-repair", "--rebuild"])
     assert exit_bad == 1
+
+
+@pytest.mark.parametrize(
+    ("desc", "returncode", "stdout", "org", "expected"),
+    [
+        (
+            "code search returns repositories list",
+            0,
+            json.dumps({"items": [{"repository": {"full_name": "os-autoinst/openQA"}}]}),
+            "os-autoinst",
+            ["os-autoinst/openQA"],
+        ),
+        (
+            "duplicate repositories are filtered out",
+            0,
+            json.dumps({
+                "items": [
+                    {"repository": {"full_name": "os-autoinst/openQA"}},
+                    {"repository": {"full_name": "os-autoinst/openQA"}},
+                ]
+            }),
+            "os-autoinst",
+            ["os-autoinst/openQA"],
+        ),
+        (
+            "empty search results for os-autoinst fall back to default repos",
+            0,
+            json.dumps({"items": []}),
+            "os-autoinst",
+            ["os-autoinst/openQA", "os-autoinst/os-autoinst", "os-autoinst/os-autoinst-scripts"],
+        ),
+        (
+            "empty search results for other org return empty list",
+            0,
+            json.dumps({"items": []}),
+            "other-org",
+            [],
+        ),
+        (
+            "command failure for os-autoinst falls back to default repos",
+            1,
+            "",
+            "os-autoinst",
+            ["os-autoinst/openQA", "os-autoinst/os-autoinst", "os-autoinst/os-autoinst-scripts"],
+        ),
+        (
+            "invalid json for os-autoinst falls back to default repos",
+            0,
+            "not-json",
+            "os-autoinst",
+            ["os-autoinst/openQA", "os-autoinst/os-autoinst", "os-autoinst/os-autoinst-scripts"],
+        ),
+    ],
+)
+def test_discover_org_repositories(desc: str, returncode: int, stdout: str, org: str, expected: list[str]) -> None:
+    runner = MagicMock(return_value=make_completed_process(returncode=returncode, stdout=stdout))
+    assert sut.discover_org_repositories(org, runner=runner) == expected, desc
+
+
+@pytest.mark.parametrize(
+    ("desc", "returncode", "stdout", "expected"),
+    [
+        (
+            "successful fetch returns list of pr numbers",
+            0,
+            json.dumps([{"number": 10}, {"number": 20}, {"number": "invalid"}, {}]),
+            [10, 20],
+        ),
+        (
+            "command failure returns empty list",
+            1,
+            "",
+            [],
+        ),
+        (
+            "empty stdout returns empty list",
+            0,
+            "",
+            [],
+        ),
+        (
+            "invalid json returns empty list",
+            0,
+            "invalid-json",
+            [],
+        ),
+        (
+            "non-list json returns empty list",
+            0,
+            json.dumps({"error": "forbidden"}),
+            [],
+        ),
+    ],
+)
+def test_fetch_open_prs(desc: str, returncode: int, stdout: str, expected: list[int]) -> None:
+    runner = MagicMock(return_value=make_completed_process(returncode=returncode, stdout=stdout))
+    assert sut.fetch_open_prs("os-autoinst/openQA", runner=runner) == expected, desc
+
+
+def test_sweep_pr_context_failure() -> None:
+    options = argparse.Namespace(auto_repair=False, comment=False, dry_run=False)
+    runner = MagicMock(return_value=make_completed_process(returncode=1, stderr="fail"))
+    with patch.object(sut, "resolve_context", side_effect=RuntimeError("context err")):
+        status = sut.sweep_pr("os-autoinst/openQA", 1, options, runner=runner)
+        assert status == sut.HealthStatus.UNKNOWN
+
+
+def test_sweep_pr_healthy_flow() -> None:
+    options = argparse.Namespace(auto_repair=True, comment=True, dry_run=False)
+    report = sut.DiagnosticReport(project_exists=True, status=sut.HealthStatus.HEALTHY)
+    ctx = openqa_context()
+    with (
+        patch.object(sut, "resolve_context", return_value=ctx),
+        patch.object(sut, "diagnose", return_value=report),
+        patch.object(sut, "auto_repair") as mock_repair,
+    ):
+        status = sut.sweep_pr("os-autoinst/openQA", 7985, options)
+        assert status == sut.HealthStatus.HEALTHY
+        assert not mock_repair.called
+
+
+def test_sweep_pr_unhealthy_with_auto_repair_and_comment() -> None:
+    options = argparse.Namespace(auto_repair=True, comment=True, dry_run=False)
+    report = sut.DiagnosticReport(project_exists=True, status=sut.HealthStatus.BROKEN_STALE_SHA)
+    ctx = openqa_context()
+    with (
+        patch.object(sut, "resolve_context", return_value=ctx),
+        patch.object(sut, "diagnose", return_value=report),
+        patch.object(sut, "auto_repair", return_value=(True, ["repair_branch"])) as mock_repair,
+        patch.object(sut, "post_pr_comment") as mock_comment,
+    ):
+        status = sut.sweep_pr("os-autoinst/openQA", 7985, options)
+        assert status == sut.HealthStatus.BROKEN_STALE_SHA
+        assert mock_repair.called
+        assert mock_comment.called
+
+
+def test_sweep_organization_dispatch_modes() -> None:
+    with (
+        patch.object(sut, "discover_org_repositories", return_value=["os-autoinst/openQA"]),
+        patch.object(sut, "fetch_open_prs", return_value=[7985]),
+        patch.object(sut, "sweep_pr", return_value=sut.HealthStatus.HEALTHY),
+    ):
+        res1 = sut.sweep_organization("os-autoinst")
+        assert res1 == {"os-autoinst/openQA": [(7985, sut.HealthStatus.HEALTHY)]}
+
+        ns = argparse.Namespace(org="os-autoinst", auto_repair=True, comment=False, dry_run=True)
+        res2 = sut.sweep_organization(ns)
+        assert res2 == {"os-autoinst/openQA": [(7985, sut.HealthStatus.HEALTHY)]}
+
+
+def test_run_action_org_sweep_return_codes() -> None:
+    ns_unhealthy = argparse.Namespace(org="os-autoinst", auto_repair=False, comment=False, dry_run=False)
+    unhealthy_sweep = {"os-autoinst/openQA": [(1, sut.HealthStatus.BROKEN_STALE_SHA)]}
+    with patch.object(sut, "sweep_organization", return_value=unhealthy_sweep):
+        assert sut.run_action(None, ns_unhealthy) == 1
+
+    ns_repair = argparse.Namespace(org="os-autoinst", auto_repair=True, comment=False, dry_run=False)
+    with patch.object(sut, "sweep_organization", return_value=unhealthy_sweep):
+        assert sut.run_action(None, ns_repair) == 0
+
+    healthy_sweep = {"os-autoinst/openQA": [(1, sut.HealthStatus.HEALTHY)]}
+    with patch.object(sut, "sweep_organization", return_value=healthy_sweep):
+        assert sut.run_action(None, ns_unhealthy) == 0
+
+    ns_no_org = argparse.Namespace(org=None)
+    assert sut.run_action(None, ns_no_org) == 1
+
+
+def test_find_workflow_file_git_root_boundary(tmp_path: Path) -> None:
+    (tmp_path / ".git").mkdir()
+    child = tmp_path / "subdir"
+    child.mkdir()
+    assert sut.find_workflow_file(start_dir=child) is None
+
+
+def test_detect_github_repo_fallback_origin_non_github() -> None:
+    def fake_runner(cmd: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        if cmd[1:3] == ["remote", "get-url"]:
+            return make_completed_process(stdout="https://gitlab.com/other/project.git\n")
+        if cmd[1:3] == ["remote", "-v"]:
+            return make_completed_process(
+                stdout="origin gitlab\nupstream git@github.com:os-autoinst/openQA.git (fetch)\n"
+            )
+        return make_completed_process()
+
+    owner, repo = sut.detect_github_repo(runner=fake_runner)
+    assert owner == "os-autoinst"
+    assert repo == "openQA"
+
+
+def test_resolve_base_workflow_dir_and_defaults(tmp_path: Path) -> None:
+    args_dir = argparse.Namespace(workflow=str(tmp_path), repo=None, source_project=None, source_package=None)
+    with patch.object(sut, "find_workflow_file", return_value=None):
+        wf = sut.resolve_base_workflow(args_dir, "os-autoinst", "openQA")
+        assert not wf.target_project
+        assert wf.source_package == "openQA"
+
+
+def test_fetch_project_meta_parse_error() -> None:
+    runner = MagicMock(return_value=make_completed_process(stdout="not-valid-xml"))
+    assert sut.fetch_project_meta("proj", runner=runner) is None
+
+
+def test_check_all_results_missing_code_and_state() -> None:
+    xml_content = (
+        "<resultlist>"
+        '<result project="p" repository="r" arch="a"><status package="pkg"/></result>'
+        '<result project="p" repository="r2" arch="a"/>'
+        "</resultlist>"
+    )
+    runner = MagicMock(return_value=make_completed_process(stdout=xml_content))
+    assert sut.check_all_results_excluded_or_disabled("proj", runner=runner) is False
+
+
+def test_extract_branch_request_sha_non_string_fields() -> None:
+    assert not sut.extract_branch_request_sha({"pull_request": {"head": {"sha": 123}}})
+    assert not sut.extract_branch_request_sha({"head": {"sha": 456}})
+    assert not sut.extract_branch_request_sha({"sha": 789})
+
+
+def test_fetch_pr_details_command_failure() -> None:
+    ctx = openqa_context()
+    runner = MagicMock(return_value=make_completed_process(returncode=1, stderr="err"))
+    assert sut.fetch_pr_details(ctx, runner=runner) == {}
+
+
+def test_repair_after_cycle_config_repos_fails() -> None:
+    ctx = openqa_context()
+    empty_report = sut.DiagnosticReport(project_exists=True, repositories=[], package_files=["_service"])
+    with (
+        patch.object(sut, "diagnose", return_value=empty_report),
+        patch.object(sut, "configure_repositories", return_value=False),
+    ):
+        assert sut.repair_after_cycle(ctx) is False
+
+
+def test_recreate_project_confirm_yes_and_rdelete_warning(monkeypatch: pytest.MonkeyPatch) -> None:
+    ctx = openqa_context()
+    monkeypatch.setattr("builtins.input", lambda _prompt: "yes")
+
+    def fake_runner(cmd: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        if cmd[1] == "rdelete":
+            return make_completed_process(returncode=1, stderr="Server 500 internal error")
+        return make_completed_process(returncode=0)
+
+    with patch.object(sut, "repair_after_cycle", return_value=True):
+        assert sut.recreate_project(ctx, auto_confirm=False, runner=fake_runner) is True
+
+
+def test_auto_repair_handler_branches_detailed() -> None:
+    ctx = openqa_context()
+    rep_empty = sut.DiagnosticReport(project_exists=True, status=sut.HealthStatus.BROKEN_EMPTY_PROJECT)
+    with (
+        patch.object(sut, "configure_repositories", return_value=False),
+        patch.object(sut, "repair_branch", return_value=True),
+    ):
+        ok, acts = sut.auto_repair(ctx, rep_empty)
+        assert ok is True
+        assert acts == ["repair_branch"]
+
+    with (
+        patch.object(sut, "configure_repositories", return_value=True),
+        patch.object(sut, "repair_branch", return_value=False),
+    ):
+        ok, acts = sut.auto_repair(ctx, rep_empty)
+        assert ok is True
+        assert acts == ["configure_repositories"]
+
+    rep_excl = sut.DiagnosticReport(project_exists=True, status=sut.HealthStatus.BROKEN_EXCLUDED_OR_DISABLED)
+    with patch.object(sut, "repair_branch", return_value=True):
+        ok, acts = sut.auto_repair(ctx, rep_excl)
+        assert ok is True
+        assert acts == ["repair_branch"]
+
+    rep_stale = sut.DiagnosticReport(
+        project_exists=True,
+        status=sut.HealthStatus.BROKEN_STALE_SHA,
+        missing_repositories=[],
+        pr_head_sha="abc12345",
+    )
+    ok_dry, acts_dry = sut.auto_repair(ctx, rep_stale, dry_run=True)
+    assert ok_dry is True
+    assert acts_dry == ["repair_branch"]
+
+    rep_stale_missing = sut.DiagnosticReport(
+        project_exists=True,
+        status=sut.HealthStatus.BROKEN_STALE_SHA,
+        missing_repositories=["16.1"],
+        pr_head_sha="abc12345",
+    )
+    with (
+        patch.object(sut, "configure_repositories", return_value=False),
+        patch.object(sut, "repair_branch", return_value=True),
+    ):
+        ok, acts = sut.auto_repair(ctx, rep_stale_missing)
+        assert ok is True
+        assert acts == ["repair_branch"]
+
+    with (
+        patch.object(sut, "configure_repositories", return_value=False),
+        patch.object(sut, "repair_branch", return_value=False),
+    ):
+        ok, acts = sut.auto_repair(ctx, rep_stale_missing)
+        assert ok is False
+        assert acts == []
+
+    rep_miss_repo = sut.DiagnosticReport(
+        project_exists=True,
+        status=sut.HealthStatus.MISSING_REPOSITORIES,
+        missing_repositories=["16.1"],
+    )
+    with patch.object(sut, "configure_repositories", return_value=False):
+        ok, acts = sut.auto_repair(ctx, rep_miss_repo)
+        assert ok is False
+        assert acts == []
+
+
+def test_comment_should_skip_empty_and_invalid_created_at() -> None:
+    comments = [
+        {"body": f"{sut.BOT_MARKER} sha123", "createdAt": ""},
+        {"body": f"{sut.BOT_MARKER} sha123", "createdAt": "not-a-timestamp"},
+    ]
+    assert sut.should_skip_comment(comments, "sha123") is False
+
+
+def test_main_org_sweep_and_verify_prerequisites() -> None:
+    with (
+        patch.object(sut, "verify_prerequisites") as mock_prereq,
+        patch.object(sut, "sweep_organization", return_value={"os-autoinst/openQA": []}),
+    ):
+        assert sut.main(["--org", "os-autoinst"]) == 0
+        assert mock_prereq.called
+
+    with (
+        patch.object(sut, "resolve_context") as mock_resolve,
+        patch.object(sut, "diagnose") as mock_diag,
+    ):
+        mock_resolve.return_value = openqa_context()
+        mock_diag.return_value = sut.DiagnosticReport(status=sut.HealthStatus.HEALTHY)
+        assert sut.main(["--skip-auth-check", "--auto-repair"]) == 0
+
+
+def test_main_entrypoint() -> None:
+    with (
+        patch.object(sut, "main", return_value=0),
+        patch.object(sys, "exit") as mock_exit,
+    ):
+        main_spec = importlib.util.spec_from_file_location(
+            "__main__",
+            SCRIPT_PATH,
+            loader=importlib.machinery.SourceFileLoader("__main__", str(SCRIPT_PATH)),
+        )
+        assert main_spec
+        assert main_spec.loader
+        main_mod = importlib.util.module_from_spec(main_spec)
+        main_spec.loader.exec_module(main_mod)
+        assert mock_exit.called
+
+
+def test_find_workflow_file_no_git_and_no_workflow_in_root() -> None:
+    with patch("pathlib.Path.resolve", return_value=Path("/nonexistent_test_dir")):
+        assert sut.find_workflow_file(start_dir=Path("/")) is None
+
+
+def test_detect_github_repo_fallback_to_gh_cli() -> None:
+    def fake_runner(cmd: Sequence[str]) -> subprocess.CompletedProcess[str]:
+        if cmd[1:3] == ["remote", "get-url"]:
+            return make_completed_process(stdout="https://gitlab.com/other/project.git\n")
+        if cmd[1:3] == ["remote", "-v"]:
+            return make_completed_process(stdout="\nsingle_word\norigin https://gitlab.com/repo.git (fetch)\n")
+        if cmd[0] == "gh":
+            return make_completed_process(stdout="os-autoinst/openQA\n")
+        return make_completed_process()
+
+    owner, repo = sut.detect_github_repo(runner=fake_runner)
+    assert owner == "os-autoinst"
+    assert repo == "openQA"
+
+
+def test_resolve_base_workflow_no_workflow_no_repo() -> None:
+    args_empty = argparse.Namespace(workflow=None, repo=None, source_project=None, source_package=None)
+    with patch.object(sut, "find_workflow_file", return_value=None):
+        wf = sut.resolve_base_workflow(args_empty, "os-autoinst", "openQA")
+        assert not wf.target_project
+
+
+def test_extract_branch_request_sha_head_not_dict() -> None:
+    assert not sut.extract_branch_request_sha({"pull_request": {"head": "not-a-dict"}})
+
+
+def test_sweep_pr_auto_repair_without_comment() -> None:
+    options = argparse.Namespace(auto_repair=True, comment=False, dry_run=False)
+    report = sut.DiagnosticReport(project_exists=True, status=sut.HealthStatus.BROKEN_STALE_SHA)
+    ctx = openqa_context()
+    with (
+        patch.object(sut, "resolve_context", return_value=ctx),
+        patch.object(sut, "diagnose", return_value=report),
+        patch.object(sut, "auto_repair", return_value=(True, ["repair_branch"])) as mock_repair,
+        patch.object(sut, "post_pr_comment") as mock_comment,
+    ):
+        status = sut.sweep_pr("os-autoinst/openQA", 7985, options)
+        assert status == sut.HealthStatus.BROKEN_STALE_SHA
+        assert mock_repair.called
+        assert not mock_comment.called

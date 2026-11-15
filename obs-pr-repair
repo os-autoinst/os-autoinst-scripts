@@ -1106,6 +1106,121 @@ def post_pr_comment(
     return True
 
 
+def discover_org_repositories(org: str, runner: CommandRunner = default_runner) -> list[str]:
+    """Discover repositories in an organization that define .obs/workflows.yml."""
+    query = f"search/code?q=path:.obs+filename:workflows.yml+org:{org}"
+    res = runner(["gh", "api", query])
+    repos: list[str] = []
+    if res.returncode == 0 and res.stdout.strip():
+        try:
+            data = json.loads(res.stdout)
+        except (json.JSONDecodeError, ValueError):
+            data = {}
+        items = data.get("items", []) if isinstance(data, dict) else []
+        for item in items:
+            repo_info = item.get("repository") or {}
+            full_name = repo_info.get("full_name")
+            if full_name and full_name not in repos:
+                repos.append(full_name)
+    if not repos and org == "os-autoinst":
+        repos = ["os-autoinst/openQA", "os-autoinst/os-autoinst", "os-autoinst/os-autoinst-scripts"]
+    return repos
+
+
+def fetch_open_prs(repo: str, runner: CommandRunner = default_runner) -> list[int]:
+    """Fetch open PR numbers for a repository."""
+    res = runner([
+        "gh",
+        "pr",
+        "list",
+        "--repo",
+        repo,
+        "--state",
+        "open",
+        "--limit",
+        "100",
+        "--json",
+        "number",
+    ])
+    if res.returncode != 0 or not res.stdout.strip():
+        return []
+    try:
+        data = json.loads(res.stdout)
+        if not isinstance(data, list):
+            return []
+        return [item["number"] for item in data if isinstance(item, dict) and isinstance(item.get("number"), int)]
+    except (json.JSONDecodeError, ValueError):
+        return []
+
+
+def sweep_pr(
+    repo_name: str,
+    pr_num: int,
+    options: argparse.Namespace,
+    runner: CommandRunner = default_runner,
+) -> HealthStatus:
+    """Diagnose and optionally repair a single PR during organization sweep."""
+    args = argparse.Namespace(
+        repo=repo_name,
+        pr=pr_num,
+        workflow=None,
+        project=None,
+        target_project=None,
+        source_project=None,
+        source_package=None,
+        skip_auth_check=True,
+    )
+    try:
+        ctx = resolve_context(args, runner=runner)
+    except Exception:
+        log.exception("Failed to resolve context for %s#%s", repo_name, pr_num)
+        return HealthStatus.UNKNOWN
+
+    report = diagnose(ctx, runner=runner)
+    sys.stdout.write(f"{format_report(report, ctx)}\n")
+
+    if options.auto_repair and report.status != HealthStatus.HEALTHY:
+        _, actions = auto_repair(ctx, report, runner=runner, dry_run=options.dry_run)
+        if options.comment and actions:
+            post_pr_comment(ctx, report, actions, runner=runner, dry_run=options.dry_run)
+
+    return report.status
+
+
+def sweep_organization(
+    target: str | argparse.Namespace,
+    *,
+    auto_repair_enabled: bool = False,
+    comment_enabled: bool = False,
+    dry_run: bool = False,
+    runner: CommandRunner = default_runner,
+) -> dict[str, list[tuple[int, HealthStatus]]]:
+    """Discover repositories in org, inspect all open PRs, and optionally auto-repair."""
+    if isinstance(target, argparse.Namespace):
+        org = str(target.org)
+        options = target
+    else:
+        org = str(target)
+        options = argparse.Namespace(
+            auto_repair=auto_repair_enabled,
+            comment=comment_enabled,
+            dry_run=dry_run,
+        )
+
+    results: dict[str, list[tuple[int, HealthStatus]]] = {}
+    repos = discover_org_repositories(org, runner=runner)
+    log.info("Sweeping organization '%s' (%d repositories found)...", org, len(repos))
+    for repo_name in repos:
+        results[repo_name] = []
+        prs = fetch_open_prs(repo_name, runner=runner)
+        log.info("Scanning %s (%d open PRs)...", repo_name, len(prs))
+        for pr_num in prs:
+            status = sweep_pr(repo_name, pr_num, options, runner=runner)
+            results[repo_name].append((pr_num, status))
+
+    return results
+
+
 def create_parser() -> argparse.ArgumentParser:
     """Build CLI argument parser."""
     parser = argparse.ArgumentParser(
@@ -1241,11 +1356,19 @@ def setup_logging(verbose: int = 0) -> None:
 
 
 def run_action(
-    context: ProjectContext,
+    context: ProjectContext | None,
     args: argparse.Namespace,
     runner: CommandRunner = default_runner,
 ) -> int:
     """Run the single requested action, or diagnose and print the report when none is given."""
+    if args.org:
+        results = sweep_organization(args, runner=runner)
+        has_unhealthy = any(status != HealthStatus.HEALTHY for pr_list in results.values() for _, status in pr_list)
+        return 1 if (has_unhealthy and not args.auto_repair) else 0
+
+    if context is None:
+        return 1
+
     actions_map: dict[str, Callable[[], bool]] = {
         "recreate": lambda: recreate_project(context, auto_confirm=args.yes, runner=runner),
         "configure_repos": lambda: configure_repositories(context, runner=runner),
@@ -1279,7 +1402,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not args.skip_auth_check:
             verify_prerequisites()
 
-        context = resolve_context(args)
+        context = resolve_context(args) if not args.org else None
     except Exception:
         log.exception("Execution failed")
         return 1
