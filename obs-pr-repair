@@ -105,12 +105,15 @@ CommandRunner = Callable[[Sequence[str]], subprocess.CompletedProcess[str]]
 
 def default_runner(cmd: Sequence[str]) -> subprocess.CompletedProcess[str]:
     """Execute a system command and return CompletedProcess."""
-    return subprocess.run(
-        cmd,
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        return subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except FileNotFoundError as err:
+        return subprocess.CompletedProcess(cmd, returncode=127, stdout="", stderr=str(err))
 
 
 def parse_repository_definitions(configured_repos: list[Any]) -> list[RepositoryConfig]:

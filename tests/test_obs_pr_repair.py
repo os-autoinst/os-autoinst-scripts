@@ -967,6 +967,12 @@ def test_main_exception_returns_one() -> None:
         assert sut.main(["--repo", "os-autoinst/openQA", "--pr", "123", "--skip-auth-check"]) == 1
 
 
+def test_default_runner_handles_missing_command() -> None:
+    res = sut.default_runner(["nonexistent_cmd_12345"])
+    assert res.returncode == 127
+    assert "nonexistent_cmd_12345" in res.stderr
+
+
 def test_find_and_parse_workflow_file(tmp_path: Path) -> None:
     obs_dir = tmp_path / ".obs"
     obs_dir.mkdir()
