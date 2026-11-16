@@ -28,7 +28,7 @@ from common.error_handling import is_404_str
 from common.smelt import submission_ids, submission_packages
 from openqa_llm_investigate.analysis import analyze_job
 from openqa_llm_investigate.commits import commits_section
-from openqa_llm_investigate.history import fetch_rows, is_reviewed
+from openqa_llm_investigate.history import fetch_rows, is_reviewed, unreviewed_runs
 from openqa_llm_investigate.http import AnalyzerError, NoFailedModulesError, OpenQA
 from openqa_llm_investigate.text import redact
 from openqa_llm_investigate.verdict import BISECT_RE, bisect_verdict, enforce_history_rules
@@ -60,7 +60,7 @@ Job details:
 - Flavor: {flavor}
 - Result: {result}{prompt_extension_text}
 
-{submission_section}{investigation_section}{commits_section}\
+{submission_section}{last_good_section}{investigation_section}{commits_section}\
 Failure analysis (context window of {context_lines} lines{truncated}):
 {analysis}
 
@@ -103,6 +103,13 @@ BISECT decides whether 'openqa-investigate' should schedule further bisect tests
 Restart decides whether the job should be restarted automatically. Answer Restart: YES only if the failure looks
 transient (flaky timing, network, worker or external service) so that a rerun is likely to pass, else Restart: NO.
 """
+
+NO_LAST_GOOD_QUESTION = (
+    "\nThere is no last good job: in the BISECT and Restart reasons, say whether the scenario is new or has been "
+    "failing for long.\n"
+)
+NEW_SCENARIO_DAYS = 14
+OLD_SCENARIO_DAYS = 60
 
 TRUNCATED_NOTE = ", truncated to the first {log_lines} lines; do not guess about the omitted tail"
 CONTEXT_TRUNCATED_NOTE = ", truncated to fit {context_tokens} tokens; do not guess about the omitted tail"
@@ -542,13 +549,8 @@ def _superseded(job: dict[str, Any], history: dict[int, dict[str, Any]], target:
     return False
 
 
-def _consecutive_failures(
-    client: httpx.Client, base_url: str, job_id: str, job: dict[str, Any], limit: int
-) -> tuple[int, bool]:
-    """Count the failures in a row of the same scenario (name, arch, flavor, machine, group) up to this job.
-
-    A restarted job counts once. Returns the failure count and whether the target job was found in the recent history.
-    """
+def _scenario_jobs(client: httpx.Client, base_url: str, job: dict[str, Any], limit: int) -> list[dict[str, Any]]:
+    """Return the recent runs of the job's scenario (name, arch, flavor, machine, group)."""
     settings = job.get("settings", {})
     params = {
         "test": job.get("test", "unknown"),
@@ -561,7 +563,14 @@ def _consecutive_failures(
     }
     if settings.get("MACHINE"):
         params["machine"] = settings["MACHINE"]
-    test_jobs = fetch_json(client, f"{base_url}/api/v1/jobs", params=params).get("jobs", [])
+    return fetch_json(client, f"{base_url}/api/v1/jobs", params=params).get("jobs", [])
+
+
+def _streak(test_jobs: list[dict[str, Any]], job_id: str, limit: int) -> tuple[int, bool]:
+    """Count the failures in a row of the scenario's runs up to this job.
+
+    A restarted job counts once. Returns the failure count and whether the target job was found in the recent history.
+    """
     target = int(job_id)
     job_found = any(j["id"] == target for j in test_jobs)
     if not job_found:
@@ -573,6 +582,13 @@ def _consecutive_failures(
         reverse=True,
     )
     return next((i for i, j in enumerate(relevant) if j.get("result") != "failed"), len(relevant)), job_found
+
+
+def _consecutive_failures(
+    client: httpx.Client, base_url: str, job_id: str, job: dict[str, Any], limit: int
+) -> tuple[int, bool]:
+    """Count the failures in a row of the same scenario up to this job, see `_streak`."""
+    return _streak(_scenario_jobs(client, base_url, job, limit), job_id, limit)
 
 
 def _build_failures(client: httpx.Client, base_url: str, job_id: str, job: dict[str, Any]) -> tuple[int, int]:
@@ -601,7 +617,7 @@ def _verdict_question(stats: dict[str, Any], opts: Options) -> str:
         if stats["build_failures"] > opts.build_failure_threshold
         else ""
     )
-    return VERDICT_QUESTION.format(hint=hint, **stats)
+    return VERDICT_QUESTION.format(hint=hint, **stats) + (NO_LAST_GOOD_QUESTION if stats.get("no_last_good") else "")
 
 
 def _investigation_text(diff: Any) -> str:  # ruff: ignore[any-type]
@@ -609,6 +625,64 @@ def _investigation_text(diff: Any) -> str:  # ruff: ignore[any-type]
     if not diff:
         return ""
     return redact(diff if isinstance(diff, str) else json.dumps(diff, indent=2))
+
+
+def _no_last_good(investigation: dict[str, Any]) -> bool:
+    """Return whether openQA says the scenario has no good job; a missing or odd answer is not a "no"."""
+    return investigation.get("last_good") == "not found" or str(investigation.get("error", "")).startswith(
+        "No previous job"
+    )
+
+
+def _utcnow() -> dt.datetime:
+    return dt.datetime.now(dt.UTC)
+
+
+def _first_run(test_jobs: list[dict[str, Any]]) -> dt.datetime | None:
+    """Return the start of the oldest run in the list (None if no run has a time)."""
+    try:
+        starts = [dt.datetime.fromisoformat(t).replace(tzinfo=dt.UTC) for j in test_jobs if (t := j.get("t_started"))]
+    except ValueError:
+        return None
+    return min(starts, default=None)
+
+
+def _no_last_good_text(test_jobs: list[dict[str, Any]], limit: int, unreviewed: int) -> str:
+    """Describe a scenario without a last good job: how old its oldest known run is, and whether it is new or old.
+
+    `unreviewed` is the number of earlier runs shown by openQA if none of them has a bugref or label, else 0.
+    """
+    head = "Last good job: none found, none of the recent runs of this scenario passed."
+    if not (first := _first_run(test_jobs)):
+        return f"{head}\n\n"
+    days, since = (_utcnow() - first).days, f"{first:%Y-%m-%d}"
+    truncated = len(test_jobs) >= limit
+    if truncated:
+        age = f"The oldest of the last {len(test_jobs)} runs is at least {days} days old ({since})."
+    elif days < NEW_SCENARIO_DAYS:
+        age = f"The scenario is new: its first run was {days} days ago ({since}), less than {NEW_SCENARIO_DAYS} days."
+    else:
+        age = f"Its first known run was {days} days ago ({since})."
+    if days >= OLD_SCENARIO_DAYS and unreviewed:
+        age += f" It has failed for a long time and none of the {unreviewed} earlier runs has a bugref or label."
+    return f"{head} {age}\n\n"
+
+
+def _last_good_section(client: httpx.Client, base_url: str, investigation: dict[str, Any], no_last_good: str) -> str:
+    """Return the prompt section on the last good job: its link, result and finish time (UTC)."""
+    if _no_last_good(investigation):
+        return no_last_good
+    last_good = investigation.get("last_good")
+    job_id = str(last_good.get("text", "")) if isinstance(last_good, dict) else ""
+    if not job_id.isdigit():
+        return ""
+    job = fetch_json(client, f"{base_url}/api/v1/jobs/{job_id}").get("job", {})
+    when = f", finished {job['t_finished']} UTC" if job.get("t_finished") else ""
+    result = job.get("result") or "passed or softfailed"
+    return (
+        f"Last good job: {base_url}/tests/{job_id} ({result}{when}). That job succeeded: "
+        "the scenario worked then and fails now.\n\n"
+    )
 
 
 def _investigation_section(info: str) -> str:
@@ -672,6 +746,7 @@ def _build_prompt(job: dict[str, Any], analysis: str, stats: dict[str, Any], opt
         "analysis": analysis,
         "truncated": TRUNCATED_NOTE.format(log_lines=opts.log_lines) if truncated else "",
         "submission_section": _submission_section(stats.get("submission_info", {})),
+        "last_good_section": stats.get("last_good_section", ""),
         "investigation_section": _investigation_section(stats["investigation_info"]),
         "commits_section": commits,
         "prompt_extension_text": extension_text,
@@ -681,11 +756,13 @@ def _build_prompt(job: dict[str, Any], analysis: str, stats: dict[str, Any], opt
 
 
 def _gather_stats(
-    client: httpx.Client, base_url: str, job_id: str, job: dict[str, Any], opts: Options
+    oqa: OpenQA, client: httpx.Client, job_id: str, job: dict[str, Any], opts: Options
 ) -> tuple[dict[str, Any], bool]:
     """Gather failure statistics and the investigation data for the prompt."""
+    base_url = oqa.server
     build_failures, same_module_failures = _build_failures(client, base_url, job_id, job)
-    consecutive_failures, job_found = _consecutive_failures(client, base_url, job_id, job, opts.history_limit)
+    test_jobs = _scenario_jobs(client, base_url, job, opts.history_limit)
+    consecutive_failures, job_found = _streak(test_jobs, job_id, opts.history_limit)
     investigation = fetch_json(
         client, f"{base_url}/tests/{job_id}/investigation_ajax", timeout=opts.investigation_timeout
     )
@@ -695,11 +772,18 @@ def _gather_stats(
         if job_found
         else f"{consecutive_failures} (streak count may be inaccurate: job not found in recent history, limit {limit})"
     )
+    no_last_good = (
+        _no_last_good_text(test_jobs, limit, unreviewed_runs(fetch_rows(oqa, job_id), job_id))
+        if _no_last_good(investigation)
+        else ""
+    )
     return {
         "build_failures": build_failures,
         "same_module_failures": same_module_failures,
         "consecutive_failures": consecutive_str,
         "streak": consecutive_failures if job_found and job.get("result") == "failed" else None,
+        "no_last_good": _no_last_good(investigation),
+        "last_good_section": _last_good_section(client, base_url, investigation, no_last_good),
         "investigation_info": _investigation_text(investigation.get("diff_to_last_good")),
         "investigation": investigation,
         "submission_info": _submissions(client, job),
@@ -762,7 +846,7 @@ def _perform_investigation(client: httpx.Client, base_url: str, job_id: str, opt
         return
 
     analysis = _analyze(oqa, job_id, job, opts)
-    stats, job_found = _gather_stats(client, base_url, job_id, job, opts)
+    stats, job_found = _gather_stats(oqa, client, job_id, job, opts)
     prompt, cut_notes = _build_prompt(job, analysis, stats, opts)
     if opts.print_prompt:
         prompts = [prompt, BRIEF_QUESTION, _verdict_question(stats, opts)]

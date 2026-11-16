@@ -174,6 +174,13 @@ def _earlier_reviews(lookups: _Lookups, job_id: str) -> str | None:
     return "Earlier reviews of runs failing in the same module: " + "; ".join(shown) + "." if shown else None
 
 
+def unreviewed_runs(rows: list[JsonDict], job_id: str) -> int:
+    """Return the number of earlier done runs in the rows if none of them has a bugref or label, else 0."""
+    cur = int(job_id)
+    earlier = [j for j in rows if j.get("state") == "done" and j["id"] < cur]
+    return 0 if any(_review_marks(j.get("comment_data")) for j in earlier) else len(earlier)
+
+
 def _sibling_failures(others: list[JsonDict], flavor: str | None) -> list[JsonDict]:
     return [
         {
