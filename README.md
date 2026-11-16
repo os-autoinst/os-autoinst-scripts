@@ -236,6 +236,24 @@ As an example, if the `retry` fails, `last_good_tests` fails, but
 `last_good_build` and `last_good_tests_and_build` pass, it's likely an issue
 with the product.
 
+If the `retry` job passes or softfails, openqa-investigate comments on the
+original job that the failure is likely sporadic. If the failed job has the
+setting `_FORCE_STATUS_ON_RETRY=1`, which the `retry` job inherits as a clone,
+that comment also carries `label:force_result:<result>:retry_job_<result>`, so
+that openQA changes the result of the original job to the result of the `retry`
+job, `passed` or `softfailed`. For this to work:
+* `job_done_hook` of openQA must be set to a script that calls
+  openqa-investigate, for example
+  `openqa-label-known-issues-and-investigate-hook`. openQA runs it for
+  investigation jobs whatever their result, while the hooks for failed and
+  incomplete jobs do not run for a passed `retry` job.
+* The API key the hook uses must belong to an operator.
+* `force_result_regex` of openQA, if set, must accept the description
+  `retry_job_<result>`.
+
+If the key or the description is not accepted, openQA rejects the whole
+comment.
+
 ### Configuration
 
 `openqa-label-known-issues-and-investigate-hook` recognizes the following
