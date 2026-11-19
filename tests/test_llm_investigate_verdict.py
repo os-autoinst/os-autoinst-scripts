@@ -140,6 +140,43 @@ def test_normalize_verdict_returns_one_canonical_line_per_label(reply: str, expe
 
 
 @pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Classification: Product bug\nBISECT: NO \u2014 widespread", "Product bug"),
+        ("BISECT: NO \u2014 widespread", None),
+        ("Classification: \nBISECT: NO \u2014 widespread", None),
+    ],
+    ids=["classification", "no-classification", "empty-classification"],
+)
+def test_classification_reads_the_classification_line(text: str, expected: str | None) -> None:
+    assert verdict.classification(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("BISECT: YES \u2014 isolated\nRestart: NO", "* **BISECT:** YES \u2014 isolated\n* **Restart:** NO"),
+        ("Classification: Product bug\nBISECT: NO", "* **BISECT:** NO"),
+        ("Hope this helps.", "* Hope this helps."),
+        ("Classification: Product bug\nRestart: ", ""),
+        ("BISECT: NO \u2014 \nRestart: NO", "* **BISECT:** NO\n* **Restart:** NO"),
+    ],
+    ids=["labels-bolded", "classification-dropped", "label-less-prose", "nothing-to-render", "dangling-separator"],
+)
+def test_render_verdict_lines_bolds_labels_and_drops_classification(text: str, expected: str) -> None:
+    assert verdict.render_verdict_lines(text, "") == expected
+
+
+def test_render_verdict_lines_appends_the_legend_only_for_a_verdict_line() -> None:
+    legend = "\n\n*BISECT gates an automatic bisect run.*"
+    assert (
+        verdict.render_verdict_lines("BISECT: YES \u2014 isolated", legend)
+        == "* **BISECT:** YES \u2014 isolated" + legend
+    )
+    assert not verdict.render_verdict_lines("Classification: Product bug", legend)
+
+
+@pytest.mark.parametrize(
     ("bisect", "restart"),
     [
         ("**BISECT:** YES \u2014 isolated", "**Restart:** YES"),
@@ -176,4 +213,4 @@ def test_investigate_forces_no_on_a_copied_template_when_other_jobs_fail_in_the_
     setup_mock_client(mocker)
     llm_investigate.investigate("123")
     mock_print.assert_not_called()
-    assert "BISECT: NO \u2014 2 other job(s) in this build fail in the same module" in mock_post.call_args[0][2]
+    assert "* **BISECT:** NO \u2014 2 other job(s) in this build fail in the same module" in mock_post.call_args[0][2]

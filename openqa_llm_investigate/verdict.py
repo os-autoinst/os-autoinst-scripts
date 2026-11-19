@@ -1,5 +1,8 @@
 # Copyright SUSE LLC
-"""Read the BISECT verdict and override BISECT and Restart where the job's history rules them out."""
+"""Normalize the verdict reply to canonical lines and render them for the comment.
+
+Override BISECT and Restart where the job's history rules them out.
+"""
 
 from __future__ import annotations
 
@@ -13,11 +16,13 @@ BISECT_LABEL_RE = re.compile(rf"^{_MARKUP}BISECT[*_`]*:", re.IGNORECASE)
 _RESTART_RE = re.compile(rf"^{_MARKUP}Restart[*_`]*:[\s*_`]*(YES|NO)(?![a-z0-9])", re.IGNORECASE)
 _LABEL_RE = re.compile(rf"(?:^|(?<=\s)){_MARKUP}({_LABELS})(?![a-z0-9])[*_`]*:[ \t]*", re.IGNORECASE)
 _QUOTED_LABEL_RE = re.compile(r":\s*[*_`]*$")
+_LINE_RE = re.compile(rf"^({_LABELS}):\s*(.*)$")
 # the choice lists the verdict question asks with, so an echoed list is told apart from a chosen answer
 _CHOICES = r"(?:YES|NO|Product bug|Test issue|Infrastructure problem)"
 _CHOICE_ECHO_RE = re.compile(rf"\s*{_CHOICES}\s*(?:\||/|\bor\b)\s*{_CHOICES}(?![a-z0-9])", re.IGNORECASE)
 # strip emphasis only at a word edge, so an underscore, asterisk or code span of a reason survives
 _EMPHASIS_RE = re.compile(r"(?<![\w*_])[*_]+|[*_]+(?![\w*_])")
+_GATES = {_CANONICAL["bisect"], _CANONICAL["restart"]}
 _DETERMINISTIC_STREAK = 3
 _BISECT_NO = "BISECT: NO \u2014 {reason}, so not a new regression"
 _RESTART_NO = "Restart: NO \u2014 {reason}, so a rerun is likely to fail"
@@ -55,6 +60,33 @@ def normalize_verdict(reply: str) -> str:
         answer = _EMPHASIS_RE.sub("", reply[m.end() : newline if newline >= 0 else end]).strip()
         answers[_CANONICAL[m.group(1).lower()]] = "" if _CHOICE_ECHO_RE.match(answer) else answer.strip()
     return "\n".join(f"{label}: {answers[label]}" for label in _CANONICAL.values() if label in answers) or reply
+
+
+def classification(verdict: str) -> str | None:
+    """Return the classification the `Classification:` line states, None if it states none or only the choice list."""
+    for ln in verdict.splitlines():
+        if (m := _LINE_RE.match(ln.strip())) and m.group(1) == "Classification" and (value := m.group(2).strip()):
+            return value
+    return None
+
+
+def render_verdict_lines(verdict: str, legend: str) -> str:
+    """Return the verdict lines as markdown list items with bold labels, dropping the classification line.
+
+    openQA renders a single newline as a space, so plain verdict lines run together into one line a reader misreads.
+    The classification shows in the comment header, and the legend is only added when a BISECT or Restart line is.
+    """
+    stripped = [ln.strip() for ln in verdict.splitlines()]
+    items, shows_verdict = [], False
+    for ln in stripped:
+        if not (m := _LINE_RE.match(ln)):
+            items += [f"* {ln}"] if ln else []
+            continue
+        answer = m.group(2).strip(" \t\u2014")
+        if answer and m.group(1) != "Classification":
+            shows_verdict = shows_verdict or m.group(1) in _GATES
+            items.append(f"* **{m.group(1)}:** {answer}")
+    return "\n".join(items) + (legend if shows_verdict else "")
 
 
 def bisect_verdict(verdict: str) -> bool | None:
