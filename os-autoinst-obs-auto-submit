@@ -789,8 +789,12 @@ class AutoSubmitter:
             content = re.sub(r"^  \* $", "  * Update to latest openQA version", content, flags=re.MULTILINE)
             changes_file.write_text(content, encoding="utf-8")
 
-    def _commit_local_changes(self, package: str, version: str) -> CommitResult:
+    def _commit_local_changes(self, package: str, version: str) -> CommitResult:  # ruff: ignore[complex-structure]
         """Commit offline changes and wait for package build."""
+        if self.src_project == self.dst_project:
+            log.info("Source and destination project are identical (%s); skipping commit to OBS", self.dst_project)
+            return CommitResult.SUCCESS
+
         res_status = run_osc_cmd([*shlex.split(self.osc_cmd_str), "status"], dry_run=self.dry_run, mutating=False)
         relevant_changes = 0
         if not self.dry_run:
@@ -895,14 +899,15 @@ class AutoSubmitter:
         # Verify that the changelog contains only one new block at the beginning before committing.
         # This prevents corrupted or overwritten changelog history from being pushed to OBS.
         # Note: Must run AFTER _cleanup_and_rename_files() so {package}.changes exists in dst_dir!
-        diff_cmd = [*shlex.split(self.osc_cmd_str), "diff", f"{package}.changes"]
-        if self.dry_run:
-            log.info("[dry-run] Would execute: %s", " ".join(diff_cmd))
-        else:
-            diff_ok, output = diff_has_single_added_block(diff_cmd)
-            if not diff_ok:
-                log.warning("osc diff for %s.changes does not look ok:\n%s", package, output)
-                return False
+        if self.src_project != self.dst_project:
+            diff_cmd = [*shlex.split(self.osc_cmd_str), "diff", f"{package}.changes"]
+            if self.dry_run:
+                log.info("[dry-run] Would execute: %s", " ".join(diff_cmd))
+            else:
+                diff_ok, output = diff_has_single_added_block(diff_cmd)
+                if not diff_ok:
+                    log.warning("osc diff for %s.changes does not look ok:\n%s", package, output)
+                    return False
 
         commit_res = self._commit_local_changes(package, version)
         if commit_res == CommitResult.FAILURE:
@@ -919,6 +924,9 @@ class AutoSubmitter:
 
     def _is_package_up_to_date(self, package: str) -> bool:
         """Check if package is already up to date on target."""
+        if self.submit_target == "none" or not self.submit_target:
+            return False
+
         if package == "os-autoinst-distri-opensuse-deps":
             cmd = [*shlex.split(self.osc_cmd_str), "cat", self.submit_target, package, f"{package}.spec"]
             try:
@@ -984,11 +992,12 @@ class AutoSubmitter:
         if not self.force and self._is_package_up_to_date(package):
             return True
 
-        self._osc_co(self.dst_project, package)
+        if self.src_project != self.dst_project:
+            self._osc_co(self.dst_project, package)
 
         dst_dir = pathlib.Path(self.dst_project) / package
         src_dir = pathlib.Path(self.src_project) / package
-        if not self.dry_run:
+        if not self.dry_run and dst_dir != src_dir:
             if dst_dir.is_dir():
                 for item in dst_dir.iterdir():
                     if item.is_file():
@@ -1078,9 +1087,9 @@ def _run_submissions(  # ruff: ignore[complex-structure, too-many-branches, too-
 ) -> None:
     """Run package submissions with the defined configuration."""
     if not dst_project:
-        dst_project = f"{src_project}:tested"
+        dst_project = src_project if src_project.endswith(":tested") else f"{src_project}:tested"
     if not staging_project:
-        staging_project = f"{src_project}:testing"
+        staging_project = "none" if src_project.endswith(":tested") else f"{src_project}:testing"
 
     prefix = os.environ.get("PREFIX", "")
     osc_cmd_str = os.environ.get("OSC", "")
