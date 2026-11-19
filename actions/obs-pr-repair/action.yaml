@@ -1,0 +1,86 @@
+---
+name: 'OBS PR Repair'
+description: 'Diagnose and automatically repair OBS SCM workflow PR staging projects'
+
+inputs:
+  repo:
+    description: 'Target GitHub repository in <owner/repo> format'
+    required: false
+    default: ${{ github.repository }}
+  pr:
+    description: 'Pull request number'
+    required: false
+    default: ${{ github.event.pull_request.number }}
+  auto_repair:
+    description: 'Execute automated repairs'
+    required: false
+    default: 'true'
+  comment:
+    description: 'Post report comment on PR'
+    required: false
+    default: 'true'
+  dry_run:
+    description: 'Simulate without modifying state'
+    required: false
+    default: 'false'
+  osc_user:
+    description: 'OBS username'
+    required: false
+    default: ''
+  osc_pass:
+    description: 'OBS password'
+    required: false
+    default: ''
+  gh_token:
+    description: 'GitHub token'
+    required: false
+    default: ${{ github.token }}
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      with:
+        repository: os-autoinst/os-autoinst-scripts
+        path: os-autoinst-scripts
+    - name: Configure osc credentials
+      shell: bash
+      run: |
+        user="${{ inputs.osc_user }}"
+        pass="${{ inputs.osc_pass }}"
+        user="${user:-$OSC_USER}"
+        pass="${pass:-$OSC_PASS}"
+        if [ -n "$user" ] && [ -n "$pass" ]; then
+          mkdir -p ~/.config/osc/
+          cat > ~/.config/osc/oscrc <<EOF
+        [general]
+        apiurl = https://api.opensuse.org/
+
+        [https://api.opensuse.org]
+        user = $user
+        pass = $pass
+        credentials_mgr_class = osc.credentials.PlaintextConfigFileCredentialsManager
+        EOF
+        fi
+    - name: Run obs-pr-repair
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.gh_token }}
+      run: |
+        cmd=(python3 os-autoinst-scripts/obs-pr-repair)
+        if [ -n "${{ inputs.repo }}" ]; then
+          cmd+=(--repo "${{ inputs.repo }}")
+        fi
+        if [ -n "${{ inputs.pr }}" ]; then
+          cmd+=(--pr "${{ inputs.pr }}")
+        fi
+        if [ "${{ inputs.auto_repair }}" = "true" ]; then
+          cmd+=(--auto-repair)
+        fi
+        if [ "${{ inputs.comment }}" = "true" ]; then
+          cmd+=(--comment)
+        fi
+        if [ "${{ inputs.dry_run }}" = "true" ]; then
+          cmd+=(--dry-run)
+        fi
+        "${cmd[@]}"

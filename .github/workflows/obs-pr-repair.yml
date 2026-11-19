@@ -1,0 +1,82 @@
+---
+name: OBS PR Repair Automation
+
+on:
+  schedule:
+    - cron: '*/20 * * * *'
+  workflow_dispatch:
+    inputs:
+      org:
+        description: 'GitHub organization to sweep'
+        required: false
+        default: 'os-autoinst'
+        type: string
+      repo:
+        description: 'Specific repository (e.g. os-autoinst/openQA)'
+        required: false
+        type: string
+      pr:
+        description: 'Specific PR number'
+        required: false
+        type: string
+      dry_run:
+        description: 'Simulate without modifying state'
+        required: false
+        default: false
+        type: boolean
+  repository_dispatch:
+    types: [obs-pr-repair]
+
+jobs:
+  obs-pr-repair:
+    name: Diagnose and repair OBS PR staging
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
+        with:
+          python-version-file: 'pyproject.toml'
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y osc python3-yaml
+      - name: Configure osc credentials
+        run: |
+          mkdir -p ~/.config/osc/
+          cat > ~/.config/osc/oscrc <<EOF
+          [general]
+          apiurl = https://api.opensuse.org/
+
+          [https://api.opensuse.org]
+          user = $OSC_USER
+          pass = $OSC_PASS
+          credentials_mgr_class = osc.credentials.PlaintextConfigFileCredentialsManager
+          EOF
+        env:
+          OSC_USER: ${{ secrets.OSC_USER }}
+          OSC_PASS: ${{ secrets.OSC_PASS }}
+      - name: Execute OBS PR Repair
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN_FOR_ACTIONS || secrets.GITHUB_TOKEN }}
+        run: |
+          if [ -n "${{ github.event.client_payload.repo }}" ] && [ -n "${{ github.event.client_payload.pr }}" ]; then
+            python3 obs-pr-repair --repo "${{ github.event.client_payload.repo }}" \
+              --pr "${{ github.event.client_payload.pr }}" --auto-repair --comment
+          elif [ -n "${{ inputs.repo }}" ] && [ -n "${{ inputs.pr }}" ]; then
+            cmd=(python3 obs-pr-repair --repo "${{ inputs.repo }}" --pr "${{ inputs.pr }}" --auto-repair --comment)
+            if [ "${{ inputs.dry_run }}" = "true" ]; then
+              cmd+=(--dry-run)
+            fi
+            "${cmd[@]}"
+          else
+            org="${{ inputs.org }}"
+            org="${org:-os-autoinst}"
+            cmd=(python3 obs-pr-repair --org "$org" --auto-repair --comment)
+            if [ "${{ inputs.dry_run }}" = "true" ]; then
+              cmd+=(--dry-run)
+            fi
+            "${cmd[@]}"
+          fi
