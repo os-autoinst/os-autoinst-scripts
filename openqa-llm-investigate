@@ -31,7 +31,7 @@ from openqa_llm_investigate.commits import commits_section
 from openqa_llm_investigate.history import fetch_rows, is_reviewed
 from openqa_llm_investigate.http import AnalyzerError, NoFailedModulesError, OpenQA
 from openqa_llm_investigate.text import redact
-from openqa_llm_investigate.verdict import BISECT_RE, bisect_verdict, enforce_history_rules
+from openqa_llm_investigate.verdict import BISECT_LABEL_RE, bisect_verdict, enforce_history_rules, normalize_verdict
 
 USER_AGENT = "openqa-llm-investigate (https://github.com/os-autoinst/os-autoinst-scripts)"
 DEFAULT_OPENQA_TIMEOUT: float = 90.0
@@ -519,11 +519,11 @@ def _drop_placeholder_reasons(verdict: str) -> str:
 
 
 def _enforce_bisect_rule(verdict: str, same_module_failures: int) -> str:
-    """Rewrite the BISECT verdict to NO if other jobs fail in the same module; small models ignore that rule."""
+    """Rewrite the BISECT line to NO if other jobs fail in the same module; small models ignore that rule."""
     if not same_module_failures:
         return verdict
     no = f"BISECT: NO \u2014 {same_module_failures} other job(s) in this build fail in the same module"
-    return "\n".join(no if BISECT_RE.match(ln) else ln for ln in verdict.splitlines())
+    return "\n".join(no if BISECT_LABEL_RE.match(ln) else ln for ln in verdict.splitlines())
 
 
 def _counted_run(job: dict[str, Any]) -> bool:
@@ -771,7 +771,7 @@ def _perform_investigation(client: httpx.Client, base_url: str, job_id: str, opt
     messages: list[dict[str, str]] = []
     lines = _ask(client, opts, messages, prompt, TEMPERATURE)
     brief = _ask(client, opts, messages, BRIEF_QUESTION, TEMPERATURE)
-    verdict = _ask(client, opts, messages, _verdict_question(stats, opts), 0.0)
+    verdict = normalize_verdict(_ask(client, opts, messages, _verdict_question(stats, opts), 0.0))
     verdict = _enforce_bisect_rule(_drop_placeholder_reasons(verdict), stats["same_module_failures"])
     verdict = enforce_history_rules(verdict, stats["streak"])
     bisect = bisect_verdict(verdict)

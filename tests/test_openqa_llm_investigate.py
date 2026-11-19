@@ -1015,6 +1015,25 @@ def test_investigate_without_a_bisect_verdict_falls_back_without_a_comment(mocke
     assert [p.endswith("\n\nClassification: Product bug") for p in printed[1:]] == ([True] if dry else [])
 
 
+def test_investigate_does_not_gate_on_a_copied_template_echo(mocker: MockerFixture) -> None:
+    mock_log = mocker.patch("llm_investigate.log")
+    mock_post = mocker.patch("llm_investigate.post_comment")
+    mock_print = mocker.patch("llm_investigate.typer.echo")
+    echo = (
+        "Classification: Product bug | Test issue | Infrastructure problem\n"
+        "BISECT: YES | NO \u2014 your own short reason\n"
+        "Restart: YES | NO \u2014 your own short reason"
+    )
+    mocker.patch.dict(CHAT_REPLIES, {3: "BISECT: NO \u2014 known", 5: echo})
+    setup_mock_client(mocker)
+
+    llm_investigate.investigate("123")
+
+    mock_post.assert_not_called()
+    mock_print.assert_called_once_with("https://openqa.opensuse.org/tests/123")
+    assert any("no BISECT line" in c.args[0] for c in mock_log.info.call_args_list)
+
+
 def test_investigate_warns_when_analysis_is_cut(mocker: MockerFixture) -> None:
     mock_log = mocker.patch("llm_investigate.log")
     mocker.patch("llm_investigate.post_comment")
@@ -1348,7 +1367,8 @@ def test_investigate_overrides_bisect_and_restart_from_the_job_history(
     setup_mock_client(mocker, overrides={"test=": history, "investigation_ajax": last_good})
     llm_investigate.investigate("123")
     verdict = (
-        "BISECT: NO \u2014 failed at least 3 times in a row\nRestart: NO \u2014 failed at least 3 times in a row"
+        "BISECT: NO \u2014 failed at least 3 times in a row, so not a new regression\n"
+        "Restart: NO \u2014 failed at least 3 times in a row, so a rerun is likely to fail"
         if overridden
         else reply
     )
