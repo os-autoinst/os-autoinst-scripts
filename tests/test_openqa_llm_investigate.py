@@ -222,8 +222,9 @@ def test_investigate_cmd(mocker: MockerFixture) -> None:
     mock_print.assert_called_once_with("https://openqa.opensuse.org/tests/123")
     mock_post.assert_called_once()
     comment = mock_post.call_args[0][2]
-    assert comment.index("* isosize:") < comment.index("`isosize` module died") < comment.index("Classification:")
-    assert "BISECT: YES" in comment
+    assert comment.startswith(f"{llm_investigate.COMMENT_MARKER} Product bug\n\n* isosize:")
+    assert comment.index("* isosize:") < comment.index("`isosize` module died") < comment.index("* **BISECT:** YES")
+    assert "* **Restart:** NO \u2014 product error" in comment
     assert comment.endswith(f"\n\n{llm_investigate.COMMENT_FOOTER}")
     assert comment.endswith(" flag:verbatim")
     assert client.post.call_count == 3
@@ -298,7 +299,7 @@ def test_investigate_cmd_already_commented_with_force(mocker: MockerFixture) -> 
 
     mock_print.assert_called_with("https://openqa.opensuse.org/tests/123")
     mock_post.assert_called_once()
-    assert "BISECT: YES" in mock_post.call_args[0][2]
+    assert "**BISECT:** YES" in mock_post.call_args[0][2]
 
 
 def test_investigate_cmd_dry_run(mocker: MockerFixture) -> None:
@@ -313,8 +314,12 @@ def test_investigate_cmd_dry_run(mocker: MockerFixture) -> None:
 
     # In dry run, it should print the summary instead of posting
     mock_post.assert_not_called()
-    summary = "\n\n".join(["BISECT: NO. Already known."] * 3)
-    mock_print.assert_any_call(f"**LLM Investigation summary:**\n\n{summary}")
+    comment = (
+        f"{llm_investigate.COMMENT_MARKER}\n\nBISECT: NO. Already known.\n\nBISECT: NO. Already known.\n\n"
+        "* **BISECT:** NO. Already known."
+        f"{llm_investigate.VERDICT_LEGEND}"
+    )
+    mock_print.assert_any_call(comment)
     assert all(llm_investigate.COMMENT_FOOTER not in str(c) for c in mock_print.call_args_list)
 
 
@@ -999,20 +1004,40 @@ def test_investigate_bisect_gate_uses_last_verdict(mocker: MockerFixture, respon
     assert (call("https://openqa.opensuse.org/tests/123") in mock_print.call_args_list) is printed
 
 
+@pytest.mark.parametrize(
+    ("reply", "header"),
+    [
+        ("Classification: Product bug", f"{llm_investigate.COMMENT_MARKER} Product bug"),
+        (
+            (
+                "Classification: Product bug | Test issue | Infrastructure problem\n"
+                "BISECT: YES | NO \u2014 your own short reason\n"
+                "Restart: YES | NO \u2014 your own short reason"
+            ),
+            llm_investigate.COMMENT_MARKER,
+        ),
+    ],
+    ids=["classification-only", "template-echo"],
+)
 @pytest.mark.parametrize("dry", [False, True])
-def test_investigate_without_a_bisect_verdict_falls_back_without_a_comment(mocker: MockerFixture, *, dry: bool) -> None:
+def test_investigate_without_a_bisect_verdict_falls_back_without_a_comment(
+    mocker: MockerFixture, reply: str, header: str, *, dry: bool
+) -> None:
     mock_log = mocker.patch("llm_investigate.log")
     mock_post = mocker.patch("llm_investigate.post_comment")
     mock_print = mocker.patch("llm_investigate.typer.echo")
-    mocker.patch.dict(CHAT_REPLIES, {3: "BISECT: NO \u2014 known", 5: "Classification: Product bug"})
+    mocker.patch.dict(CHAT_REPLIES, {3: "BISECT: NO \u2014 known", 5: reply})
     setup_mock_client(mocker)
+
     llm_investigate.investigate("123", dry=dry)
+
     mock_post.assert_not_called()
     mock_log.error.assert_not_called()
     assert any("no BISECT line" in c.args[0] for c in mock_log.info.call_args_list)
     printed = [c.args[0] for c in mock_print.call_args_list]
     assert printed[0] == "https://openqa.opensuse.org/tests/123"
-    assert [p.endswith("\n\nClassification: Product bug") for p in printed[1:]] == ([True] if dry else [])
+    assert [p.startswith(f"{header}\n\n") for p in printed[1:]] == ([True] if dry else [])
+    assert not any("Classification:" in p for p in printed[1:])
 
 
 def test_investigate_warns_when_analysis_is_cut(mocker: MockerFixture) -> None:
@@ -1320,9 +1345,9 @@ def test_investigate_bisect_rule_forces_no_for_same_module_failures(mocker: Mock
 
     mock_print.assert_not_called()
     comment = mock_post.call_args[0][2]
-    assert "BISECT: NO \u2014 1 other job(s) in this build fail in the same module" in comment
-    assert "BISECT: YES" not in comment
-    assert "Restart: NO" in comment
+    assert "* **BISECT:** NO \u2014 1 other job(s) in this build fail in the same module" in comment
+    assert "**BISECT:** YES" not in comment
+    assert "* **Restart:** NO" in comment
 
 
 @pytest.mark.parametrize(
@@ -1347,14 +1372,16 @@ def test_investigate_overrides_bisect_and_restart_from_the_job_history(
     last_good = {"last_good": {"link": "/tests/100", "text": 100, "type": "link"}}
     setup_mock_client(mocker, overrides={"test=": history, "investigation_ajax": last_good})
     llm_investigate.investigate("123")
-    verdict = (
-        "BISECT: NO \u2014 failed at least 3 times in a row\nRestart: NO \u2014 failed at least 3 times in a row"
-        if overridden
-        else reply
+    reason = "failed at least 3 times in a row"
+    expected = (
+        f"* **BISECT:** NO \u2014 {reason}, so not a new regression\n"
+        f"* **Restart:** NO \u2014 {reason}, so a rerun is likely to fail"
     )
+    if not overridden:
+        expected = "* **BISECT:** YES \u2014 isolated\n* **Restart:** YES \u2014 flaky"
     assert (call("https://openqa.opensuse.org/tests/123") in mock_print.call_args_list) is not overridden
     assert mock_post.call_args[0][2].startswith(
-        f"{llm_investigate.COMMENT_MARKER}\n\n{CHAT_REPLIES[1]}\n\n{CHAT_REPLIES[3]}\n\n{verdict}\n\n"
+        f"{llm_investigate.COMMENT_MARKER}\n\n{CHAT_REPLIES[1]}\n\n{CHAT_REPLIES[3]}\n\n{expected}\n\n"
     )
 
 
@@ -1388,7 +1415,34 @@ def test_investigate_drops_placeholder_reasons_from_comment(mocker: MockerFixtur
     llm_investigate.investigate("123")
 
     mock_print.assert_called_once_with("https://openqa.opensuse.org/tests/123")
-    assert mock_post.call_args[0][2].endswith(f"BISECT: YES\nRestart: NO\n\n{llm_investigate.COMMENT_FOOTER}")
+    assert mock_post.call_args[0][2].endswith(
+        f"* **BISECT:** YES\n* **Restart:** NO{llm_investigate.VERDICT_LEGEND}\n\n{llm_investigate.COMMENT_FOOTER}"
+    )
+
+
+def test_investigate_comment_from_merged_markdown_reply(mocker: MockerFixture) -> None:
+    mock_post = mocker.patch("llm_investigate.post_comment")
+    mock_print = mocker.patch("llm_investigate.typer.echo")
+    mock_log = mocker.patch("llm_investigate.log")
+    mocker.patch.dict(
+        CHAT_REPLIES,
+        {
+            5: "1. **Classification:** Product bug **BISECT:** YES \u2014 isolated\n"
+            "2. Restart: NO \u2014 deterministic\n\nHope this helps."
+        },
+    )
+    setup_mock_client(mocker)
+
+    llm_investigate.investigate("123")
+
+    comment = mock_post.call_args[0][2]
+    expected = "* **BISECT:** YES \u2014 isolated\n* **Restart:** NO \u2014 deterministic"
+    assert comment.startswith(f"{llm_investigate.COMMENT_MARKER} Product bug\n\n* isosize:")
+    assert f"{expected}\n\n{llm_investigate.VERDICT_LEGEND.strip()}" in comment
+    assert "Hope this helps" not in comment
+    assert not any(ln.strip() == "*" for ln in comment.splitlines())
+    mock_print.assert_called_once_with("https://openqa.opensuse.org/tests/123")
+    assert any("normalized the verdict reply" in c.args[0] for c in mock_log.info.call_args_list)
 
 
 def test_submission_section_omitted_without_submissions() -> None:

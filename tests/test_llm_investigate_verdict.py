@@ -17,8 +17,12 @@ _REPLY = "Classification: Product bug\n**BISECT: YES** \u2014 isolated\nRestart:
 
 
 def _both_no(streak: int) -> str:
-    no = f"NO \u2014 failed at least {streak} times in a row"
-    return f"Classification: Product bug\nBISECT: {no}\nRestart: {no}"
+    reason = f"failed at least {streak} times in a row"
+    return "\n".join([
+        "Classification: Product bug",
+        f"BISECT: NO \u2014 {reason}, so not a new regression",
+        f"Restart: NO \u2014 {reason}, so a rerun is likely to fail",
+    ])
 
 
 @pytest.mark.parametrize(
@@ -60,6 +64,119 @@ def test_enforce_history_rules_keeps_the_reason_of_a_no() -> None:
 
 
 @pytest.mark.parametrize(
+    ("reply", "expected"),
+    [
+        (
+            "Classification: Product bug\nBISECT: NO \u2014 widespread\nRestart: NO \u2014 deterministic",
+            "Classification: Product bug\nBISECT: NO \u2014 widespread\nRestart: NO \u2014 deterministic",
+        ),
+        (
+            "Classification: Product bug BISECT: NO \u2014 widespread Restart: NO \u2014 deterministic",
+            "Classification: Product bug\nBISECT: NO \u2014 widespread\nRestart: NO \u2014 deterministic",
+        ),
+        ("**BISECT:** YES \u2014 isolated", "BISECT: YES \u2014 isolated"),
+        (
+            "1. **BISECT:** NO \u2014 known\n2. Restart: YES \u2014 flaky",
+            "BISECT: NO \u2014 known\nRestart: YES \u2014 flaky",
+        ),
+        ("Other jobs: BISECT: YES would be wrong.\nBISECT: NO \u2014 widespread", "BISECT: NO \u2014 widespread"),
+        ("BISECT: YES\nBISECT: NO", "BISECT: NO"),
+        ("Hope this helps.", "Hope this helps."),
+        (
+            "Classification: Product bug\nBISECT: NO \u2014 widespread\nRestart: YES\n\nYours, the assistant",
+            "Classification: Product bug\nBISECT: NO \u2014 widespread\nRestart: YES",
+        ),
+        (
+            "Classification: Product bug\nBISECT: NO \u2014 widespread\n\nBISECT: YES",
+            "Classification: Product bug\nBISECT: YES",
+        ),
+        ("BISECT:\nRestart: NO \u2014 deterministic", "BISECT: \nRestart: NO \u2014 deterministic"),
+        ("BISECT: YES | NO \u2014 your own short reason", "BISECT: "),
+        ("Classification: Product bug | Test issue", "Classification: "),
+        ("BISECT: NO \u2014 failed in test_module_foo", "BISECT: NO \u2014 failed in test_module_foo"),
+        ("BISECT: NO \u2014 the log shows a|b mismatch", "BISECT: NO \u2014 the log shows a|b mismatch"),
+        ("BISECT: YES/NO \u2014 your own short reason", "BISECT: "),
+        ("BISECT: YES or NO \u2014 your own short reason", "BISECT: "),
+        (
+            "BISECT: NO \u2014 widespread\nNote: **BISECT: YES** needs an isolated failure",
+            "BISECT: NO \u2014 widespread",
+        ),
+        ("Reason: \nBISECT: YES \u2014 isolated\nRestart: NO", "BISECT: YES \u2014 isolated\nRestart: NO"),
+        ("BISECT: NO \u2014 widespread\nIf unsure, BISECT: YES is safer.", "BISECT: NO \u2014 widespread"),
+        ("BISECT: NO \u2014 Product bug or Test issue", "BISECT: NO \u2014 Product bug or Test issue"),
+        (
+            "BISECT: NO \u2014 widespread, BISECT: YES would need an isolated failure",
+            "BISECT: NO \u2014 widespread,",
+        ),
+        ("BISECT: NO \u2014 `foo` died", "BISECT: NO \u2014 `foo` died"),
+    ],
+    ids=[
+        "canonical",
+        "merged-in-one-line",
+        "emphasized-label",
+        "numbered",
+        "label-in-sentence",
+        "last-answer-wins",
+        "no-label",
+        "trailing-signature-dropped",
+        "repeated-label-on-its-own-line",
+        "empty-answer-keeps-own-line",
+        "template-echo",
+        "classification-echo",
+        "underscore-in-reason",
+        "pipe-in-reason",
+        "slash-echo",
+        "or-echo",
+        "markup-quoted-label",
+        "colon-ends-the-previous-line",
+        "label-in-trailing-prose",
+        "choices-named-in-a-reason",
+        "repeated-label-in-a-reason",
+        "code-span-in-a-reason",
+    ],
+)
+def test_normalize_verdict_returns_one_canonical_line_per_label(reply: str, expected: str) -> None:
+    assert verdict.normalize_verdict(reply) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Classification: Product bug\nBISECT: NO \u2014 widespread", "Product bug"),
+        ("BISECT: NO \u2014 widespread", None),
+        ("Classification: \nBISECT: NO \u2014 widespread", None),
+    ],
+    ids=["classification", "no-classification", "empty-classification"],
+)
+def test_classification_reads_the_classification_line(text: str, expected: str | None) -> None:
+    assert verdict.classification(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("BISECT: YES \u2014 isolated\nRestart: NO", "* **BISECT:** YES \u2014 isolated\n* **Restart:** NO"),
+        ("Classification: Product bug\nBISECT: NO", "* **BISECT:** NO"),
+        ("Hope this helps.", "* Hope this helps."),
+        ("Classification: Product bug\nRestart: ", ""),
+        ("BISECT: NO \u2014 \nRestart: NO", "* **BISECT:** NO\n* **Restart:** NO"),
+    ],
+    ids=["labels-bolded", "classification-dropped", "label-less-prose", "nothing-to-render", "dangling-separator"],
+)
+def test_render_verdict_lines_bolds_labels_and_drops_classification(text: str, expected: str) -> None:
+    assert verdict.render_verdict_lines(text, "") == expected
+
+
+def test_render_verdict_lines_appends_the_legend_only_for_a_verdict_line() -> None:
+    legend = "\n\n*BISECT gates an automatic bisect run.*"
+    assert (
+        verdict.render_verdict_lines("BISECT: YES \u2014 isolated", legend)
+        == "* **BISECT:** YES \u2014 isolated" + legend
+    )
+    assert not verdict.render_verdict_lines("Classification: Product bug", legend)
+
+
+@pytest.mark.parametrize(
     ("bisect", "restart"),
     [
         ("**BISECT:** YES \u2014 isolated", "**Restart:** YES"),
@@ -96,4 +213,4 @@ def test_investigate_forces_no_on_a_copied_template_when_other_jobs_fail_in_the_
     setup_mock_client(mocker)
     llm_investigate.investigate("123")
     mock_print.assert_not_called()
-    assert "BISECT: NO \u2014 2 other job(s) in this build fail in the same module" in mock_post.call_args[0][2]
+    assert "* **BISECT:** NO \u2014 2 other job(s) in this build fail in the same module" in mock_post.call_args[0][2]

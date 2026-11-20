@@ -173,6 +173,24 @@ It passes the optional openQA variable `LLM_PROMPT_EXTENSION` (per test suite or
 
 It skips jobs with the openQA variable `NO_LLM_INVESTIGATION=1`.
 
+The comment ends with the verdict: the classification in the header and the `BISECT` and `Restart` recommendation as
+a list, e.g.
+
+```
+**LLM Investigation summary:** Product bug
+
+* isosize: the test died with boom
+...
+* **BISECT:** NO — widespread
+* **Restart:** NO — needle mismatch
+
+*BISECT gates an automatic bisect run, Restart recommends a rerun.*
+```
+
+The reply is free text and small models merge the three lines into one or echo the choice list of the prompt, so it
+is normalized to one line per label first: a label counts at the start of a line or after another label's answer, its
+answer ends at the next label or at the newline, and the last answer wins. Only `BISECT: YES` schedules a bisect run.
+
 If `SMELT_GRAPHQL_URL` is set to a SMELT GraphQL endpoint, the submissions from the job's `*_TEST_ISSUES` settings and their packages are added to the prompt. If unset or unreachable, the section is omitted.
 To check it by hand without calling the LLM: `SMELT_GRAPHQL_URL=<url> ./openqa-llm-investigate --print-prompt <job URL>`
 
