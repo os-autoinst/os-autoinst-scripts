@@ -1,6 +1,22 @@
 ---
 version: 2
 updates:
+  - package-ecosystem: 'uv'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+      day: 'monday'
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 5
+    labels:
+      - 'dependencies'
+    groups:
+      all-dependencies:
+        patterns:
+          - "*"
+        update-types:
+          - "major"
   - package-ecosystem: 'github-actions'
     directory: '/'
     schedule:
