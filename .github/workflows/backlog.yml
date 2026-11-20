@@ -43,6 +43,10 @@ jobs:
       - name: Install dependencies
         run: sudo apt-get install curl jq
       - name: Set SUSE QE Tools due dates
-        run: sh -ex backlog-set-due-date
+        run: |
+          set -x
+          ./backlog-set-due-date
       - name: Clear SUSE QE Tools due dates
-        run: sh -ex backlog-set-due-date --clear
+        run: |
+          set -x
+          ./backlog-set-due-date --clear
