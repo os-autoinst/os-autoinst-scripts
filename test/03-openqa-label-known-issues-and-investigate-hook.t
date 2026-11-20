@@ -2,7 +2,7 @@
 
 source test/init
 
-plan tests 58
+plan tests 64
 dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 source "$dir/../openqa-label-known-issues-and-investigate-hook"
@@ -14,12 +14,14 @@ export INVESTIGATE_RETRIGGER_HOOK=false
 # Mocking
 export LLM_INVESTIGATE_FAIL=false
 export LLM_INVESTIGATE_SKIP=false
+export LLM_INVESTIGATE_RETRY=false
 
 openqa-llm-investigate() {
     local testurl=$1
     warn "- openqa-llm-investigate $testurl"
     "$LLM_INVESTIGATE_FAIL" && return 1
     "$LLM_INVESTIGATE_SKIP" && return 0
+    "$LLM_INVESTIGATE_RETRY" && echo "retry:$testurl" && return 0
     echo "$testurl"
 }
 
@@ -32,10 +34,9 @@ openqa-label-known-issues() {
     echo "[$testurl]($testurl): Unknown test issue, to be reviewed -> $testurl/file/autoinst-log.txt"
 }
 openqa-investigate() {
-    local testurl=$1
     "$INVESTIGATE_FAIL" && return 1
     "$INVESTIGATE_RETRIGGER_HOOK" && return 142
-    warn "- openqa-investigate $testurl"
+    warn "- openqa-investigate $*"
 }
 openqa-trigger-bisect-jobs() {
     warn "- openqa-trigger-bisect-jobs $1"
@@ -135,6 +136,26 @@ is "$rc" 0 'successful hook (LLM fails, fallback) (123)'
 has "$got" "WARNING: openqa-llm-investigate failed"
 has "$got" "- openqa-investigate"
 has "$got" "- openqa-trigger-bisect-jobs"
+
+# Test: LLM asks for the retry alone
+export LLM_INVESTIGATE_FAIL=false
+export LLM_INVESTIGATE_RETRY=true
+try hook 123
+is "$rc" 0 'successful hook (LLM asks for the retry alone) (123)'
+has "$got" "- openqa-llm-investigate"
+has "$got" "- openqa-investigate --retry-only $host_url/tests/123"
+hasnt "$got" "- openqa-trigger-bisect-jobs"
+
+export INVESTIGATE_RETRIGGER_HOOK=true
+try hook 123
+is "$rc" 142 'openqa-investigate exit code for retriggering hook script (retry alone)'
+
+export INVESTIGATE_RETRIGGER_HOOK=false
+export INVESTIGATE_FAIL=true
+try hook 123
+is "$rc" 1 'openqa-investigate failed (retry alone)'
+export INVESTIGATE_FAIL=false
+export LLM_INVESTIGATE_RETRY=false
 
 export llm_investigate=0
 export LLM_INVESTIGATE_FAIL=false
