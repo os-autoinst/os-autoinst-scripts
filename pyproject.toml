@@ -38,7 +38,6 @@ dev = [
     "ruff>=0.17.5",
     "vulture",
     "ty>=0.0.21",
-    "pyyaml",
 ]
 
 [build-system]

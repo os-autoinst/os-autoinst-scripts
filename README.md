@@ -199,6 +199,26 @@ S:M:47213:428682  ansible-core  bnc#1284847
 S:M:46114:434772  bash,libxmlb,snowball  bnc#1268975,jsc#PED-16570
 ```
 
+### obs-pr-repair
+
+`obs-pr-repair` diagnoses the OBS SCM workflow PR projects that OBS creates from
+`.obs/workflows.yml`, and repairs them. It reports a staging project that is empty, has unbranched
+packages, is excluded or disabled, carries a stale commit SHA, or lacks repositories or checks from
+the workflow. With `--auto-repair` it recreates the project, adds the workflow's repositories,
+force-branches the package to the PR head and triggers a rebuild, and with `--comment` it posts the
+diagnosis to the PR.
+
+[.github/workflows/obs-pr-repair.yml](.github/workflows/obs-pr-repair.yml) sweeps
+`--org os-autoinst` every 20 minutes and also runs on `repository_dispatch` for a single PR. That
+workflow needs the secrets `OSC_USER`, `OSC_PASS` and `GH_TOKEN_FOR_ACTIONS` (falling back to
+`GITHUB_TOKEN`); it installs `osc` and uses the `gh` CLI of the runner image.
+
+Diagnose a single PR, changing nothing:
+`uv run ./obs-pr-repair --repo os-autoinst/openQA --pr 7968 --auto-repair --comment --dry-run`
+
+Sweep every repository of the organisation, only reporting:
+`uv run ./obs-pr-repair --org os-autoinst --auto-repair --comment --dry-run`
+
 ### More details and examples about openqa-investigate comments
 
 Let's say we have a failed test `openqa-Tumbleweed-dev-x86_64-Build:TW.315-vim`.

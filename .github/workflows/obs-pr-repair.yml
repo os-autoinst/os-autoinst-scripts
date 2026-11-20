@@ -39,10 +39,15 @@ jobs:
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
         with:
           python-version-file: 'pyproject.toml'
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2  # v10.3.3
+        with:
+          enable-cache: true
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y osc python3-yaml
+          sudo apt-get install -y osc
+      - name: Install python dependencies
+        run: uv sync
       - name: Configure osc credentials
         run: |
           mkdir -p ~/.config/osc/
@@ -58,25 +63,29 @@ jobs:
         env:
           OSC_USER: ${{ secrets.OSC_USER }}
           OSC_PASS: ${{ secrets.OSC_PASS }}
+      - name: Verify script imports
+        run: uv run ./obs-pr-repair --help
       - name: Execute OBS PR Repair
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN_FOR_ACTIONS || secrets.GITHUB_TOKEN }}
+          PAYLOAD_ORG: ${{ github.event.client_payload.org }}
+          PAYLOAD_REPO: ${{ github.event.client_payload.repo }}
+          PAYLOAD_PR: ${{ github.event.client_payload.pr }}
+          INPUT_ORG: ${{ inputs.org }}
+          INPUT_REPO: ${{ inputs.repo }}
+          INPUT_PR: ${{ inputs.pr }}
+          INPUT_DRY_RUN: ${{ inputs.dry_run }}
         run: |
-          if [ -n "${{ github.event.client_payload.repo }}" ] && [ -n "${{ github.event.client_payload.pr }}" ]; then
-            python3 obs-pr-repair --repo "${{ github.event.client_payload.repo }}" \
-              --pr "${{ github.event.client_payload.pr }}" --auto-repair --comment
-          elif [ -n "${{ inputs.repo }}" ] && [ -n "${{ inputs.pr }}" ]; then
-            cmd=(python3 obs-pr-repair --repo "${{ inputs.repo }}" --pr "${{ inputs.pr }}" --auto-repair --comment)
-            if [ "${{ inputs.dry_run }}" = "true" ]; then
-              cmd+=(--dry-run)
-            fi
-            "${cmd[@]}"
+          cmd=(uv run ./obs-pr-repair)
+          if [ -n "$PAYLOAD_REPO" ] && [ -n "$PAYLOAD_PR" ]; then
+            cmd+=(--repo "$PAYLOAD_REPO" --pr "$PAYLOAD_PR")
+          elif [ -n "$INPUT_REPO" ] && [ -n "$INPUT_PR" ]; then
+            cmd+=(--repo "$INPUT_REPO" --pr "$INPUT_PR")
           else
-            org="${{ inputs.org }}"
-            org="${org:-os-autoinst}"
-            cmd=(python3 obs-pr-repair --org "$org" --auto-repair --comment)
-            if [ "${{ inputs.dry_run }}" = "true" ]; then
-              cmd+=(--dry-run)
-            fi
-            "${cmd[@]}"
+            cmd+=(--org "${INPUT_ORG:-${PAYLOAD_ORG:-os-autoinst}}")
           fi
+          cmd+=(--auto-repair --comment)
+          if [ "$INPUT_DRY_RUN" = "true" ]; then
+            cmd+=(--dry-run)
+          fi
+          "${cmd[@]}"
