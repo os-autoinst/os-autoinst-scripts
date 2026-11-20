@@ -357,6 +357,25 @@ Run
 
 to automatically format shell files.
 
+#### Dependencies and uv.lock
+Python dependencies and dev tools are pinned in `uv.lock`, which is tracked. Set up the
+environment with
+
+    uv sync --locked --extra dev
+
+`make checkstyle`, `make test-python` and the other Python targets run their tools
+through `uv run --locked`, so they fail rather than silently resolving other versions
+when the lock is stale. After changing `pyproject.toml`, update the lock and verify it:
+
+    uv lock
+    make check-lock
+
+`make update-deps` is unrelated to this: it regenerates `cpanfile` and
+`dist/rpm/os-autoinst-scripts-deps.spec` from `dependencies.yaml`.
+
+Dependabot updates the lock weekly (Monday, 7 day cooldown after a release, major bumps
+grouped) and labels the PRs `dependencies`; mergify merges them once the checks pass.
+
 #### openqa-label-known-issues
 Generate a list of recent incomplete jobs of your local openQA instance. Here's an example using `psql`:
 

@@ -35,9 +35,9 @@ dev = [
     "coverage",
     "gitlint-core",
     "radon",
-    "ruff>=0.17.5",
+    "ruff==0.17.6",
     "vulture",
-    "ty>=0.0.21",
+    "ty==0.0.107",
     "pyyaml",
 ]
 

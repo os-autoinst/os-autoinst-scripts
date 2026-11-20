@@ -1,10 +1,10 @@
 /.bpan/
+/.venv/
 /tests/__pycache__/
 /__pycache__/
 /.coverage
 /htmlcov/
 .*.swp
-/uv.lock
 /.coverage
 __pycache__/
 
