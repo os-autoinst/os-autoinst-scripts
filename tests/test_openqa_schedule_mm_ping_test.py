@@ -110,23 +110,27 @@ def test_worker_class_can_be_overridden(openqa_client: Any, scheduled: dict[str,
 def test_default_machine_is_uefi(scheduled: dict[str, Any]) -> None:
     runner.invoke(mm_ping.app, [])
     data = yaml.safe_load(scheduled["yaml"])
-    assert data["machines"]["uefi"]["settings"]["UEFI"] == "1"
+    assert "UEFI" not in data["machines"]["uefi"]["settings"]
     assert data["job_templates"]["ping_server"]["machine"] == "uefi"
 
 
-def test_uefi_pflash_vars_of_latest_job_is_passed(openqa_client: Any, scheduled: dict[str, Any]) -> None:
+@pytest.mark.parametrize(("key", "value"), [("UEFI", "1"), ("UEFI_PFLASH_VARS", "vars.fd")])
+def test_uefi_setting_of_latest_job_is_passed(
+    key: str, value: str, openqa_client: Any, scheduled: dict[str, Any]
+) -> None:
     job = {
         "result": "passed",
-        "settings": {"BUILD": "20250101", "HDD_1": "tw.qcow2", "UEFI_PFLASH_VARS": "vars.fd"},
+        "settings": {"BUILD": "20250101", "HDD_1": "tw.qcow2", key: value},
     }
     openqa_client.return_value.openqa_request.return_value = {"jobs": [job]}
     runner.invoke(mm_ping.app, [])
-    assert "UEFI_PFLASH_VARS=vars.fd" in scheduled["cmd"]
+    assert f"{key}={value}" in scheduled["cmd"]
 
 
-def test_uefi_pflash_vars_is_omitted_without_parent_value(scheduled: dict[str, Any]) -> None:
+@pytest.mark.parametrize("key", ["UEFI", "UEFI_PFLASH_VARS"])
+def test_uefi_setting_is_omitted_without_parent_value(key: str, scheduled: dict[str, Any]) -> None:
     runner.invoke(mm_ping.app, [])
-    assert not any(arg.startswith("UEFI_PFLASH_VARS=") for arg in scheduled["cmd"])
+    assert not any(arg.startswith(f"{key}=") for arg in scheduled["cmd"])
 
 
 def test_schedule_command_contains_settings(scheduled: dict[str, Any]) -> None:

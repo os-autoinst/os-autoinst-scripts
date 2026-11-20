@@ -28,7 +28,6 @@ machines:
     backend: qemu
     settings:
       WORKER_CLASS: {worker_class},{worker_host}
-      UEFI: '1'
 
 .common: &common
   BOOT_HDD_IMAGE: '1'
@@ -161,8 +160,8 @@ def main(  # ruff: ignore[too-many-arguments]
         "_GROUP_ID": "0",
         "HDD_1": hdd,
     }
-    if pflash_vars := latest.get("UEFI_PFLASH_VARS"):
-        settings["UEFI_PFLASH_VARS"] = pflash_vars
+    # boot HDD_1 like the passed job it was taken from (with or without UEFI, same UEFI variables)
+    settings.update({key: latest[key] for key in ("UEFI", "UEFI_PFLASH_VARS") if latest.get(key)})
     cmd = ["openqa-cli", "schedule", "--host", host]
     if poll_interval is not None:
         cmd += ["--poll-interval", str(poll_interval)]
