@@ -60,7 +60,7 @@ test-online: ## Run tests that require online connection
 	# Invalid JSON causes the job to abort with an error
 	-tw_openqa_host=example.com dry_run=1 ./trigger-openqa_in_openqa
 
-checkstyle: test-shellcheck test-yaml checkstyle-python check-code-health test-gitlint ## Run all style checks
+checkstyle: test-shellcheck test-yaml checkstyle-python check-code-health test-gitlint check-lock ## Run all style checks
 
 shfmt: ## Format shell scripts
 	shfmt -w ${SH_FILES}
@@ -91,6 +91,9 @@ check-conventions: ## Check project conventions
 		echo "   Fix: Use the 'mocker' fixture (pytest-mock) or a 'with patch():' context manager."; \
 		exit 1; \
 	fi
+.PHONY: check-lock
+check-lock: ## Verify uv.lock is in sync with pyproject.toml
+	uv lock --check
 
 .PHONY: check-ty
 check-ty: ## Run ty type checker
