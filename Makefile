@@ -2,7 +2,17 @@ SH_FILES ?= $(shell file --mime-type $$(git ls-files) test/*.t | sed -n 's/^\(.*
 SH_SHELLCHECK_FILES ?= $(shell file --mime-type * | sed -n 's/^\(.*\):.*text\/x-shellscript.*$$/\1/p')
 PY_FILES ?= $(shell set -o pipefail; file --mime-type $$(git ls-files) | grep -E '.py:|text/x-script\.python|text/x-python' | cut -d: -f1)
 COV_MODULES ?= $(shell grep -hoE 'SourceFileLoader.".[a-z0-9][a-z_0-9]*' tests/*.py | cut -d'"' -f2 | sort -u)
+# Run tools through the locked uv environment by default; fall back to distribution packages on PATH
+# if uv is missing or cannot be called. Override, e.g. PYTHON_RUN="" to skip uv.
+UV_AVAILABLE := $(shell uv --version >/dev/null 2>&1 && echo 1)
+ifeq ($(UV_AVAILABLE),1)
+PYTHON_RUN ?= uv run --locked
+RUNNER ?= uv run --locked
+else
+$(warning uv not found or not callable; falling back to distribution packages, versions may differ from uv.lock)
+PYTHON_RUN ?=
 RUNNER ?= uv run
+endif
 
 ifndef CI
 include .setup.mk
@@ -26,9 +36,6 @@ help: ## Show this help
 	@grep -h -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-30s\033[0m %s\n", $$1, $$2}'
 
 default: help
-
-# Override to use uv, e.g. PYTHON_RUN="uv run"
-PYTHON_RUN ?=
 
 .PHONY: test
 ifeq ($(CHECKSTYLE),0)
@@ -99,7 +106,7 @@ test-with-coverage: ## Run python tests with coverage of the loaded root scripts
 
 .PHONY: install-python-deps
 install-python-deps:
-	$(RUNNER) pip install -e .[dev]
+	uv sync --locked --extra dev
 
 .PHONY: test-gitlint
 test-gitlint: ## Run commit message checks using gitlint
