@@ -354,10 +354,10 @@ requires-dist = [
     { name = "pyyaml", marker = "extra == 'dev'" },
     { name = "radon", marker = "extra == 'dev'" },
     { name = "requests" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.17.5" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = "==0.17.6" },
     { name = "sh" },
     { name = "tenacity" },
-    { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.21" },
+    { name = "ty", marker = "extra == 'dev'", specifier = "==0.0.107" },
     { name = "typer" },
     { name = "vulture", marker = "extra == 'dev'" },
 ]
