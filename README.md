@@ -187,6 +187,23 @@ Each LLM request names the job in the header `X-Openqa-Job`. With several LLM se
 For Google Vertex AI, set `GOOGLE_APPLICATION_CREDENTIALS` and `GCLOUD_PROJECT` (optionally `VERTEX_LOCATION`, default `global`), then e.g.
 `LLM_API=vertex LLM_MODEL=claude-sonnet-5-5@default ./openqa-llm-investigate https://openqa.opensuse.org/tests/123`.
 
+### LLM benchmarking scripts
+
+These scripts in `scripts/benchmarking/` measure an LLM endpoint. The two endpoint tools need an OpenAI-compatible completions endpoint, which they call with `--llm-url`; they need no openQA access.
+
+`bench_throughput.py` sends log-shaped prompts of several sizes to the endpoint and reports the server-side prefill and decode rates:
+`./scripts/benchmarking/bench_throughput.py --llm-model <model> --llm-url <url>/v1/completions`
+
+`compare_spec_outputs.py` sends the same greedy prompts to a baseline and a speculative endpoint, and reports whether the outputs are identical and the decode speed ratio:
+`./scripts/benchmarking/compare_spec_outputs.py --llm-model <model> --baseline-url <url-a>/v1/completions --speculative-url <url-b>/v1/completions`
+
+`run_investigate_eval.py` runs `openqa-llm-investigate --dry` over an evaluation dataset and scores its verdicts against the ground truth. It needs the `openqa-llm-investigate` script from the same checkout (override with `--script-path`) and network access to openqa.opensuse.org:
+`./scripts/benchmarking/run_investigate_eval.py --llm-url <url>/v1/chat/completions --llm-model <model> --output results.json --table`
+Rerunning with the same `--output` resumes; `--start-index` and `--limit` run a slice and merge it into the file.
+
+`score_verdicts.py` scores a list of entries, or an object with an `entries` list, that carry a `ground_truth` and an `llm_verdict` field. It does not read the `jobs` report that `run_investigate_eval.py` writes:
+`./scripts/benchmarking/score_verdicts.py tests/data/eval_dataset.json` scores the recorded baseline verdicts in the dataset; pass `--prediction-key` to score another field.
+
 ### openqa-list-incidents
 
 `openqa-list-incidents` lists the submissions tested by an openQA job, with their packages and bug references from SMELT. With `-v` it shows ticket URLs and titles, which needs `BUGZILLA_TOKEN` and `JIRA_TOKEN`.

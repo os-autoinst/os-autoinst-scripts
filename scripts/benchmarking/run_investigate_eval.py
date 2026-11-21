@@ -32,6 +32,7 @@ from scripts.benchmarking.score_verdicts import (  # ruff: ignore[module-import-
     CLASS_LABEL_PATTERN,
     CLASSIFICATION_LINE_RE,
     LABEL_TO_CLASS,
+    ScoreReport,
     compute_metrics,
     format_markdown_report,
 )
@@ -265,9 +266,9 @@ def _pct(part: int, total: int) -> float:
     return round(part / total * 100.0, 1) if total else 0.0
 
 
-def summarize(results: list[JobResult]) -> dict[str, Any]:
-    """Return accuracy over all jobs (errors count as misses) and latency over the answered jobs."""
-    report = compute_metrics([
+def _score(results: list[JobResult]) -> ScoreReport:
+    """Score the jobs once; the JSON summary and the printed report both come from this."""
+    return compute_metrics([
         {
             "ground_truth": r.ground_truth,
             "llm_verdict": r.verdict,
@@ -275,23 +276,27 @@ def summarize(results: list[JobResult]) -> dict[str, Any]:
         }
         for r in results
     ])
-    matches = sum(r.is_match for r in results)
+
+
+def summarize(results: list[JobResult]) -> dict[str, Any]:
+    """Return accuracy over all jobs (errors count as misses) and latency over the answered jobs."""
+    report = _score(results)
     baseline_matches = sum(r.baseline_match for r in results)
     return {
-        "total_jobs": len(results),
+        "total_jobs": report.total,
         "errors": sum(r.error is not None for r in results),
-        "matches": matches,
-        "accuracy_pct": _pct(matches, len(results)),
+        "matches": report.matches,
+        "accuracy_pct": report.accuracy_pct,
         "baseline_matches": baseline_matches,
-        "baseline_accuracy_pct": _pct(baseline_matches, len(results)),
+        "baseline_accuracy_pct": _pct(baseline_matches, report.total),
         "median_latency_sec": report.median_latency,
         "p90_latency_sec": report.p90_latency,
     }
 
 
-def build_payload(args: argparse.Namespace, window_ids: list[int], results: dict[int, JobResult]) -> dict[str, Any]:
-    """Return the report for the selected window with every job recorded so far."""
-    ordered = [results[job_id] for job_id in window_ids if job_id in results]
+def build_payload(args: argparse.Namespace, results: dict[int, JobResult]) -> dict[str, Any]:
+    """Return the report for every job recorded in the output file, ordered by job_id."""
+    ordered = [results[job_id] for job_id in sorted(results)]
     return {
         "metadata": {
             "dataset": args.dataset,
@@ -393,10 +398,11 @@ def main(argv: list[str] | None = None) -> int:
     window_ids = [int(entry["job_id"]) for entry in window]
     selected = set(window_ids)
     try:
-        finished = {result.job_id: result for result in load_existing_results(args.output) if result.job_id in selected}
+        recorded = {result.job_id: result for result in load_existing_results(args.output)}
     except ValueError:
         logger.exception("Cannot resume from %s", args.output)
         return 1
+    finished = {job_id: result for job_id, result in recorded.items() if job_id in selected}
     if finished:
         logger.info(
             "Resuming %s: %d of %d selected job(s) already recorded",
@@ -423,11 +429,11 @@ def main(argv: list[str] | None = None) -> int:
             args.retries,
             args.job_timeout,
         )
-    collected = dict(finished)
+    collected = dict(recorded)
 
     def record(result: JobResult) -> None:
         collected[result.job_id] = result
-        write_report(args.output, build_payload(args, window_ids, collected))
+        write_report(args.output, build_payload(args, collected))
 
     settings = InvestigateSettings(
         script_path=args.script_path,
@@ -438,15 +444,15 @@ def main(argv: list[str] | None = None) -> int:
         retries=args.retries,
     )
     run_dataset(pending, settings, on_result=record)
-    results = [collected[job_id] for job_id in window_ids if job_id in collected]
-    write_report(args.output, build_payload(args, window_ids, collected))
+    window_results = [collected[job_id] for job_id in window_ids if job_id in collected]
+    write_report(args.output, build_payload(args, collected))
     logger.info("Saved results to %s", args.output)
 
-    report = compute_metrics([{"ground_truth": r.ground_truth, "llm_verdict": r.verdict} for r in results])
+    report = _score(list(collected.values()))
     # The Markdown report and table are the command's stdout output, consumed by callers.
     print(format_markdown_report(report, title=f"Investigate Eval: {args.llm_model}"))  # ruff: ignore[print]
     if args.table:
-        print("\n" + format_comparison_table(results))  # ruff: ignore[print]
+        print("\n" + format_comparison_table(window_results))  # ruff: ignore[print]
     return 0
 
 

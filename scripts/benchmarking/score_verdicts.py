@@ -37,15 +37,15 @@ P90_MIN_SAMPLES = 10
 
 @dataclass
 class ClassMetrics:
-    """Precision, recall and F1 of one verdict class, in percent."""
+    """Precision, recall and F1 of one verdict class, in percent; None when the run has no ground truth for it."""
 
     name: str
     true_positives: int
     false_positives: int
     false_negatives: int
-    precision: float
-    recall: float
-    f1_score: float
+    precision: float | None
+    recall: float | None
+    f1_score: float | None
 
 
 @dataclass
@@ -54,6 +54,7 @@ class ScoreReport:
 
     total: int
     matches: int
+    unanswered: int
     accuracy_pct: float
     confusion_matrix: dict[str, dict[str, int]]
     class_metrics: dict[str, ClassMetrics]
@@ -61,25 +62,29 @@ class ScoreReport:
     p90_latency: float | None
 
 
-def _class_metrics(matrix: dict[str, dict[str, int]]) -> dict[str, ClassMetrics]:
+def _class_metrics(matrix: dict[str, dict[str, int]], unanswered: dict[str, int]) -> dict[str, ClassMetrics]:
     class_metrics: dict[str, ClassMetrics] = {}
     for c in CLASSES:
         tp = matrix[c][c]
         fp = sum(matrix[other][c] for other in CLASSES if other != c)
-        fn = sum(matrix[c][other] for other in CLASSES if other != c)
+        fn = sum(matrix[c][other] for other in CLASSES if other != c) + unanswered[c]
+        support = sum(matrix[c].values()) + unanswered[c]
 
-        prec = (tp / (tp + fp) * 100.0) if (tp + fp) > 0 else 0.0
-        rec = (tp / (tp + fn) * 100.0) if (tp + fn) > 0 else 0.0
-        f1 = (2 * prec * rec / (prec + rec)) if (prec + rec) > 0 else 0.0
+        if support == 0:
+            prec = rec = f1 = None
+        else:
+            prec = (tp / (tp + fp) * 100.0) if (tp + fp) > 0 else 0.0
+            rec = tp / support * 100.0
+            f1 = (2 * prec * rec / (prec + rec)) if (prec + rec) > 0 else 0.0
 
         class_metrics[c] = ClassMetrics(
             name=c,
             true_positives=tp,
             false_positives=fp,
             false_negatives=fn,
-            precision=round(prec, 1),
-            recall=round(rec, 1),
-            f1_score=round(f1, 1),
+            precision=None if prec is None else round(prec, 1),
+            recall=None if rec is None else round(rec, 1),
+            f1_score=None if f1 is None else round(f1, 1),
         )
     return class_metrics
 
@@ -95,18 +100,20 @@ def compute_metrics(
     prediction_key: str = "llm_verdict",
     ground_truth_key: str = "ground_truth",
 ) -> ScoreReport:
-    """Calculate confusion matrix, precision/recall per class, and latency stats."""
+    """Score every entry with a valid ground truth; an entry without a valid prediction is an unanswered miss."""
     matrix: dict[str, dict[str, int]] = {gt: dict.fromkeys(CLASSES, 0) for gt in CLASSES}
+    unanswered = dict.fromkeys(CLASSES, 0)
+    scored = [e for e in eval_entries if e.get(ground_truth_key) in CLASSES]
 
-    valid_entries = [e for e in eval_entries if e.get(ground_truth_key) in CLASSES and e.get(prediction_key) in CLASSES]
-
-    total = len(valid_entries)
     matches = 0
     latencies: list[float] = []
 
-    for entry in valid_entries:
+    for entry in scored:
         gt = entry[ground_truth_key]
-        pred = entry[prediction_key]
+        pred = entry.get(prediction_key)
+        if pred not in CLASSES:
+            unanswered[gt] += 1
+            continue
 
         matrix[gt][pred] += 1
         if gt == pred:
@@ -116,6 +123,7 @@ def compute_metrics(
         if latency is not None:
             latencies.append(float(latency))
 
+    total = len(scored)
     accuracy = (matches / total * 100.0) if total > 0 else 0.0
     median_lat = statistics.median(latencies) if latencies else None
     p90_lat = _p90_latency(latencies)
@@ -123,12 +131,17 @@ def compute_metrics(
     return ScoreReport(
         total=total,
         matches=matches,
+        unanswered=sum(unanswered.values()),
         accuracy_pct=round(accuracy, 1),
         confusion_matrix=matrix,
-        class_metrics=_class_metrics(matrix),
+        class_metrics=_class_metrics(matrix, unanswered),
         median_latency=round(median_lat, 2) if median_lat is not None else None,
         p90_latency=round(p90_lat, 2) if p90_lat is not None else None,
     )
+
+
+def _percent(value: float | None) -> str:
+    return "n/a" if value is None else f"{value}%"
 
 
 def format_markdown_report(report: ScoreReport, title: str = "Evaluation Report") -> str:
@@ -139,6 +152,8 @@ def format_markdown_report(report: ScoreReport, title: str = "Evaluation Report"
         f"- **Total Evaluated Jobs**: {report.total}",
         f"- **Overall Accuracy**: **{report.accuracy_pct}%** ({report.matches}/{report.total})",
     ]
+    if report.unanswered:
+        lines.append(f"- **Unanswered Jobs**: {report.unanswered} (counted as misses)")
 
     if report.median_latency is not None:
         lines.append(f"- **Median Latency**: {report.median_latency}s (p90: {report.p90_latency}s)")
@@ -165,8 +180,13 @@ def format_markdown_report(report: ScoreReport, title: str = "Evaluation Report"
         m = report.class_metrics[c]
         lines.append(
             f"| **{c.capitalize()}** | {m.true_positives} | {m.false_positives} | {m.false_negatives} "
-            f"| {m.precision}% | {m.recall}% | {m.f1_score}% |"
+            f"| {_percent(m.precision)} | {_percent(m.recall)} | {_percent(m.f1_score)} |"
         )
+    if any(m.recall is None for m in report.class_metrics.values()):
+        lines.extend([
+            "",
+            "n/a: the run has no ground-truth jobs for that class, so it has no precision, recall or F1.",
+        ])
 
     return "\n".join(lines)
 

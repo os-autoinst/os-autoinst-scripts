@@ -84,6 +84,28 @@ class TestScoreVerdicts(unittest.TestCase):
         assert report.p90_latency == pytest.approx(9.9)
 
     @staticmethod
+    def test_unanswered_job_counts_as_a_miss() -> None:
+        report = compute_metrics([
+            {"ground_truth": "product", "llm_verdict": "product"},
+            {"ground_truth": "product", "llm_verdict": None},
+        ])
+        assert report.total == 2
+        assert report.matches == 1
+        assert report.unanswered == 1
+        assert report.accuracy_pct == pytest.approx(50.0)
+        assert report.class_metrics["product"].recall == pytest.approx(50.0)
+
+    @staticmethod
+    def test_class_without_ground_truth_is_not_applicable() -> None:
+        entries = [
+            {"ground_truth": "product", "llm_verdict": "product"},
+            {"ground_truth": "test", "llm_verdict": "test"},
+        ]
+        md = format_markdown_report(compute_metrics(entries))
+        assert "| **Infra** | 0 | 0 | 0 | n/a | n/a | n/a |" in md
+        assert "n/a: the run has no ground-truth jobs for that class" in md
+
+    @staticmethod
     def test_format_markdown_report() -> None:
         entries = [
             {"ground_truth": "product", "llm_verdict": "product", "duration_sec": 15.0},

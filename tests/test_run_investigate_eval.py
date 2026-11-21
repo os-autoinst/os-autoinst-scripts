@@ -57,7 +57,7 @@ def completed(returncode: int = 0, stdout: str = "", stderr: str = "") -> subpro
 
 
 class TestParseVerdictOutput(unittest.TestCase):
-    """Both comment layouts yield the normalized class; the header class takes precedence."""
+    """Both comment layouts yield the normalized class when the labels they name agree."""
 
     def test_verdict_and_summary_are_extracted(self) -> None:
         cases: list[dict[str, Any]] = [
@@ -868,6 +868,98 @@ class TestMain(unittest.TestCase):
         assert rc == 1
         assert mock_run.call_count == 0
         assert '{"jobs": [{"job_id": 1' in content
+
+    @staticmethod
+    def test_errored_job_counts_as_a_miss_in_printed_and_persisted_summary() -> None:
+        entries = [
+            {"job_id": 1, "ground_truth": "product", "llm_verdict": "product"},
+            {"job_id": 2, "ground_truth": "product", "llm_verdict": "product"},
+        ]
+        responses = [
+            completed(stdout=HEADER.format(label="Product bug")),
+            completed(returncode=2, stderr="boom"),
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            dataset = str(Path(tmp) / "dataset.json")
+            output = str(Path(tmp) / "results.json")
+            with Path(dataset).open("w", encoding="utf-8") as handle:
+                json.dump({"entries": entries}, handle)
+            with patch("subprocess.run", side_effect=responses), contextlib.redirect_stdout(io.StringIO()) as stdout:
+                main([
+                    "--dataset",
+                    dataset,
+                    "--llm-url",
+                    LLM_URL,
+                    "--llm-model",
+                    LLM_MODEL,
+                    "--output",
+                    output,
+                    "--script-path",
+                    SCRIPT,
+                ])
+            with Path(output).open(encoding="utf-8") as handle:
+                summary = json.load(handle)["summary"]
+        printed = stdout.getvalue()
+        assert "**Total Evaluated Jobs**: 2" in printed
+        assert "**Overall Accuracy**: **50.0%** (1/2)" in printed
+        assert "**Unanswered Jobs**: 1" in printed
+        assert summary["total_jobs"] == 2
+        assert summary["accuracy_pct"] == pytest.approx(50.0)
+        assert summary["errors"] == 1
+
+    @staticmethod
+    def test_slices_accumulate_into_one_output_file() -> None:
+        entries = [{"job_id": job_id, "ground_truth": "product", "llm_verdict": "product"} for job_id in (1, 2, 3, 4)]
+        with tempfile.TemporaryDirectory() as tmp:
+            dataset = str(Path(tmp) / "dataset.json")
+            output = str(Path(tmp) / "results.json")
+            with Path(dataset).open("w", encoding="utf-8") as handle:
+                json.dump({"entries": entries}, handle)
+            with (
+                patch(
+                    "subprocess.run",
+                    return_value=completed(stdout=HEADER.format(label="Product bug")),
+                ) as mock_run,
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                first = main([
+                    "--dataset",
+                    dataset,
+                    "--llm-url",
+                    LLM_URL,
+                    "--llm-model",
+                    LLM_MODEL,
+                    "--output",
+                    output,
+                    "--limit",
+                    "2",
+                    "--script-path",
+                    SCRIPT,
+                ])
+                second = main([
+                    "--dataset",
+                    dataset,
+                    "--llm-url",
+                    LLM_URL,
+                    "--llm-model",
+                    LLM_MODEL,
+                    "--output",
+                    output,
+                    "--start-index",
+                    "2",
+                    "--limit",
+                    "2",
+                    "--script-path",
+                    SCRIPT,
+                ])
+            with Path(output).open(encoding="utf-8") as handle:
+                payload = json.load(handle)
+
+        assert first == 0
+        assert second == 0
+        assert mock_run.call_count == 4
+        assert [job["job_id"] for job in payload["jobs"]] == [1, 2, 3, 4]
+        assert payload["summary"]["total_jobs"] == 4
 
     @staticmethod
     def test_non_positive_limit_is_rejected_by_the_parser() -> None:
