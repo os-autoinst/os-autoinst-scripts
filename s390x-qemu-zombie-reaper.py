@@ -189,6 +189,9 @@ def run_cmd(
     except subprocess.TimeoutExpired:
         print(f"Command timed out after {timeout}s: {cmd}")
         return ""
+    except OSError as e:
+        print(f"Error executing command: {cmd}\n{e}")
+        return ""
 
 
 def get_running_jobs(hypervisor_host: str, *, verbose: bool = False, timeout: int = 60) -> list[int]:

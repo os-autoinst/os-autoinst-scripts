@@ -303,6 +303,13 @@ def test_run_cmd_error(mocker: MockerFixture, capsys: pytest.CaptureFixture[str]
     assert "Error executing command: bad_cmd\ncommand failed" in capsys.readouterr().out
 
 
+def test_run_cmd_missing_executable(mocker: MockerFixture, capsys: pytest.CaptureFixture[str]) -> None:
+    mocker.patch("subprocess.run", side_effect=FileNotFoundError(2, "No such file or directory", "openqa-cli"))
+    result = reaper.run_cmd("openqa-cli api --osd -X GET jobs/123")
+    assert not result
+    assert "Error executing command: openqa-cli api --osd -X GET jobs/123" in capsys.readouterr().out
+
+
 def test_get_running_jobs_empty(mocker: MockerFixture) -> None:
     mocker.patch("reaper.run_cmd", return_value="")
     assert reaper.get_running_jobs("s390zl12.oqa.prg2.suse.org") == []
