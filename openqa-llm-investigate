@@ -74,8 +74,11 @@ REASON has at most 20 words in plain language: name the failing component first,
 If no log line shows a cause, REASON only says which expected screen or command failed.
 Write `analysis unavailable` as REASON if the data is not sufficient.
 """
-BRIEF_QUESTION = """Question 2: Write a brief Markdown summary of at most 2 sentences that state only what the
-analysis shows. Use backticks for commands, files and errors."""
+BRIEF_QUESTION = """Question 2: Write a brief Markdown summary of at most 3 sentences and stop after the third.
+State what the analysis shows. Add the scenario (the `input before:` lines or steps right before the failure) in at
+most half a sentence, only if it makes the failure clearer. Mention `Previous modules` only if one is marked as also
+failed or the scenario is unclear, and never copy the list. Take causes only from the analysis, never from the module
+order, the build name or earlier modules. Use backticks for commands, files, needles and errors."""
 VERDICT_QUESTION = """Question 3: Judge the failure with these job statistics:
 - Total failed jobs in this build (across all tests): {build_failures}{hint}
 - Other jobs in this build failing in the exact same module(s): {same_module_failures}

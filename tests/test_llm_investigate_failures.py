@@ -526,10 +526,11 @@ def test_is_command_step() -> None:
 
 def test_previous_modules_by_identity_with_repeated_names() -> None:
     mods = [{"name": n} for n in ("a", "pytest", "pytest", "pytest", "b")]
-    assert fl.previous_modules(mods, mods[4]) == mods[1:4]
-    assert fl.previous_modules(mods, mods[2]) == mods[0:2]
-    assert fl.previous_modules(mods, mods[0]) == []
-    assert fl.previous_modules(mods, {"name": "pytest"}) == []
+    assert fl.previous_modules(mods, mods[4]) == (mods[0:4], 0)
+    assert fl.previous_modules(mods, mods[4], 3) == (mods[1:4], 1)
+    assert fl.previous_modules(mods, mods[2]) == (mods[0:2], 0)
+    assert fl.previous_modules(mods, mods[0]) == ([], 0)
+    assert fl.previous_modules(mods, {"name": "pytest"}) == ([], 0)
 
 
 @staticmethod
