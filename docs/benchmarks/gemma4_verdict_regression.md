@@ -6,10 +6,10 @@
   `sha256:6c02b386613f2a5d64326c28ad37b43270671674550e2e948534cd75b71510e5`), 64 threads,
   `--ctx-size 65536`, benchmark port 8082
 - **Weights**: `unsloth/gemma-4-26B-A4B-it-GGUF@gemma-4-26B-A4B-it-UD-Q4_K_M.gguf`
-- **Tool**: `openqa-llm-investigate` at `22575395` (unfixed) for the re-baseline;
-  `6cd1d1dc` (fixed) for the validation. `22575395`
-  and its base `93a1dcc6` differ only in a docstring, one local variable name and `_GATES`
-  built from `_CANONICAL`, i.e. the classification path is identical
+- **Tool**: `openqa-llm-investigate` at the current revision (unfixed) for the re-baseline;
+  the rule-based fix for the validation. The current revision and its base differ only in a
+  docstring, one local variable name and a gate set built from the canonical labels, i.e. the
+  classification path is identical
 - **Runner**: `scripts/benchmarking/run_investigate_eval.py` (resumable, `--start-index`)
 - **Raw results**: `/tmp/gemma_qat/reb8740_run{1,2}.json`, `/tmp/gemma_qat/fix_*.json`
 
@@ -86,19 +86,19 @@ Consequences:
 - The record itself does not describe this configuration, and the dataset says so: its stored
   per-entry `llm_verdict` values score **22/50 (44.0%)**, not 39/50, with 28 product, 18 test and 4
   infrastructure answers. They also match today's production comments on all 50 jobs, so they are a
-  faithful snapshot of what the tool answered when the dataset was built (2026-11-16, tool revision
-  `5a9450bf` or earlier), and they differ from this benchmark's verdict on 21 of 50 jobs (see
+  faithful snapshot of what the tool answered when the dataset was built (2026-11-16, the
+  pre-normalisation revision or earlier), and they differ from this benchmark's verdict on 21 of 50 jobs (see
   "Harness versus production"). No observable configuration reproduces 39/50, so the figure records a
   measurement that no longer exists; the ceiling argument below holds independently of which one it
   was.
 - The honest number to deploy against is **62.0% (31/50)** with zero `Test` recall, which is worse
   than the 64.0% a constant `Product bug` answer would reach. The single-class collapse is confirmed
-  at tool revision `22575395`/`93a1dcc6` on build 8740, in addition to the MTP/QAT measurements in [gemma4_mtp_qat.md](gemma4_mtp_qat.md) on
+  at the current revision on build 8740, in addition to the MTP/QAT measurements in [gemma4_mtp_qat.md](gemma4_mtp_qat.md) on
   build 12464 with QAT weights.
 
 ## Held-out validation
 
-The fixed tool (`6cd1d1dc`: the verdict rule calls a panic a symptom and points at the "Test commits
+The rule-based fix (the verdict rule calls a panic a symptom and points at the "Test commits
 since the last good job" section) on the 16 held-out entries (every third entry, fixed
 before any prompt change), fresh container, same image and weights:
 
@@ -133,8 +133,8 @@ other 34 ran on the same container instance:
 
 | Tool | Correct | Accuracy | Test predicted | Test correct | Median | p90 | Max | Errors |
 |---|---|---|---|---|---|---|---|---|
-| unfixed `22575395` (mean of run 1/2) | 31/50 | 62.0% | 1 | 0 | 202.1 s | 356.2 s | — | 0 |
-| fixed `6cd1d1dc` | 28/50 | **56.0%** | 6 | 1 | 247.4 s | 449.7 s | 731.9 s | 0 |
+| unfixed, current revision (mean of run 1/2) | 31/50 | 62.0% | 1 | 0 | 202.1 s | 356.2 s | — | 0 |
+| rule-based fix | 28/50 | **56.0%** | 6 | 1 | 247.4 s | 449.7 s | 731.9 s | 0 |
 
 Five verdicts differ from the re-baseline (45/50 agreement): `6317910` product → test, which is
 correct, and `6339285`, `6317999`, `6318414`, `6317946` product → test, which are wrong. The rule
@@ -168,13 +168,13 @@ this down: verdicts are reproducible (50/50 between two full runs, 5/5 on repeat
 `TEMPERATURE` is not the culprit), and a rule that names the cause explicitly changes 5 of 50 verdicts
 — one correct, four wrong.
 
-**Fix**: rejected and reverted. `6cd1d1dc` scored 28/50 against the unfixed 31/50, with `Test`
-precision 16.7% and recall 5.6%; `3431f19c` drops it. The remaining test-code detection needs evidence
+**Fix**: rejected and reverted. The rule-based fix scored 28/50 against the unfixed 31/50, with
+`Test` precision 16.7% and recall 5.6%; the revert drops it. The remaining test-code detection needs evidence
 the tool does not fetch — a known-issues/ticket lookup or the culprit module from the ticket — not
 another rule, which is where a follow-up study should start.
 
 **Reference numbers** for `gemma-4-26B-A4B-it:UD-Q4_K_M` (build 8740, digest `sha256:6c02b386…`,
-tool `22575395`, 64 threads, 65536 ctx, 50 jobs, 0 errors):
+the current revision, 64 threads, 65536 ctx, 50 jobs, 0 errors):
 
 | Measure | Value |
 |---|---|
@@ -195,7 +195,7 @@ dataset's stored `llm_verdict` column answers 28 product / 18 test / 4 infrastru
 22/50 (44.0%) — it is the output of `gemma-4-E4B-it:UD-IQ2_M`, which production ran until the quadlet
 changed on 2026-11-18 12:37, two days after the dataset was built. So "44.0% then, 62.0% now" is two
 models *and* two harnesses, not one model regressing. Attribution on a 20-job subset rules out the
-tool revision (`5a9450bf` under this harness: 19 product / 1 test) and the 4096-token gateway window
+tool revision (the pre-normalisation revision under this harness: 19 product / 1 test) and the 4096-token gateway window
 (0 test in 19 answers), leaving the model switch as the explanation
 ([llm_verdict_dataset_audit.md](llm_verdict_dataset_audit.md), "Attribution"). The incumbent has posted only 8
 labelled comments since 2026-11-18 (5 product / 3 test), so its production accuracy is unmeasured;

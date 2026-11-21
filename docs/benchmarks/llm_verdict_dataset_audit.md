@@ -88,7 +88,7 @@ reported on the validation split; a number quoted without naming its split is no
 
 `openqa-llm-investigate --print-prompt` for seven jobs (three from each class, plus the reference job
 6287643 which the tool classifies correctly as `Infrastructure problem`), captured 2026-11-19 with the
-tool at `93a1dcc6`. Prompt 1 is the job details plus analysis, prompt 2 is the 38-token summary
+tool at the base revision. Prompt 1 is the job details plus analysis, prompt 2 is the 38-token summary
 question, prompt 3 is the 437-token verdict question.
 
 | Job | Label | Prompt 1 tokens | Kernel-panic banner | "Test commits since the last good job" | TAP diff | Named commits | Hidden commits |
@@ -150,7 +150,7 @@ Closure of the pre-registered hypotheses:
 | H2 evidence | the decisive artefact never reaches the prompt | **partly confirmed**: the two `poo#209382` jobs carry no test-commit section at all, so the prompt contains only the symptom; the `poo#209802` jobs carry it but hide the decisive commit behind "and 75 other test commits" |
 | H3 bias | the prompt or normaliser prefers `Product bug` | **confirmed for the rule, refuted for the code**: prompt 3 defines "Product bug … e.g. a kernel panic or segfault" while prompt 1 headlines a `*** KERNEL PANIC DETECTED ***` banner, so the model applies the given definition; the normaliser keeps a `Test issue` answer intact (pinned by `test(llm-investigate): Pin the classification of a normalized reply`) |
 | H4 instability | temperature 1.0 makes the verdict a lottery | **not measured, and not needed**: the collapse is deterministic across weight sets, runner builds and tool revisions, and the disputed jobs answer the same class five ways out of five in the records available (MTP/QAT replays + probes). The 5x2 repeat measurement stays open as a refinement, not a blocker |
-| H5 drift | the 78.0% came from a configuration that no longer exists | **open, being measured**: an all-`product` model can score at most 64% on this dataset, and the full-50 re-baseline on `server-b8740` with the current tool is running; the pre-change tool `5a9450bf` already answers `Product bug` on the same job |
+| H5 drift | the 78.0% came from a configuration that no longer exists | **open, being measured**: an all-`product` model can score at most 64% on this dataset, and the full-50 re-baseline on `server-b8740` with the current tool is running; the pre-normalisation revision already answers `Product bug` on the same job |
 
 **Dominant cause**: the classification rule is *symptom-based* while the dataset labels are
 *cause-based*. For 13 of the 18 `test` labels the prompt shows a kernel panic, and prompt 3 names a
@@ -219,7 +219,7 @@ always toward `product`.
 
 So the "single-class collapse" is a property of the benchmark harness, not of the deployed model: on
 the jobs themselves the tool emitted all three classes. Two candidates explain the difference and can
-be told apart with one run — the tool revision (the comments predate `93a90407`/`22575395`) and the
+be told apart with one run — the tool revision (the comments predate the normalisation revision) and the
 context window (the production gateway sends no `num_ctx`, so the model truncates; the benchmark
 server runs 65536 tokens). Until that is settled, any model or parameter ranking measured on the
 benchmark server ranks the harness rather than the model, which weakens this audit's own numbers even
@@ -244,9 +244,9 @@ infra, 8 stored product; human labels 15 product / 5 test), all against build 87
 | Arm | Verdicts | Agreement with the stored verdicts | Correct |
 |---|---|---|---|
 | Stored production comments, posted by 2026-11-16 | 8 product / 8 test / 4 infra | — (reference) | 9/20 |
-| Tool `22575395`, 6-job list prompt, 65536 ctx | 20 product | 8/20 | 15/20 |
-| Tool `5a9450bf` (the pre-2026-11-18 revision), 65536 ctx | 19 product / 1 test | 9/20 | 16/20 |
-| Tool `22575395` behind a proxy truncating every prompt to 4096 tokens | 19 product | 8/20 | 14/20 |
+| Tool at the current revision, 6-job list prompt, 65536 ctx | 20 product | 8/20 | 15/20 |
+| Tool at the pre-normalisation revision, 65536 ctx | 19 product / 1 test | 9/20 | 16/20 |
+| Tool at the current revision behind a proxy truncating every prompt to 4096 tokens | 19 product | 8/20 | 14/20 |
 
 **Both candidate explanations are refuted.** Reverting to the tool revision that posted the stored
 comments changes nothing (1 test in 20), and reproducing the gateway's 4096-token window changes

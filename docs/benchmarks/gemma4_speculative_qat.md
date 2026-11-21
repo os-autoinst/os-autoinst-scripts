@@ -6,7 +6,7 @@ This file records facts and pre-registered criteria; measurements and the verdic
 [gemma4_mtp_qat.md](gemma4_mtp_qat.md).
 
 Correction (2026-11-20): the incumbent reference used in this file is withdrawn. Re-measuring
-`gemma-4-26B-A4B-it:UD-Q4_K_M` on build 8740 at tool revision `22575395` gives **62.0% (31/50)**
+`gemma-4-26B-A4B-it:UD-Q4_K_M` on build 8740 at the current revision gives **62.0% (31/50)**
 and 202 s median / 356 s p90, with 0% `Test` recall against a 64.0% constant-`Product` ceiling
 ([gemma4_verdict_regression.md](gemma4_verdict_regression.md)). Every 78.0% and 158 s figure below is history,
 not a bar to beat; the ratios it inspired stay valid only where both arms were measured at once.

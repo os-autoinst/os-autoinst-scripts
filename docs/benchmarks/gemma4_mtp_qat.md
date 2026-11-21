@@ -5,7 +5,7 @@
 - **Harness**: `ghcr.io/ggml-org/llama.cpp:server-b12464` (build `12464`, commit `d3c3e242c`,
   digest `sha256:9f11c1a27d5bdadef2ebf8c629706bf0ed48173f0fea1a78c4dd666918134a8e`)
 - **Incumbent reference**: `gemma-4-26B-A4B-it:UD-Q4_K_M` — **62.0% (31/50)**, 202 s median, p90 356 s,
-  re-measured 2026-11-20 on build 8740 at tool revision `22575395`
+  re-measured 2026-11-20 on build 8740 at the current revision
   ([gemma4_verdict_regression.md](gemma4_verdict_regression.md)); the 78.0% (39/50) and 158 s quoted below are withdrawn
 - **Dossier**: [gemma4_speculative_qat.md](gemma4_speculative_qat.md)
 
@@ -161,8 +161,8 @@ The single-class collapse makes the 25-job half unusable as an accuracy oracle: 
 / 10 `product`, an all-`product` answer therefore scores exactly 40% (10/25, 36.0% here because one
 job timed out), and the incumbent's 78.0% on 50 jobs cannot be reproduced by a model that never
 answers `Test issue`. Both the current checkout of `openqa-llm-investigate` and the pre-2026-11-18
-revision (`5a9450bf`, extracted with `git archive`) produce `Product bug` on the same job, so the
-verdict-normalisation change of d92936b2 is not the cause either.
+revision (the pre-normalisation revision, extracted with `git archive`) produce `Product bug` on the same job, so the
+verdict-normalisation change is not the cause either.
 
 ## Combined configuration
 
