@@ -590,7 +590,10 @@ def test_hmc_session_request_http_error_raises(mocker: MockerFixture) -> None:
         session.request("POST", "/sessions", body={})
 
 
-def test_trigger_actions_dry_run_mentions_hmc_fallback(capsys: pytest.CaptureFixture[str]) -> None:
+def test_trigger_actions_dry_run_mentions_hmc_fallback(
+    mocker: MockerFixture, capsys: pytest.CaptureFixture[str]
+) -> None:
+    mocker.patch("reaper.should_restart_job", return_value=False)
     reaper.trigger_actions(HOST, [123], reaper.ReaperConfig(dry_run=True))
     assert f"[DRY-RUN] Would force reset and load {HOST} via HMC if it stays unresponsive." in capsys.readouterr().out
 
