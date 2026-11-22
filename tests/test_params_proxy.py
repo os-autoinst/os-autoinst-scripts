@@ -202,6 +202,13 @@ class TestForward(unittest.TestCase):
         with patch(URLOPEN, side_effect=error):
             assert forward(UPSTREAM, {"model": "Inkling-2-Mini"}) == (503, busy)
 
+    @staticmethod
+    def test_refused_upstream_becomes_a_502_response() -> None:
+        with patch(URLOPEN, side_effect=urllib.error.URLError(ConnectionRefusedError("refused"))):
+            status, payload = forward(UPSTREAM, {"model": "Inkling-2-Mini"})
+        assert status == 502
+        assert "upstream unreachable" in payload.decode()
+
 
 class TestProxyServing(unittest.TestCase):
     """The served request carries the injected parameters, the response is relayed unchanged and logged."""

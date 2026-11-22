@@ -79,6 +79,10 @@ def forward(upstream: str, body: dict[str, Any], timeout: int = REQUEST_TIMEOUT)
             return response.status, response.read()
     except urllib.error.HTTPError as err:
         return err.code, err.read()
+    except urllib.error.URLError as err:
+        # A refused or unreachable upstream is a response, not a dropped connection, so the
+        # runner's retry and timeout accounting stay intact.
+        return 502, json.dumps({"error": f"upstream unreachable: {err.reason}"}).encode()
 
 
 def usage_of(payload: bytes) -> dict[str, Any]:
