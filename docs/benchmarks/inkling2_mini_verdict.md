@@ -108,6 +108,52 @@ correct class for 4 of the 6 marked jobs at effort 0.1, where the incumbent conv
 For the 12 test labels whose prompt carries no marked commit, both arms answer `Product`: the ceiling
 plan 006 recorded (74.0%) is information absence, and Inkling does not break it.
 
+## Effort replay
+
+The candidate was replayed a third time at effort `medium` (0.7) through the same proxy, because a
+reasoning model measured only at its lowest effort is not measured at its capability:
+
+| Arm | Answered | Correct (all 50) | `Test` P / R | Median | p90 | Max | 600 s |
+|---|---|---|---|---|---|---|---|
+| effort 0.1, run 1 | 50 | 24/50 (48.0%) | 21.4% / 16.7% | 190.9 s | 324.7 s | 469.2 s | 0 |
+| effort 0.1, run 2 | 50 | 25/50 (50.0%) | 29.4% / 27.8% | 82.6 s | 145.3 s | 233.1 s | 0 |
+| effort 0.7 | 50 | 24/50 (48.0%) | 26.7% / 22.2% | 230.0 s | 388.0 s | 476.2 s | 0 |
+| control (b12627) | 50 | 31/50 (62.0%) | 0.0% / 0.0% | 192.9 s | 326.1 s | 481.3 s | 0 |
+
+Accuracy is identical at 0.1 and 0.7 on the full set (24/50), and 43 of 50 verdicts match run 2, so the
+gap to the control is capability, not reasoning budget. Effort 0.7 answers one job `Infrastructure
+problem`, a class the dataset never labels, and raises p90 from 145 s to 388 s. Marked-commit jobs
+answered `Test issue`: 2/6 (0.1 run 1), 4/6 (0.1 run 2), 3/6 (0.7), 0/6 (control) — that axis tracks
+sampling, not effort.
+
+## Label provenance
+
+Of the 18 `test`-labelled jobs, **13 show a product-level fault in their own logs** — a kernel panic
+(`VFS: Unable to mount root fs on UUID=...`) or a `zypper` download failure — and the label is correct
+only through a change in another module that no prompt of this tool carries. The control arm answers
+`Product bug` on all 13; the candidate answers `Test issue` on 3-5 of them across arms.
+
+Consequence for reading the accuracy figure: on 72% of the test labels, `Product bug` is the defensible
+reading of the evidence in front of the model, which is why a constant-`Product bug` answer scores 64.0%.
+The headline accuracy therefore measures label provenance as much as review quality, and the `Test`
+recall the bar asks for is partly unreachable by construction.
+
+## Analysis-text quality
+
+Measured per arm over all 50 summaries, against the prompt 1 text each job actually carried:
+
+| Signal | 0.1 run 1 | 0.1 run 2 | 0.7 | control |
+|---|---|---|---|---|
+| Backticked/quoted spans that appear verbatim in prompt 1 | 271/283 (96%) | 255/259 (98%) | 96% | 213/219 (97%) |
+| Jobs with at least one grounded quotation | 50/50 | 50/50 | 50/50 | 50/50 |
+| Invented commit hashes | 0 | 0 | 0 | 0 |
+| Median summary length (chars) | 660 | 615 | 630 | 532 |
+| Bullet-per-module format, no reasoning leak into the comment | 50/50 | 50/50 | 50/50 | 50/50 |
+
+Neither model hallucinates evidence; the candidate writes longer texts and names more modules, the
+control is terser. The candidate's failure mode is over-reading test evidence — it relabels a
+`boot_to_desktop` stall and 11-12 other product jobs as `Test issue` — not invented quotes.
+
 ## Bar check
 
 | Criterion (plan 021) | Requirement | Measured | Result |
