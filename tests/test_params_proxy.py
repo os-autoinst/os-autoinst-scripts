@@ -21,6 +21,7 @@ from scripts.benchmarking.params_proxy import (
     merge_params,
     parse_params,
     split_listen,
+    truncate_messages,
     usage_of,
 )
 
@@ -147,6 +148,39 @@ class TestMergeParams(unittest.TestCase):
     @staticmethod
     def test_no_params_keeps_the_body() -> None:
         assert merge_params(REQUEST, {}) == REQUEST
+
+
+class TestTruncateMessages(unittest.TestCase):
+    """A context-limited deployment keeps the head of each message and drops the tail."""
+
+    def test_cases(self) -> None:
+        long = "x" * 50
+        body = {
+            "model": "m",
+            "messages": [{"role": "user", "content": long}, {"role": "assistant", "content": "short"}],
+        }
+        cases: list[dict[str, Any]] = [
+            {"desc": "zero keeps every message whole", "max_chars": 0, "merged": body, "lengths": [50, 5]},
+            {"desc": "a limit cuts the long message and keeps the short one",
+             "max_chars": 10, "merged": body, "lengths": [10, 5]},
+        ]
+        for case in cases:
+            with self.subTest(case["desc"]):
+                result = truncate_messages(body, case["max_chars"])
+                assert [len(m["content"]) for m in result["messages"]] == case["lengths"]
+                assert result["model"] == "m"
+                assert result["messages"][0]["role"] == "user"
+
+    @staticmethod
+    def test_body_without_messages_is_returned_unchanged() -> None:
+        body = {"model": "m", "prompt": "x" * 50}
+        assert truncate_messages(body, 10) == body
+
+    @staticmethod
+    def test_body_is_not_mutated() -> None:
+        body = {"messages": [{"content": "x" * 50}]}
+        truncate_messages(body, 10)
+        assert len(body["messages"][0]["content"]) == 50
 
 
 class TestUsageOf(unittest.TestCase):

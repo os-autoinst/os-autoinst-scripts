@@ -61,6 +61,25 @@ def merge_params(body: dict[str, Any], params: dict[str, str | int | float]) -> 
     return {**body, **params}
 
 
+def truncate_messages(body: dict[str, Any], max_chars: int) -> dict[str, Any]:
+    """Return `body` with every message cut to its first `max_chars` characters.
+
+    A deployment whose context ends before the prompt does keeps the head of each message and drops the
+    tail, so a measurement of that shape cuts the same way. `truncated` counts the messages cut.
+    """
+    if not max_chars:
+        return body
+    messages = body.get("messages")
+    if not isinstance(messages, list):
+        return body
+
+    def cut(message: dict[str, Any]) -> dict[str, Any]:
+        content = message.get("content") or ""
+        return {**message, "content": content[:max_chars]} if len(content) > max_chars else message
+
+    return {**body, "messages": [cut(message) for message in messages]}
+
+
 def forward(upstream: str, body: dict[str, Any], timeout: int = REQUEST_TIMEOUT) -> tuple[int, bytes]:
     """POST the merged `body` to `upstream` and return its status and raw bytes.
 
@@ -114,12 +133,19 @@ def log_request(
 
 
 class ProxyServer(ThreadingHTTPServer):
-    """The proxy endpoint, carrying the upstream URL and the injected parameters."""
+    """The proxy endpoint, carrying the upstream URL, the injected parameters and the truncation."""
 
-    def __init__(self, address: tuple[str, int], upstream: str, params: dict[str, str | int | float]) -> None:
+    def __init__(
+        self,
+        address: tuple[str, int],
+        upstream: str,
+        params: dict[str, str | int | float],
+        max_message_chars: int = 0,
+    ) -> None:
         super().__init__(address, ProxyHandler)
         self.upstream = upstream
         self.params = params
+        self.max_message_chars = max_message_chars
 
 
 class ProxyHandler(BaseHTTPRequestHandler):
@@ -130,7 +156,10 @@ class ProxyHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         """Merge the injected parameters, forward, and relay the response bytes unchanged."""
         length = int(self.headers.get("Content-Length", 0))
-        merged = merge_params(json.loads(self.rfile.read(length) or b"{}"), self.server.params)
+        merged = truncate_messages(
+            merge_params(json.loads(self.rfile.read(length) or b"{}"), self.server.params),
+            self.server.max_message_chars,
+        )
         start = time.monotonic()
         status, payload = forward(self.server.upstream, merged, REQUEST_TIMEOUT)
         usage = usage_of(payload)
@@ -174,11 +203,24 @@ def main(argv: list[str] | None = None) -> int:
         default=[],
         help="key=value merged into every request body, repeatable",
     )
+    parser.add_argument(
+        "--max-message-chars",
+        type=int,
+        default=0,
+        help="cut every message to its first N characters (0: keep whole), for a context-limited deployment",
+    )
     args = parser.parse_args(argv)
     params = parse_params(args.params)
     host, port = split_listen(args.listen)
-    server = ProxyServer((host, port), args.upstream, params)
-    logger.info("listening on %s:%d, upstream %s, params %s", host, port, args.upstream, params)
+    server = ProxyServer((host, port), args.upstream, params, args.max_message_chars)
+    logger.info(
+        "listening on %s:%d, upstream %s, params %s, max_message_chars %d",
+        host,
+        port,
+        args.upstream,
+        params,
+        args.max_message_chars,
+    )
     server.serve_forever()
     server.server_close()
     return 0
