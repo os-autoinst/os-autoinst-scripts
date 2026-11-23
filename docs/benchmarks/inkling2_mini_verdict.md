@@ -154,6 +154,53 @@ Neither model hallucinates evidence; the candidate writes longer texts and names
 control is terser. The candidate's failure mode is over-reading test evidence — it relabels a
 `boot_to_desktop` stall and 11-12 other product jobs as `Test issue` — not invented quotes.
 
+## Production shape
+
+The deployment gives the model 4096 tokens per request, so the third replay cuts every message to its
+first 10,240 characters (`params_proxy.py --max-message-chars 10240`, the tool's own 2.5 characters per
+token) and runs the candidate at effort 0.1 against the same server flags.
+
+Three facts had to be established before that run, because none of the obvious mechanisms reproduces the
+deployment:
+
+- `num_ctx` in a llama.cpp request body is **ignored**: a probe asking for `num_ctx` 4096 was accepted
+  with 10,063 prompt tokens.
+- llama.cpp **answers 400 instead of truncating** when a prompt exceeds the slot context: with
+  `--ctx-size 4096` all 16 jobs failed with `HTTP 400`.
+- the tool **refuses** `--context-tokens 4096`: "leaves no room for the analysis after the prompt and
+  2048 response tokens".
+
+Hence the proxy truncation, which is the only faithful reproduction available in the harness today. It is
+also a new harness feature (`f55c2c4f`), because plan 006 needed a throwaway script for the same job.
+
+## Four slots
+
+The server ran the deployment's slot count: `n_slots = 4`, `n_ctx_slot = 65536`, `kv_unified = 'true'`,
+`--threads 64`, `--jinja`, top-p 1.0 / top-k 0 / min-p 0, effort 0.1 injected by the proxy, one container,
+no restart during the run.
+
+| Arm (16 jobs) | Correct | Median | p95 | Max | Batch wall | 600 s |
+|---|---|---|---|---|---|---|
+| production shape, 4096-token cap | 8/16 (50.0%) | 180 s | 252 s | 256 s | 52 min | 0 |
+| full context, same jobs, run 2 | 9/16 (56.0%) | 83 s | 145 s | 233 s | — | 0 |
+| gemma control, same jobs | 10/16 (62.5%) | 193 s | 326 s | 481 s | — | 0 |
+
+The truncation costs one job in 16 (6.3 points) and changes five verdicts, all inside the
+product/test boundary. That is the deployment penalty measured directly, and it does not close the gap:
+even at the production shape the candidate sits 2 jobs under the control on this subset, and it stays
+12 points under on the full set.
+
+## Stratified 20
+
+The plan names `eval_attrib20.json`, the 20-job stratification plan 006 fixed; that file lived in `/tmp`
+and is gone, and it is not derivable from the committed dataset (it stratified the labels of the *stored
+production comments*, 8 test / 4 infra / 8 product, not the human labels).
+
+The subset used here is the deterministic rule the dataset audit fixed and committed: **every third entry
+of `eval_dataset.json` in dataset order (0-based indices 2, 5, 8, … 47)**, 16 entries, 11 product and 5
+test labels. Accuracy on those 16 is the number to compare with the other arms above; the test-labelled
+5 carry 1 correct verdict at the production shape.
+
 ## Bar check
 
 | Criterion (plan 021) | Requirement | Measured | Result |
