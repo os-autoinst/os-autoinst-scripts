@@ -201,6 +201,32 @@ of `eval_dataset.json` in dataset order (0-based indices 2, 5, 8, … 47)**, 16 
 test labels. Accuracy on those 16 is the number to compare with the other arms above; the test-labelled
 5 carry 1 correct verdict at the production shape.
 
+## Matched-configuration arms
+
+The first four arms differ from the control in sampling (card top-p 1.0 / top-k 0 / min-p 0 against the
+deployed 0.95 / 64 / 0.05), in the served template's default reasoning preservation, and in effort. Three
+further full-50 arms removed those differences one at a time, all at tool `22575395`, same build, same
+host:
+
+| Arm | Answered | Accuracy | `Product` | `Test` P | Derivable 38 | Median | p90 | Max |
+|---|---|---|---|---|---|---|---|---|
+| card sampling, effort 0.1 (baseline) | 50 | 25/50 (50%) | 20/32 | 29% | 24/38 | 83 s | 145 s | 233 s |
+| production sampling, effort 0.1 | 50 | 23/50 (46%) | 18/32 | 26% | 22/38 | 169 s | 272 s | 487 s |
+| production sampling, `--no-reasoning-preserve`, `--reasoning-budget 1024`, effort 0.1 | 50 | 24/50 (48%) | 20/32 | 27% | 23/38 | 148 s | 225 s | 415 s |
+| production sampling, `--no-reasoning-preserve`, effort 0.9 | 48 | 25/50 (50%) | 21/32 | 29% | 24/38 | 307 s | 531 s | **960 s** |
+| gemma control (b12627) | 50 | 31/50 (62%) | 31/32 | — | 31/38 | 193 s | 326 s | 481 s |
+
+**None of the three suspected confounds moves accuracy.** Sampling costs 2 jobs (within the model's own
+40-46 of 50 inter-arm agreement), disabling reasoning preservation and capping the budget leaves the score
+unchanged while cutting p90 from 272 s to 225 s, and the deployed 0.9 effort buys nothing while pushing
+p90 to 531 s and losing two jobs to the runner's 900 s job timeout. The candidate's verdicts drift 4-10
+jobs between configurations of its own, so a 2-job difference is its noise floor.
+
+On the 38 jobs whose label is readable from the job's own logs (32 product plus the 6 marked-commit test
+jobs), the candidate reaches 22-24 and the control 31: the gap is **not** an artefact of sampling, prompt
+handling, effort or the unreachable test labels. Paired, the best candidate arm trails by 10-13 jobs
+(McNemar p = 0.05-0.12), which is as close to significance as 50 jobs can get.
+
 ## Bar check
 
 | Criterion (plan 021) | Requirement | Measured | Result |
