@@ -28,16 +28,22 @@ sys.modules[loader.name] = reaper
 loader.exec_module(reaper)
 
 
+def cmd(stdout: str = "", *, returncode: int = 0, timed_out: bool = False) -> reaper.CmdResult:
+    return reaper.CmdResult(returncode=returncode, stdout=stdout, timed_out=timed_out)
+
+
 def test_run_cmd(mocker: MockerFixture) -> None:
     mock_run = mocker.patch("subprocess.run")
     mock_run.return_value = mocker.MagicMock(stdout="  some output \n", stderr="", returncode=0)
-    assert reaper.run_cmd("echo test") == "some output"
+    result = reaper.run_cmd("echo test")
+    assert result.stdout == "some output"
+    assert result.ok is True
     mock_run.assert_called_once()
 
 
 def test_get_running_jobs(mocker: MockerFixture) -> None:
     mock_run = mocker.patch("reaper.run_cmd")
-    mock_run.return_value = '{"workers": [{"properties": {"WORKER_CLASS": "qemu_x86_64,s390zl12"}, "jobid": 123}]}'
+    mock_run.return_value = cmd('{"workers": [{"properties": {"WORKER_CLASS": "qemu_x86_64,s390zl12"}, "jobid": 123}]}')
     assert reaper.get_running_jobs("s390zl12.oqa.prg2.suse.org") == [123]
 
 
@@ -98,7 +104,7 @@ def test_trigger_actions(
     expected_calls: list[str],
     expected_cmd: str | None,
 ) -> None:
-    mock_run_cmd = mocker.patch("reaper.run_cmd")
+    mock_run_cmd = mocker.patch("reaper.run_cmd", side_effect=[cmd(), cmd('{"result": [{"123": 456}]}')])
     mocker.patch("reaper.wait_for_host", return_value=True)
     mocker.patch("time.sleep")
     mocker.patch("reaper.should_restart_job", return_value=True)
@@ -125,7 +131,7 @@ def test_handle_host_clean(mocker: MockerFixture) -> None:
 
 def test_handle_host_zombie_persistent(mocker: MockerFixture, capsys: pytest.CaptureFixture[str]) -> None:
     mocker.patch("reaper.run_ssh", side_effect=["12345 8380780 Z", "12345 8380780 Z"])
-    mocker.patch("reaper.run_cmd", side_effect=['{"workers": []}', ""])
+    mocker.patch("reaper.run_cmd", side_effect=[cmd('{"workers": []}'), cmd()])
     mock_sleep = mocker.patch("time.sleep")
     config = reaper.ReaperConfig(dry_run=False, verbose=False)
     reaper.handle_host("s390zl12.oqa.prg2.suse.org", config)
@@ -136,7 +142,7 @@ def test_handle_host_zombie_persistent(mocker: MockerFixture, capsys: pytest.Cap
 
 def test_handle_host_zombie_persistent_reboot(mocker: MockerFixture, capsys: pytest.CaptureFixture[str]) -> None:
     mocker.patch("reaper.run_ssh", side_effect=["12345 8380780 Z", "12345 8380780 Z"])
-    mocker.patch("reaper.run_cmd", side_effect=['{"workers": []}', ""])
+    mocker.patch("reaper.run_cmd", side_effect=[cmd('{"workers": []}'), cmd()])
     mock_sleep = mocker.patch("time.sleep")
     config = reaper.ReaperConfig(dry_run=False, verbose=False, reboot_method=reaper.RebootMethod.REBOOT)
     reaper.handle_host("s390zl12.oqa.prg2.suse.org", config)
@@ -169,7 +175,7 @@ def test_trigger_actions_custom_limits(
     mocker: MockerFixture,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    mocker.patch("reaper.run_cmd")
+    mocker.patch("reaper.run_cmd", side_effect=[cmd(), cmd('{"result": [{"123": 456}]}')])
     mock_wait = mocker.patch("reaper.wait_for_host", return_value=True)
     mock_sleep = mocker.patch("time.sleep")
     mocker.patch("reaper.should_restart_job", return_value=True)
@@ -226,7 +232,7 @@ def test_check_libvirt_health_unreachable_raises(mocker: MockerFixture) -> None:
 def test_handle_host_unhealthy_libvirt(mocker: MockerFixture, capsys: pytest.CaptureFixture[str]) -> None:
     mocker.patch("reaper.run_ssh", return_value="")
     mock_run_cmd = mocker.patch("reaper.run_cmd")
-    mock_run_cmd.side_effect = ['{"workers": []}', ""]
+    mock_run_cmd.side_effect = [cmd('{"workers": []}'), cmd()]
     mock_health = mocker.patch("reaper.check_libvirt_health", return_value=False)
     mocker.patch("reaper.wait_for_host", return_value=True)
     mocker.patch("time.sleep")
@@ -241,7 +247,8 @@ def test_handle_host_unhealthy_libvirt(mocker: MockerFixture, capsys: pytest.Cap
 def test_run_cmd_timeout(mocker: MockerFixture, capsys: pytest.CaptureFixture[str]) -> None:
     mock_run = mocker.patch("subprocess.run", side_effect=subprocess.TimeoutExpired("test_cmd", 5))
     result = reaper.run_cmd("test_cmd", timeout=5)
-    assert not result
+    assert result.timed_out is True
+    assert result.ok is False
     assert "Command timed out after 5s: test_cmd" in capsys.readouterr().out
     mock_run.assert_called_once()
 
@@ -266,7 +273,7 @@ def test_handle_host_zombie_transient(mocker: MockerFixture, capsys: pytest.Capt
 
 def test_handle_host_d_state_persistent(mocker: MockerFixture, capsys: pytest.CaptureFixture[str]) -> None:
     mocker.patch("reaper.run_ssh", side_effect=["975196 8438974 D", "975196 8438974 D"])
-    mocker.patch("reaper.run_cmd", side_effect=['{"workers": []}', ""])
+    mocker.patch("reaper.run_cmd", side_effect=[cmd('{"workers": []}'), cmd()])
     mocker.patch("time.sleep")
     config = reaper.ReaperConfig(dry_run=False, verbose=False)
     reaper.handle_host("s390zl13.oqa.prg2.suse.org", config)
@@ -296,27 +303,28 @@ def test_reap_lock_busy(mocker: MockerFixture, capsys: pytest.CaptureFixture[str
 def test_run_cmd_error(mocker: MockerFixture, capsys: pytest.CaptureFixture[str]) -> None:
     mocker.patch(
         "subprocess.run",
-        side_effect=subprocess.CalledProcessError(1, "bad_cmd", stderr="command failed"),
+        side_effect=subprocess.CalledProcessError(1, "bad_cmd", output="", stderr="command failed"),
     )
     result = reaper.run_cmd("bad_cmd")
-    assert not result
+    assert result.returncode == 1
+    assert result.ok is False
     assert "Error executing command: bad_cmd\ncommand failed" in capsys.readouterr().out
 
 
 def test_run_cmd_missing_executable(mocker: MockerFixture, capsys: pytest.CaptureFixture[str]) -> None:
     mocker.patch("subprocess.run", side_effect=FileNotFoundError(2, "No such file or directory", "openqa-cli"))
     result = reaper.run_cmd("openqa-cli api --osd -X GET jobs/123")
-    assert not result
+    assert result.ok is False
     assert "Error executing command: openqa-cli api --osd -X GET jobs/123" in capsys.readouterr().out
 
 
 def test_get_running_jobs_empty(mocker: MockerFixture) -> None:
-    mocker.patch("reaper.run_cmd", return_value="")
+    mocker.patch("reaper.run_cmd", return_value=cmd())
     assert reaper.get_running_jobs("s390zl12.oqa.prg2.suse.org") == []
 
 
 def test_get_running_jobs_invalid_json(mocker: MockerFixture, capsys: pytest.CaptureFixture[str]) -> None:
-    mocker.patch("reaper.run_cmd", return_value="not valid json")
+    mocker.patch("reaper.run_cmd", return_value=cmd("not valid json"))
     assert reaper.get_running_jobs("s390zl12.oqa.prg2.suse.org") == []
     assert "Failed to fetch running jobs for s390zl12.oqa.prg2.suse.org" in capsys.readouterr().out
 
@@ -664,8 +672,8 @@ def test_handle_host_unreachable_past_deadline_recovers_via_hmc_without_ssh_rebo
     mock_run_cmd = mocker.patch(
         "reaper.run_cmd",
         side_effect=[
-            '{"workers": [{"properties": {"WORKER_CLASS": "qemu_s390x,s390zl13"}, "jobid": 123}]}',
-            "",
+            cmd('{"workers": [{"properties": {"WORKER_CLASS": "qemu_s390x,s390zl13"}, "jobid": 123}]}'),
+            cmd('{"result": [{"123": 456}]}'),
         ],
     )
     reaper.handle_host(HOST, reaper.ReaperConfig(verbose=False))
@@ -676,8 +684,9 @@ def test_handle_host_unreachable_past_deadline_recovers_via_hmc_without_ssh_rebo
     mock_hmc.assert_called_once_with(HOST, mocker.ANY)
     assert mock_wait.call_count == 2
     assert mock_run_cmd.call_args_list[-1] == mocker.call(
-        "openqa-cli api --osd -X POST jobs/123/restart", verbose=False, timeout=60
+        "openqa-cli api --osd -X POST jobs/123/restart", verbose=False, timeout=180
     )
+    assert "Job 123 restarted as 456." in captured
 
 
 def test_trigger_actions_host_down_without_jobs_still_recovers_via_hmc(mocker: MockerFixture) -> None:
@@ -874,6 +883,12 @@ def test_reap_hmc_lpar_option_is_repeatable(mocker: MockerFixture) -> None:
     assert config.hmc_lpars == {"a.example.com": "lpar-1", "b.example.com": "lpar-2"}
 
 
+@pytest.mark.usefixtures("environ")
+def test_reap_restart_limits_reach_the_config(mocker: MockerFixture) -> None:
+    config = run_reap_cli(mocker, "--restart-timeout", "90", "--restart-deadline-minutes", "5")
+    assert (config.restart_timeout, config.restart_deadline_minutes) == (90, 5)
+
+
 @pytest.mark.parametrize("args", [["--hmc-lpar", "no-separator"], ["--hmc-lpar", "=lpar-1"], ["--hmc-lpar", "host="]])
 @pytest.mark.usefixtures("environ")
 def test_reap_rejects_malformed_hmc_lpar(mocker: MockerFixture, args: list[str]) -> None:
@@ -936,7 +951,7 @@ def test_should_restart_job(mocker: MockerFixture, job_data: dict[str, Any] | No
     ids=["valid_job_json", "empty_output", "invalid_json"],
 )
 def test_get_job_info(mocker: MockerFixture, output: str, expected: dict[str, Any] | None) -> None:
-    mock_run = mocker.patch("reaper.run_cmd", return_value=output)
+    mock_run = mocker.patch("reaper.run_cmd", return_value=cmd(output))
     assert reaper.get_job_info(123) == expected
     mock_run.assert_called_once_with("openqa-cli api --osd -X GET jobs/123", verbose=False)
 
@@ -960,3 +975,128 @@ def test_trigger_actions_skips_non_failed_job(
         verbose=False,
         timeout=25,
     )
+    assert "Restarted 0 job(s), skipped 1, failed 0, deferred 0." in captured
+
+
+@pytest.mark.parametrize(
+    ("response", "expected", "expected_out"),
+    [
+        ('{"result": [{"123": 456}], "test_url": []}', "456", None),
+        (
+            '{"errors":["No job IDs specified"],"result":[],"test_url":[]}',
+            "",
+            "Restart of job 123 refused: No job IDs specified",
+        ),
+        ("", "", None),
+        ("not json", "", "Unparsable restart response for job 123"),
+    ],
+    ids=["accepted", "refused_with_http_200", "empty_output", "invalid_json"],
+)
+def test_clone_of(response: str, expected: str, expected_out: str | None, capsys: pytest.CaptureFixture[str]) -> None:
+    assert reaper.clone_of(response, 123) == expected
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == (1 if expected_out else 0)
+    if expected_out:
+        assert lines[0].startswith(expected_out)
+
+
+def test_restart_job_accepted(mocker: MockerFixture) -> None:
+    mock_run = mocker.patch("reaper.run_cmd", return_value=cmd('{"result": [{"123": 456}]}'))
+    config = reaper.ReaperConfig(cmd_timeout=60, restart_timeout=90)
+    assert reaper.restart_job(123, config) == "456"
+    mock_run.assert_called_once_with("openqa-cli api --osd -X POST jobs/123/restart", verbose=False, timeout=90)
+
+
+def test_restart_job_timeout_verified_by_clone_id(mocker: MockerFixture, capsys: pytest.CaptureFixture[str]) -> None:
+    mocker.patch("time.sleep")
+    mock_run = mocker.patch("reaper.run_cmd", side_effect=[cmd(timed_out=True), cmd('{"job": {"clone_id": 456}}')])
+    assert reaper.restart_job(123, reaper.ReaperConfig()) == "456"
+    captured = capsys.readouterr().out
+    assert "Restart request for job 123 timed out, checking the job for a clone..." in captured
+    assert mock_run.call_count == 2
+
+
+def test_restart_job_timeout_polls_until_clone_appears(mocker: MockerFixture) -> None:
+    mock_sleep = mocker.patch("time.sleep")
+    mocker.patch("time.time", side_effect=[0, 10])
+    mocker.patch(
+        "reaper.run_cmd",
+        side_effect=[
+            cmd(timed_out=True),
+            cmd('{"job": {"clone_id": null}}'),
+            cmd('{"job": {"clone_id": 456}}'),
+        ],
+    )
+    assert reaper.restart_job(123, reaper.ReaperConfig()) == "456"
+    mock_sleep.assert_called_once_with(reaper.RESTART_VERIFY_INTERVAL)
+
+
+def test_restart_job_timeout_without_clone_retries_once(
+    mocker: MockerFixture, capsys: pytest.CaptureFixture[str]
+) -> None:
+    mocker.patch("time.sleep")
+    mocker.patch("time.time", side_effect=[0, 61])
+    mock_run = mocker.patch(
+        "reaper.run_cmd",
+        side_effect=[cmd(timed_out=True), cmd('{"job": {"clone_id": null}}'), cmd('{"result": [{"123": 456}]}')],
+    )
+    assert reaper.restart_job(123, reaper.ReaperConfig()) == "456"
+    assert mock_run.call_count == 3
+    assert "Job 123 has no clone, retrying the restart..." in capsys.readouterr().out
+
+
+def test_restart_job_refusal_reports_reason(mocker: MockerFixture, capsys: pytest.CaptureFixture[str]) -> None:
+    mocker.patch(
+        "reaper.run_cmd",
+        return_value=cmd('{"errors":["Job 123 misses the following mandatory assets: iso"],"result":[]}'),
+    )
+    assert not reaper.restart_job(123, reaper.ReaperConfig())
+    assert "Restart of job 123 refused: Job 123 misses the following mandatory assets: iso" in capsys.readouterr().out
+
+
+def test_restart_failed_jobs_reports_every_outcome(mocker: MockerFixture, capsys: pytest.CaptureFixture[str]) -> None:
+    mocker.patch("reaper.should_restart_job", side_effect=[True, False, True])
+    mocker.patch("reaper.restart_job", side_effect=["456", ""])
+    reaper.restart_failed_jobs([123, 124, 125], reaper.ReaperConfig(restart_deadline_minutes=15))
+    captured = capsys.readouterr().out
+    assert "Job 123 restarted as 456." in captured
+    assert "Could not restart job 125." in captured
+    assert "Restarted 1 job(s), skipped 1, failed 1, deferred 0." in captured
+
+
+def test_restart_failed_jobs_deadline_lists_jobs_left_for_manual_retrigger(
+    mocker: MockerFixture, capsys: pytest.CaptureFixture[str]
+) -> None:
+    mock_restart = mocker.patch("reaper.restart_job", return_value="")
+    mocker.patch("reaper.should_restart_job", return_value=True)
+    mocker.patch("time.time", side_effect=[0, 0, 901])
+    reaper.restart_failed_jobs([123, 124], reaper.ReaperConfig(restart_deadline_minutes=15))
+    captured = capsys.readouterr().out
+    assert "Restart deadline of 15 minutes reached, jobs left for a manual retrigger: 124." in captured
+    assert "Restarted 0 job(s), skipped 0, failed 1, deferred 1." in captured
+    mock_restart.assert_called_once()
+
+
+def test_restart_failed_jobs_dry_run_sends_nothing(mocker: MockerFixture, capsys: pytest.CaptureFixture[str]) -> None:
+    mock_run_cmd = mocker.patch("reaper.run_cmd")
+    mocker.patch("reaper.should_restart_job", side_effect=[True, False])
+    reaper.restart_failed_jobs([123, 124], reaper.ReaperConfig(dry_run=True))
+    captured = capsys.readouterr().out
+    assert "[DRY-RUN] Would execute: openqa-cli api --osd -X POST jobs/123/restart" in captured
+    assert "Restarted 0 job(s), skipped 1, failed 0, deferred 1." in captured
+    mock_run_cmd.assert_not_called()
+
+
+def test_restart_job_retry_refused_after_openqa_finished_the_clone(mocker: MockerFixture) -> None:
+    mocker.patch("time.sleep")
+    mocker.patch("time.time", side_effect=[0, 61])
+    mocker.patch(
+        "reaper.run_cmd",
+        side_effect=[
+            cmd(timed_out=True),
+            cmd('{"job": {"clone_id": null}}'),
+            cmd('{"errors":["Specified job 123 has already been cloned as 456"],"result":[]}'),
+            cmd('{"job": {"clone_id": 456}}'),
+        ],
+    )
+    assert reaper.restart_job(123, reaper.ReaperConfig()) == "456"
