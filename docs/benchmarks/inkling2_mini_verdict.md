@@ -227,6 +227,50 @@ jobs), the candidate reaches 22-24 and the control 31: the gap is **not** an art
 handling, effort or the unreachable test labels. Paired, the best candidate arm trails by 10-13 jobs
 (McNemar p = 0.05-0.12), which is as close to significance as 50 jobs can get.
 
+## Ticket-level label audit
+
+The log-level finding above is only the symptom; the labels themselves need auditing.
+
+Every row's label comes from `comment_data.bugs` of the investigated job, mapped by tracker: a Bugzilla
+reference means `product`, a progress reference means `test`. The 50 rows therefore carry **7 distinct
+tickets**, and each model is really being scored on about seven decisions:
+
+| Ticket | Rows | Label | State | What the ticket says |
+|---|---|---|---|---|
+| `boo#1289464` | **21** | product | IN_PROGRESS | "[QE] openQA test fails in boot_to_desktop — 'esc' key does not exit menu anymore", a GNOME change from snapshot 20261101 with a gsettings workaround |
+| `poo#209382` | 13 | test | In Progress | line-move hack in `bootloader_setup.pm` corrupts the grub config → test-code defect |
+| `boo#1246013` | 5 | product | IN_PROGRESS | MicroOS `setup-fips` with BLS leaves setup incomplete |
+| `poo#209802` | 4 | test | New | `match_has_tag` branching bug → test-code defect |
+| `boo#1289038` | 3 | product | RESOLVED/**WONTFIX** | AutoYaST clone failure, closed for missing logs; no product defect concluded |
+| `boo#1288617` | 3 | product | RESOLVED/**FIXED** | SELinux denials |
+| `poo#209751` | 1 | test | In Progress | the **same 'esc' symptom**, "the test needs to press it differently" |
+
+`boo#1289464` and `poo#209751` label one phenomenon in opposite classes because they live in different
+trackers, and `boo#1289038` is a WONTFIX. The earlier dataset audit examined only the 18 `test` labels;
+the product side was inherited unverified.
+
+Re-scored on the 26 rows whose ticket content clearly supports the label (`poo#209382`, `poo#209802`,
+`poo#209751`, `boo#1246013`, `boo#1288617`):
+
+| Arm | Verified 26 | All 50 (tracker labels) |
+|---|---|---|
+| Inkling, card sampling, effort 0.1 | 13/26 (50%) | 25/50 (50%) |
+| Inkling, production sampling, effort 0.1 | 13/26 (50%) | 23/50 (46%) |
+| Inkling, no-preserve + budget, 0.1 | 12/26 (46%) | 24/50 (48%) |
+| Inkling, effort 0.9 | 12/26 (46%) | 25/50 (50%) |
+| gemma control | 8/26 (31%) | 31/50 (62%) |
+
+Paired on the verified rows, the best Inkling arm wins 5 to 0 (McNemar p = 0.06) against the control.
+If the 21 'esc' rows were relabelled `test`, Inkling would score 28/50 and the control 12/50. The
+comparison therefore turns on one labelling decision covering 42% of the dataset, and the "control is
+better" reading in the sections above holds only for the tracker labels.
+
+## Consequence of the audit
+
+No adoption or rejection follows from this dataset until the labels are re-audited with a written policy
+for "upstream behaviour change versus test adapts" and the sample is extended beyond 7 tickets. The
+throughput, layout and reasoning findings above are independent of the labels and stand.
+
 ## Bar check
 
 | Criterion (plan 021) | Requirement | Measured | Result |
