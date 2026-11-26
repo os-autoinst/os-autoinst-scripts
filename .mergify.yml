@@ -8,8 +8,6 @@ pull_request_rules:
     conditions:
       - "#approved-reviews-by>=2"
       - "#changes-requested-reviews-by=0"
-      # https://doc.mergify.io/examples.html#require-all-requested-reviews-to-be-approved
-      - "#review-requested=0"
       - -label~=^acceptance-tests-needed|not-ready
       - base=master
       - "status-success~=test"
@@ -27,14 +25,25 @@ pull_request_rules:
     actions:
       merge:
         method: merge
-  - name: automatic merge for dependabot updates
+  - name: automatic merge for dependabot updates that only bump dependencies
     conditions:
-      - base=master
-      - author=dependabot[bot]
-      - -label~=^acceptance-tests-needed|not-ready
-      - "#check-failure=0"
-      - "#check-pending=0"
-      - linear-history
-    actions:
+      - and: &bot_gate
+          - base=master
+          - author=dependabot[bot]
+          - "#changes-requested-reviews-by=0"
+          - -label~=^acceptance-tests-needed|not-ready
+          - "#check-failure=0"
+          - "#check-pending=0"
+          - linear-history
+      # A commit pushed on top of the bot's own is a code change, not a bump
+      - "#commits=1"
+      # A bump only writes these paths; anything else needs review
+      - -files~=^(?!(\.github/workflows/[^/]+\.ya?ml)$).+
+    actions: &squash
       merge:
         method: squash
+  - name: require review for other dependabot updates
+    conditions:
+      - and: *bot_gate
+      - "#approved-reviews-by>=1"
+    actions: *squash
