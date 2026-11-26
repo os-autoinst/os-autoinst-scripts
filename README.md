@@ -340,6 +340,52 @@ $ sudo systemctl --machine=osc@.host --user start os-autoinst-scripts-update-cer
 $ sudo journalctl _UID="$(id -u osc)" _SYSTEMD_USER_UNIT=os-autoinst-scripts-update-cert-from-obs@factory-staging.service
 ```
 
+## s390x qemu zombie reaper
+
+`s390x-qemu-zombie-reaper.py` checks the s390x hypervisors listed in its
+`HYPERVISORS` map for qemu processes in zombie (`Z`) or uninterruptible (`D`)
+state. A process found twice with 10s between the checks means the hypervisor
+is deadlocked, so the script reboots it and restarts the openQA jobs that ran
+on it.
+
+Jobs are restarted only if they finished with a failure result (`failed`,
+`incomplete`, `parallel_failed`, `timeout_exceeded`) and have no clone yet. A
+job a person is still holding is `running` and is left alone. Restarting one
+job of a cluster aborts its parallel siblings; after a hypervisor reboot those
+guests are gone anyway.
+
+The restart request is where openQA computes the dependency tree of the cluster
+and clones it, so `--restart-timeout` (default 180s) is longer than
+`--cmd-timeout` (60s) used for the SSH and GET commands. If the request times
+out, the reaper polls the job for a clone for up to a minute because openQA
+keeps processing the request after the client disconnects. Every restart is
+reported:
+
+```
+Retriggering job 25708960...
+Command timed out after 180s: openqa-cli api --osd -X POST jobs/25708960/restart
+Restart request for job 25708960 timed out, checking the job for a clone...
+Job 25708960 restarted as 25726850.
+Restarted 1 job(s), skipped 0, failed 0, deferred 0.
+```
+
+A restart sets `clone_id` on the original job, which keeps its failure result:
+openQA sets `result=user_restarted` only on a job that was still running when
+it was restarted, so `jobs?result=user_restarted` does not list the reaper's
+restarts. The clone id the reaper prints is the reference, and `jobs/<id>`
+reports the same `clone_id`.
+
+`--restart-deadline-minutes` (default 15) stops starting new restarts; a restart
+already in flight finishes first, up to seven minutes for a request that timed
+out and was retried. Jobs left when the deadline passes are listed for a manual
+retrigger.
+
+Dry-run prints the exact commands without touching a host or a job:
+
+```bash
+./s390x-qemu-zombie-reaper.py --dry-run --no-lock --verbose
+```
+
 ## Contribute
 
 This project lives in https://github.com/os-autoinst/os-autoinst-scripts
