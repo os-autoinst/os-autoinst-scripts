@@ -13,12 +13,15 @@ import pytest
 
 from scripts.benchmarking import audit_ticket_labels as audit
 from scripts.benchmarking.audit_ticket_labels import (
+    Proposal,
     Ticket,
+    annotate_dataset,
     audit_references,
     collect_references,
     fetch_bugzilla_tickets,
     fetch_redmine_tickets,
     load_cached,
+    load_entries,
     load_redmine_token,
     main,
     parse_reference,
@@ -36,6 +39,12 @@ Handler = Callable[[httpx.Request], httpx.Response]
 def client_for(handler: Handler) -> httpx.Client:
     """Build a client answering from `handler` instead of the network."""
     return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+@pytest.fixture(autouse=True)
+def _no_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the politeness and retry delays out of the test runtime."""
+    monkeypatch.setattr(audit.time, "sleep", lambda _seconds: None)
 
 
 def ticket_facts(
@@ -86,9 +95,9 @@ REFERENCE_CASES = [
         "expected": ("redmine", "poo", 209382),
     },
     {
-        "desc": "GitHub reference has no tracker this audit can read",
+        "desc": "GitHub reference is recognised as an issue this audit cannot read",
         "raw": "gh#os-autoinst/openQA#7974",
-        "expected": ("other", None, None),
+        "expected": ("github", None, None),
     },
     {
         "desc": "label-shaped reference is not a ticket",
@@ -155,6 +164,16 @@ LABEL_CASES = [
         "expected": ("unclear", "unclear"),
     },
     {
+        "desc": "a moved bug reference is a redirect, not a conclusion",
+        "ticket": ticket_facts(
+            reference="boo#1269472",
+            tracker="bugzilla",
+            state="RESOLVED/MOVED",
+            summary="crash in the installer",
+        ),
+        "expected": ("unclear", "unclear"),
+    },
+    {
         "desc": "rejected Redmine ticket is unscored",
         "ticket": ticket_facts(state="Rejected", summary="worker outage"),
         "expected": ("unclear", "unclear"),
@@ -176,6 +195,11 @@ LABEL_CASES = [
     {
         "desc": "content naming neither defect class is unscored",
         "ticket": ticket_facts(state="New", summary="test fails in opensuse_welcome"),
+        "expected": ("unclear", "unclear"),
+    },
+    {
+        "desc": "GitHub issue beyond this audit's trackers is unscored",
+        "ticket": ticket_facts(reference="gh#os-autoinst/openQA#1", tracker="github"),
         "expected": ("unclear", "unclear"),
     },
     {
@@ -204,6 +228,130 @@ def test_cache_roundtrip(tmp_path: pathlib.Path) -> None:
     store_cached(tmp_path, reference, ticket)
 
     assert load_cached(tmp_path, reference) == ticket
+
+
+def proposal_for(reference: str, label: str, confidence: str = "certain", state: str = "IN_PROGRESS") -> Proposal:
+    """Build the audit proposal of one reference."""
+    return Proposal(
+        reference=reference,
+        tracker="redmine",
+        state=state,
+        summary="summary",
+        area="openQA Tests",
+        label=label,
+        confidence=confidence,
+        rationale=f"names {label} evidence",
+        source="api",
+    )
+
+
+def corpus_row(job_id: int, reference: str) -> dict[str, Any]:
+    """Build one corpus entry as the extraction tool writes it."""
+    return {"job_id": job_id, "test_name": f"test_{job_id}", "reference": reference}
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        {
+            "desc": "rows per ticket are capped in job order and unclear rows stay in the file",
+            "entries": [corpus_row(job_id, "boo#1") for job_id in (7, 3, 9, 1)]
+            + [corpus_row(20, "poo#2"), corpus_row(21, "poo#2")],
+            "proposals": [proposal_for("boo#1", "product"), proposal_for("poo#2", "unclear", "unclear")],
+            "max_per_ticket": 2,
+            "force_unclear": frozenset(),
+            "expected_rows": 4,
+            "expected_scored": 2,
+            "expected_job_ids": [1, 3, 20, 21],
+            "expected_ceiling": 100.0,
+        },
+        {
+            "desc": "contradiction pairs are forced unscored but keep their rationale",
+            "entries": [corpus_row(1, "boo#1"), corpus_row(2, "poo#2")],
+            "proposals": [proposal_for("boo#1", "product"), proposal_for("poo#2", "test")],
+            "max_per_ticket": 5,
+            "force_unclear": frozenset({"boo#1"}),
+            "expected_rows": 2,
+            "expected_scored": 1,
+            "expected_job_ids": [1, 2],
+            "expected_ceiling": 0.0,
+        },
+        {
+            "desc": "rows without a resolved ticket are unscored instead of dropped",
+            "entries": [corpus_row(1, "gh#os-autoinst/openQA#1")],
+            "proposals": [],
+            "max_per_ticket": 5,
+            "force_unclear": frozenset(),
+            "expected_rows": 1,
+            "expected_scored": 0,
+            "expected_job_ids": [1],
+            "expected_ceiling": 0.0,
+        },
+    ],
+    ids=[
+        "cap and keep unclear rows",
+        "forced unscored contradiction",
+        "unresolved reference",
+    ],
+)
+def test_annotate_dataset(case: dict[str, Any]) -> None:
+    payload = annotate_dataset(
+        case["entries"],
+        case["proposals"],
+        max_per_ticket=case["max_per_ticket"],
+        force_unclear=case["force_unclear"],
+    )
+
+    assert payload["metadata"]["rows"] == case["expected_rows"]
+    assert payload["metadata"]["scored_rows"] == case["expected_scored"]
+    assert payload["metadata"]["all_product_ceiling_pct"] == case["expected_ceiling"]
+    assert [row["job_id"] for row in payload["entries"]] == case["expected_job_ids"]
+    assert all(row["confidence"] in {"certain", "plausible", "unclear"} for row in payload["entries"])
+
+
+def test_annotate_dataset_documents_contradictions_and_unreadable_github_issues() -> None:
+    payload = annotate_dataset(
+        [corpus_row(1, "boo#1289464"), corpus_row(2, "gh#os-autoinst/openQA#1")],
+        [proposal_for("boo#1289464", "product"), proposal_for("gh#os-autoinst/openQA#1", "unclear", "unclear")],
+        force_unclear=frozenset({"boo#1289464"}),
+    )
+
+    contradiction, github = payload["entries"]
+    assert contradiction["rationale"].startswith("contradicts a sibling ticket, unscored until a human rules:")
+    assert github["scored"] is False
+    assert payload["metadata"]["tickets"] == 2
+    assert payload["metadata"]["force_unclear"] == ["boo#1289464"]
+
+
+def test_load_entries_reads_the_corpus_dataset(tmp_path: pathlib.Path) -> None:
+    path = tmp_path / "corpus.json"
+    path.write_text(json.dumps({"entries": [corpus_row(1, "boo#1")]}), encoding="utf-8")
+
+    assert load_entries(path) == [corpus_row(1, "boo#1")]
+
+
+def test_request_json_retries_a_rate_limit_answer() -> None:
+    answers = [httpx.Response(429, json={}), httpx.Response(200, json={"bugs": []})]
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return answers.pop(0)
+
+    with client_for(handler) as client:
+        assert audit.request_json(client, "https://bugzilla.opensuse.org/rest/bug") == {"bugs": []}
+        assert answers == []
+
+
+def test_request_json_gives_up_after_the_last_attempt() -> None:
+    attempts: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts.append(request)
+        return httpx.Response(503, json={})
+
+    with client_for(handler) as client, pytest.raises(RuntimeError, match="still answers 503"):
+        audit.request_json(client, "https://bugzilla.opensuse.org/rest/bug")
+
+    assert len(attempts) == 5
 
 
 def test_load_cached_ignores_an_older_record_format(tmp_path: pathlib.Path) -> None:
@@ -426,6 +574,44 @@ def test_main_writes_one_record_per_reference(
     proposals = json.loads(output.read_text(encoding="utf-8"))
     assert [proposal["reference"] for proposal in proposals] == ["poo#209382"]
     assert proposals[0]["label"] == "test"
+
+
+def test_main_annotates_a_dataset(
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+    mocker: Any,
+) -> None:
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"issue": {"status": {"name": "In Progress"}, "subject": "lib/bootloader_setup.pm:562"}},
+        )
+
+    corpus = tmp_path / "corpus.json"
+    corpus.write_text(json.dumps({"entries": [corpus_row(1, "poo#209382")]}), encoding="utf-8")
+    output = tmp_path / "eval_dataset_v2.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "audit_ticket_labels.py",
+            "--from-dataset",
+            str(corpus),
+            "--annotate-dataset",
+            str(corpus),
+            "--output",
+            str(output),
+            "--cache-dir",
+            str(tmp_path),
+        ],
+    )
+    mocker.patch.object(audit.httpx, "Client", return_value=client_for(handler))
+
+    assert main() == 0
+
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["metadata"]["scored_rows"] == 1
+    assert payload["entries"][0]["label"] == "test"
 
 
 def test_main_requires_a_reference_source(monkeypatch: pytest.MonkeyPatch) -> None:

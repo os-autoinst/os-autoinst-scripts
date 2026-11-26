@@ -17,6 +17,8 @@ import os
 import pathlib
 import re
 import sys
+import time
+from collections import Counter
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -33,17 +35,27 @@ REDMINE_CONFIG = pathlib.Path.home() / ".query_redminerc"
 CACHE_DIR = pathlib.Path.home() / ".cache" / "o3-config" / "audit_ticket_labels"
 USER_AGENT = "o3-llm-eval-label-audit/1.0"
 REQUEST_TIMEOUT = 30.0
+REQUEST_DELAY = 1.0
+RETRY_STATUS = frozenset({429, 503})
+RETRY_DELAY = 5.0
+MAX_ATTEMPTS = 5
+MAX_RETRY_DELAY = 60.0
 COMMENT_LIMIT = 3
 COMMENT_CHARS = 1500
 BUGZILLA_FIELDS = "id,summary,status,resolution,product,component"
 
+NON_TICKET_TRACKERS = frozenset({"github", "other"})
+DEFAULT_MAX_PER_TICKET = 5
+
 REFERENCE_RE = re.compile(r"^(?P<tracker>boo|bsc|poo)#(?P<id>\d+)$", re.IGNORECASE)
+GITHUB_RE = re.compile(r"^gh#(?P<repo>[\w.-]+/[\w.-]+)#(?P<number>\d+)$", re.IGNORECASE)
 
 CLOSED_WITHOUT_CONCLUSION = frozenset({
     "RESOLVED/WONTFIX",
     "RESOLVED/INVALID",
     "RESOLVED/NOTABUG",
     "RESOLVED/DUPLICATE",
+    "RESOLVED/MOVED",
     "CLOSED/WONTFIX",
     "REJECTED",
 })
@@ -116,7 +128,9 @@ def parse_reference(raw: str) -> Reference:
     text = raw.strip()
     match = REFERENCE_RE.match(text)
     if match is None:
-        return Reference(raw=text, tracker="other", tracker_id=None, ticket_id=None)
+        github = GITHUB_RE.match(text)
+        tracker = "github" if github else "other"
+        return Reference(raw=text, tracker=tracker, tracker_id=None, ticket_id=None)
     tracker_id = match.group("tracker").lower()
     return Reference(
         raw=text,
@@ -148,6 +162,8 @@ def propose_label(ticket: Ticket, source: str = "api") -> Proposal:
 
 def _unclear_reason(ticket: Ticket) -> str | None:
     """Return why the policy cannot classify the ticket at all, or None."""
+    if ticket.tracker == "github":
+        return "GitHub issue, while the audit reads Bugzilla and Redmine only"
     if ticket.tracker == "other":
         return "reference is not a ticket this audit can read"
     if ticket.state.upper() in CLOSED_WITHOUT_CONCLUSION:
@@ -237,14 +253,14 @@ def _short_comments(texts: list[str]) -> tuple[str, ...]:
 
 
 def _bugzilla_comments(client: httpx.Client, host: str, ticket_id: int) -> tuple[str, ...]:
-    response = client.get(
+    payload = request_json(
+        client,
         f"{host}/rest/bug/{ticket_id}/comment",
         params={"include_fields": "id,text,creator,creation_time"},
-        timeout=REQUEST_TIMEOUT,
         headers={"User-Agent": USER_AGENT},
     )
-    response.raise_for_status()
-    comments = response.json().get("bugs", {}).get(str(ticket_id), {}).get("comments", [])
+    time.sleep(REQUEST_DELAY)
+    comments = payload.get("bugs", {}).get(str(ticket_id), {}).get("comments", [])
     return _short_comments([str(comment.get("text") or "") for comment in comments])
 
 
@@ -268,14 +284,13 @@ def fetch_bugzilla_tickets(
     for tracker_id, host_refs in pending.items():
         host = BUGZILLA_HOSTS[tracker_id]
         ids = ",".join(str(ref.ticket_id) for ref in host_refs)
-        response = client.get(
+        payload = request_json(
+            client,
             f"{host}/rest/bug",
             params={"id": ids, "include_fields": BUGZILLA_FIELDS},
-            timeout=REQUEST_TIMEOUT,
             headers={"User-Agent": USER_AGENT},
         )
-        response.raise_for_status()
-        bugs = {int(bug["id"]): bug for bug in response.json().get("bugs", [])}
+        bugs = {int(bug["id"]): bug for bug in payload.get("bugs", [])}
         for ref in host_refs:
             bug = bugs.get(ref.ticket_id)
             if bug is None:
@@ -294,6 +309,30 @@ def fetch_bugzilla_tickets(
             store_cached(cache_dir, ref, ticket)
             resolved[ref.raw] = (ticket, "api")
     return resolved
+
+
+def request_json(
+    client: httpx.Client,
+    url: str,
+    *,
+    params: dict[str, str] | None = None,
+    headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Get a URL as JSON, backing off on the tracker's rate-limit and busy answers."""
+    delay = RETRY_DELAY
+    for attempt in range(1, MAX_ATTEMPTS + 1):
+        response = client.get(url, params=params, headers=headers, timeout=REQUEST_TIMEOUT)
+        if response.status_code not in RETRY_STATUS:
+            response.raise_for_status()
+            return response.json()
+        if attempt == MAX_ATTEMPTS:
+            msg = f"{url} still answers {response.status_code} after {MAX_ATTEMPTS} attempts"
+            raise RuntimeError(msg)
+        logger.warning("%s answered %d, retrying in %.0f s", url, response.status_code, delay)
+        time.sleep(delay)
+        delay = min(delay * 2, MAX_RETRY_DELAY)
+    msg = "unreachable"
+    raise RuntimeError(msg)
 
 
 def _redmine_headers(token: str | None) -> dict[str, str]:
@@ -318,14 +357,14 @@ def fetch_redmine_tickets(
         if cached is not None:
             resolved[ref.raw] = (cached, "cache")
             continue
-        response = client.get(
+        payload = request_json(
+            client,
             f"{REDMINE_HOST}/issues/{ref.ticket_id}.json",
             params={"include": "journals"},
-            timeout=REQUEST_TIMEOUT,
             headers=_redmine_headers(token),
         )
-        response.raise_for_status()
-        issue = response.json().get("issue", {})
+        time.sleep(REQUEST_DELAY)
+        issue = payload.get("issue", {})
         notes = [str(journal.get("notes") or "") for journal in issue.get("journals", [])]
         ticket = Ticket(
             reference=ref.raw,
@@ -396,20 +435,97 @@ def audit_references(
         if found is not None:
             ticket, source = found
             proposals.append(propose_label(ticket, source))
-        elif ref.tracker == "other":
+        elif ref.tracker in NON_TICKET_TRACKERS:
             proposals.append(propose_label(_blank_ticket(ref), "missing"))
         else:
             proposals.append(_proposal(_blank_ticket(ref), "unclear", "unclear", "ticket could not be read", "missing"))
     return proposals
 
 
+def _row(
+    entry: dict[str, Any], reference: str, proposal: Proposal | None, verdict: tuple[str, str, str]
+) -> dict[str, Any]:
+    label, confidence, rationale = verdict
+    return {
+        "job_id": int(entry["job_id"]),
+        "test_name": str(entry.get("test_name") or ""),
+        "reference": reference,
+        "ticket_state": proposal.state if proposal else "unknown",
+        "label": label,
+        "confidence": confidence,
+        "rationale": rationale,
+        "scored": label != "unclear",
+    }
+
+
+def annotate_dataset(
+    entries: list[dict[str, Any]],
+    proposals: list[Proposal],
+    *,
+    max_per_ticket: int = DEFAULT_MAX_PER_TICKET,
+    force_unclear: frozenset[str] = frozenset(),
+) -> dict[str, Any]:
+    """Join the corpus rows with their ticket proposals into the v2 dataset."""
+    by_reference = {proposal.reference.lower(): proposal for proposal in proposals}
+    capped: dict[str, int] = {}
+    rows: list[dict[str, Any]] = []
+    for entry in sorted(entries, key=lambda item: (str(item["reference"]).lower(), int(item["job_id"]))):
+        reference = str(entry["reference"])
+        key = reference.lower()
+        if capped.get(key, 0) >= max_per_ticket:
+            continue
+        capped[key] = capped.get(key, 0) + 1
+        proposal = by_reference.get(key)
+        if proposal is None:
+            rows.append(_row(entry, reference, None, ("unclear", "unclear", "ticket could not be read")))
+        elif key in force_unclear:
+            rationale = f"contradicts a sibling ticket, unscored until a human rules: {proposal.rationale}"
+            rows.append(_row(entry, reference, proposal, ("unclear", "unclear", rationale)))
+        else:
+            rows.append(_row(entry, reference, proposal, (proposal.label, proposal.confidence, proposal.rationale)))
+
+    labels = Counter(row["label"] for row in rows if row["scored"])
+    confidences = Counter(row["confidence"] for row in rows if row["scored"])
+    tickets = {row["reference"] for row in rows}
+    scored_tickets = {row["reference"] for row in rows if row["scored"]}
+    scored_rows = sum(labels.values())
+    per_ticket = Counter(row["reference"] for row in rows)
+    return {
+        "metadata": {
+            "rows": len(rows),
+            "scored_rows": scored_rows,
+            "unscored_rows": len(rows) - scored_rows,
+            "tickets": len(tickets),
+            "scored_tickets": len(scored_tickets),
+            "max_per_ticket": max_per_ticket,
+            "force_unclear": sorted(force_unclear),
+            "label_counts": dict(sorted(labels.items())),
+            "confidence_counts": dict(sorted(confidences.items())),
+            "all_product_ceiling_pct": round(labels.get("product", 0) / scored_rows * 100.0, 1) if scored_rows else 0.0,
+            "rows_per_ticket": dict(per_ticket.most_common()),
+        },
+        "entries": rows,
+    }
+
+
+def load_entries(path: pathlib.Path) -> list[dict[str, Any]]:
+    """Read the entries of a corpus dataset."""
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return payload.get("entries", []) if isinstance(payload, dict) else payload
+
+
+def write_payload(payload: object, path: pathlib.Path | None) -> None:
+    """Write a JSON payload to `path`, or to stdout when it is None."""
+    text = json.dumps(payload, indent=1)
+    if path is None:
+        sys.stdout.write(text + "\n")
+        return
+    path.write_text(text + "\n", encoding="utf-8")
+
+
 def write_json(proposals: list[Proposal], path: pathlib.Path | None) -> None:
     """Write the proposals as a JSON array to `path`, or to stdout when it is None."""
-    payload = json.dumps([asdict(proposal) for proposal in proposals], indent=1)
-    if path is None:
-        sys.stdout.write(payload + "\n")
-        return
-    path.write_text(payload + "\n", encoding="utf-8")
+    write_payload([asdict(proposal) for proposal in proposals], path)
 
 
 def main() -> int:
@@ -429,6 +545,23 @@ def main() -> int:
         "--cache-dir", type=pathlib.Path, default=CACHE_DIR, help=f"API answer cache (default: {CACHE_DIR})"
     )
     parser.add_argument("--refresh", action="store_true", help="Ignore the cache and query the servers again")
+    parser.add_argument(
+        "--annotate-dataset",
+        type=pathlib.Path,
+        help="Write the audited v2 dataset for this corpus dataset instead of the bare proposals",
+    )
+    parser.add_argument(
+        "--max-per-ticket",
+        type=int,
+        default=DEFAULT_MAX_PER_TICKET,
+        help=f"Rows the annotated dataset keeps per ticket (default: {DEFAULT_MAX_PER_TICKET})",
+    )
+    parser.add_argument(
+        "--force-unclear",
+        action="append",
+        default=[],
+        help="Reference of a contradiction pair, unscored until a human rules (repeatable)",
+    )
     args = parser.parse_args()
 
     references = collect_references(
@@ -447,6 +580,17 @@ def main() -> int:
             token=load_redmine_token(),
             refresh=args.refresh,
         )
+    if args.annotate_dataset is not None:
+        payload = annotate_dataset(
+            load_entries(args.annotate_dataset),
+            proposals,
+            max_per_ticket=args.max_per_ticket,
+            force_unclear=frozenset(reference.lower() for reference in args.force_unclear),
+        )
+        write_payload(payload, args.output)
+        logger.info("Annotated dataset: %s", payload["metadata"])
+        return 0
+
     write_json(proposals, args.output)
 
     counts = {
