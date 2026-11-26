@@ -15,14 +15,13 @@ python3 scripts/benchmarking/fetch_eval_dataset.py --limit 5000 --groups <all o3
 
 # ticket audit and v2 dataset
 python3 scripts/benchmarking/audit_ticket_labels.py --from-dataset /tmp/corpus_v2.json \
-  --annotate-dataset /tmp/corpus_v2.json --output tests/data/eval_dataset_v2.json \
-  --force-unclear boo#1289464 --force-unclear poo#209751
+  --annotate-dataset /tmp/corpus_v2.json --output tests/data/eval_dataset_v2.json
 ```
 
 The corpus tool lives in the o3-config checkout (`scripts/benchmarking/fetch_eval_dataset.py`), the
-ticket audit in this repository (`scripts/benchmarking/audit_ticket_labels.py`). `--force-unclear` is
-the policy's contradiction rule: the two `esc` tickets describe one symptom with opposite classes and
-stay unscored until a human rules. Ticket answers are cached under
+ticket audit in this repository (`scripts/benchmarking/audit_ticket_labels.py`). `--force-unclear` is the policy's contradiction rule and is
+not in use: the `esc` pair was ruled on 2026-11-26 (`boo#1289464` product, `poo#209751` test), so both
+sets of rows are scored. Ticket answers are cached under
 `~/.cache/o3-config/audit_ticket_labels/`, so a re-run needs `--refresh` to query the trackers again.
 
 ## Corpus
@@ -50,21 +49,21 @@ plus its state. Scored rows only:
 
 | Label | Rows | Tickets |
 |---|---|---|
-| `test` | 109 | 46 |
-| `product` | 81 | 34 |
+| `test` | 111 | 47 |
+| `product` | 86 | 35 |
 | `infra` | 7 | 2 |
-| **Scored total** | **197** | **82** |
+| **Scored total** | **204** | **84** |
 
-By confidence: 102 rows `certain`, 95 `plausible`. All-`product` ceiling of the scored rows:
-**41.1% (81/197)** — lower than the v1 ceiling of 64.0%, because the `test` class now dominates.
+By confidence: 107 rows `certain`, 97 `plausible`. All-`product` ceiling of the scored rows:
+**42.2% (86/204)** — lower than the v1 ceiling of 64.0%, because the `test` class now dominates.
 
-Scored rows by tracker: `poo` 130, `boo` 64, `bsc` 3. The tracker no longer decides the class: 59 of the
-82 scored tickets carry a `poo` reference, and the `poo` tickets labelled `product` are the openQA jobs
+Scored rows by tracker: `poo` 132, `boo` 69, `bsc` 3. The tracker no longer decides the class: 60 of the
+84 scored tickets carry a `poo` reference, and the `poo` tickets labelled `product` are the openQA jobs
 whose product under test is openQA itself.
 
 ## Unscored rows
 
-212 of the 409 rows are `unclear` and stay in the file with their rationale; the scoring tool must skip
+205 of the 409 rows are `unclear` and stay in the file with their rationale; the scoring tool must skip
 them (`scored: false`). Their reasons:
 
 | Reason | Rows |
@@ -75,14 +74,13 @@ them (`scored: false`). Their reasons:
 | The ticket leaves the cause open ("needs to be investigated") | 10 |
 | Reference is not a ticket (`kde#…`, `bootloader_uefi#…`) | 10 |
 | Closed `Rejected` without a conclusion | 10 |
-| Contradiction pending a human ruling (`boo#1289464`, `poo#209751`) | 7 |
 | Closed `RESOLVED/MOVED` (a redirect to another ticket) | 5 |
 | Ticket could not be read (unknown ids, one `bsc` 404) | 4 |
 | Closed `RESOLVED/WONTFIX` without a conclusion | 3 |
 
 The dominant reason is the honest one: the majority of referenced tickets say only "openQA test fails in
-`<module>`" plus the job link, which names a symptom and not the class. 109 of the 191 tickets therefore
-do not decide their label, and the dataset's scorable size is 82 tickets, not 191.
+`<module>`" plus the job link, which names a symptom and not the class. 107 of the 191 tickets therefore
+do not decide their label, and the dataset's scorable size is 84 tickets, not 191.
 
 ## Per-ticket rows
 
@@ -96,19 +94,20 @@ The 12 tickets that contribute five scored rows each:
 | `boo#1263652` | 5 | product | certain | RESOLVED/FIXED | names a product defect: crash |
 | `boo#1283446` | 5 | product | certain | NEW | names a product defect: conflicts with |
 | `boo#1288770` | 5 | product | certain | NEW | names a product defect: fails to |
+| `boo#1289464` | 5 | product | certain | IN_PROGRESS | names a product defect: does not exit |
 | `poo#199868` | 5 | test | certain | In Progress | names test code or test data: `opensuse/lib/utils.pm` |
 | `poo#202368` | 5 | test | plausible | Resolved | names test code or test data: `os-autoinst-distri` |
 | `poo#203406` | 5 | test | plausible | New | names test code or test data: `os-autoinst-distri` |
 | `poo#205077` | 5 | test | plausible | Feedback | names test code or test data: `os-autoinst-distri` |
 | `poo#208527` | 5 | infra | plausible | Resolved | names only an infrastructure fault: worker |
-| `poo#208620` | 5 | test | plausible | New | names test code or test data: needle |
 
-40 of the 82 scored tickets contribute exactly one row, so a row-level percentage still overstates the
+40 of the 84 scored tickets contribute exactly one row, so a row-level percentage still overstates the
 independent sample: the unit for any interval is the ticket.
 
 ## What the audit does to the v1 rows
 
-Of the 50 v1 rows (7 tickets), 25 keep their tracker class under the policy and 25 change:
+With the `esc` ruling of 2026-11-26 (`boo#1289464` product, `poo#209751` test), 46 of the 50 v1 rows keep
+their tracker class and 4 change:
 
 | v1 ticket | Rows | Tracker class | Policy outcome |
 |---|---|---|---|
@@ -116,16 +115,23 @@ Of the 50 v1 rows (7 tickets), 25 keep their tracker class under the policy and 
 | `boo#1246013` | 5 | product | product, certain |
 | `poo#209802` | 4 | test | test, plausible |
 | `boo#1288617` | 3 | product | product, certain |
-| `boo#1289464` | 21 | product | **unclear** (contradiction with `poo#209751`) |
+| `boo#1289464` | 21 | product | product, certain (ruled) |
+| `poo#209751` | 1 | test | test, plausible (ruled) |
 | `boo#1289038` | 3 | product | **unclear** (`RESOLVED/WONTFIX`, no conclusion) |
-| `poo#209751` | 1 | test | **unclear** (contradiction with `boo#1289464`) |
 
-H1 ("at most half of the current rows keep their class") therefore holds at the boundary: 25 of 50 rows
-keep it, 50%. It is fragile, because the outcome turns on the `esc` ruling: if a human rules that pair
-`test` — the policy's product-behaviour-change rule points that way — 26 of 50 rows keep their class
-(52%) and H1 is falsified by one row. Either way the tracker mapping is not a label, and the v1
-comparison that rested on the 21-row ticket is not defensible.
+**H1 is falsified.** The hypothesis predicted that at most half of the current rows keep their class; with
+the ruling, 92% of them do, and the only row-level change is the WONTFIX ticket. What the ruling does not
+change is the reason the audit exists: those 50 rows are 7 tickets, one of them covering 42% of the
+sample, so the v1 numbers remain about seven decisions.
 
+The ruling does, however, invert the 2026-11-26 hint that made this plan. The 26-row "ticket-supported"
+analysis excluded the 21 `esc` rows; scored as `product` they are the class the incumbent answers
+correctly about 20 times out of 21 and `Inkling-2-Mini` about 9 times, so on the v1 sample the label
+decision now favours the incumbent instead of the candidate. That is the strongest available argument for
+measuring on the 84-ticket corpus rather than on either 7-ticket reading: on the v1 rows the ranking is a
+function of a single ticket, in either direction.
+
+## Row schema
 ## Row schema
 
 Each entry carries `job_id`, `test_name`, `reference`, `ticket_state`, `label`, `confidence`,
@@ -148,7 +154,9 @@ label, and the second reading is fixed before the comparison runs.
 
 Pass 3 is the only clean post-correction measurement: 16/20, i.e. 20% of the classes change against a
 10% bar. **H4 is falsified.** Passes 1 and 2 were read blind; for pass 1 five rows had had their label
-printed earlier in the working session, so its 14/20 is an upper bound on the disagreement.
+printed earlier in the working session, so its 14/20 is an upper bound on the disagreement. All three
+passes were taken with the `esc` pair unscored, as the ruling came after them: under the ruling pass 1 loses
+one row (job 6319607, now `product`), so its figure would read 13/20.
 
 The disagreements are one-sided:
 

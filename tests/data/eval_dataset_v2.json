@@ -1,25 +1,22 @@
 {
  "metadata": {
   "rows": 409,
-  "scored_rows": 197,
-  "unscored_rows": 212,
+  "scored_rows": 204,
+  "unscored_rows": 205,
   "tickets": 191,
-  "scored_tickets": 82,
+  "scored_tickets": 84,
   "max_per_ticket": 5,
-  "force_unclear": [
-   "boo#1289464",
-   "poo#209751"
-  ],
+  "force_unclear": [],
   "label_counts": {
    "infra": 7,
-   "product": 81,
-   "test": 109
+   "product": 86,
+   "test": 111
   },
   "confidence_counts": {
-   "certain": 102,
-   "plausible": 95
+   "certain": 107,
+   "plausible": 97
   },
-  "all_product_ceiling_pct": 41.1,
+  "all_product_ceiling_pct": 42.2,
   "rows_per_ticket": {
    "boo#1170723": 5,
    "boo#1230849": 5,
@@ -1300,50 +1297,50 @@
    "test_name": "gnome+apparmor@aarch64",
    "reference": "boo#1289464",
    "ticket_state": "IN_PROGRESS",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "contradicts a sibling ticket, unscored until a human rules: names a product defect: does not exit (state IN_PROGRESS)",
-   "scored": false
+   "label": "product",
+   "confidence": "certain",
+   "rationale": "names a product defect: does not exit (state IN_PROGRESS)",
+   "scored": true
   },
   {
    "job_id": 6317874,
    "test_name": "update_tw2twnext_gnome@aarch64-3G",
    "reference": "boo#1289464",
    "ticket_state": "IN_PROGRESS",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "contradicts a sibling ticket, unscored until a human rules: names a product defect: does not exit (state IN_PROGRESS)",
-   "scored": false
+   "label": "product",
+   "confidence": "certain",
+   "rationale": "names a product defect: does not exit (state IN_PROGRESS)",
+   "scored": true
   },
   {
    "job_id": 6317999,
    "test_name": "gnome@aarch64_no_lse_smp4",
    "reference": "boo#1289464",
    "ticket_state": "IN_PROGRESS",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "contradicts a sibling ticket, unscored until a human rules: names a product defect: does not exit (state IN_PROGRESS)",
-   "scored": false
+   "label": "product",
+   "confidence": "certain",
+   "rationale": "names a product defect: does not exit (state IN_PROGRESS)",
+   "scored": true
   },
   {
    "job_id": 6319607,
    "test_name": "create_hdd_gnome_libyui@aarch64",
    "reference": "boo#1289464",
    "ticket_state": "IN_PROGRESS",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "contradicts a sibling ticket, unscored until a human rules: names a product defect: does not exit (state IN_PROGRESS)",
-   "scored": false
+   "label": "product",
+   "confidence": "certain",
+   "rationale": "names a product defect: does not exit (state IN_PROGRESS)",
+   "scored": true
   },
   {
    "job_id": 6339285,
    "test_name": "upgrade_Leap_15.0_gnome@aarch64",
    "reference": "boo#1289464",
    "ticket_state": "IN_PROGRESS",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "contradicts a sibling ticket, unscored until a human rules: names a product defect: does not exit (state IN_PROGRESS)",
-   "scored": false
+   "label": "product",
+   "confidence": "certain",
+   "rationale": "names a product defect: does not exit (state IN_PROGRESS)",
+   "scored": true
   },
   {
    "job_id": 6328780,
@@ -3920,20 +3917,20 @@
    "test_name": "gnome@aarch64_armv9",
    "reference": "poo#209751",
    "ticket_state": "In Progress",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "contradicts a sibling ticket, unscored until a human rules: names test code or test data: wait_screen_change",
-   "scored": false
+   "label": "test",
+   "confidence": "plausible",
+   "rationale": "names test code or test data: wait_screen_change",
+   "scored": true
   },
   {
    "job_id": 6315059,
    "test_name": "gnome-live@USBboot_aarch64-3G",
    "reference": "poo#209751",
    "ticket_state": "In Progress",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "contradicts a sibling ticket, unscored until a human rules: names test code or test data: wait_screen_change",
-   "scored": false
+   "label": "test",
+   "confidence": "plausible",
+   "rationale": "names test code or test data: wait_screen_change",
+   "scored": true
   },
   {
    "job_id": 6336117,
