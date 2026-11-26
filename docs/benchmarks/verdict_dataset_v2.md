@@ -132,3 +132,60 @@ Each entry carries `job_id`, `test_name`, `reference`, `ticket_state`, `label`, 
 `rationale` and `scored`. The `metadata` block records the row and ticket counts, the label and
 confidence counts, the all-`product` ceiling, the cap, the forced-unclear references and the per-ticket
 row counts.
+## Reproducibility
+
+H4 asks whether a second reading of the same evidence reaches the same class. Measured on deterministic
+20-row samples (`random.Random(<seed>).sample` over the rows sorted by job id): the first pass writes a
+blinded file with the ticket's summary, description and first three comments, without the recorded
+label, and the second reading is fixed before the comparison runs.
+
+| Pass | Sample seed | Tool state | Agreement |
+|---|---|---|---|
+| 1 | 20261126 | initial heuristic table | 14/20 |
+| 2 | 20261128 | after the corrections below | 13/20 |
+| 2b | 20261128 | post hoc, same sample, final rules | 19/20 |
+| 3 | 20261129 | final rules, untouched sample | 16/20 |
+
+Pass 3 is the only clean post-correction measurement: 16/20, i.e. 20% of the classes change against a
+10% bar. **H4 is falsified.** Passes 1 and 2 were read blind; for pass 1 five rows had had their label
+printed earlier in the working session, so its 14/20 is an upper bound on the disagreement.
+
+The disagreements are one-sided:
+
+| Pass | Ticket | Tool | Second reading | Resolution |
+|---|---|---|---|---|
+| 1 | `poo#202767` | product | unclear | tool over-read "fails to"; the ticket says the cause "needs to be investigated" |
+| 1 | `poo#205569` | unclear | test | "this test module needs work" missed by the adaptation rule |
+| 1 | `poo#203088` | unclear | test | stale test data after grafana 11 → 12; rule 3 applies, the table does not see it |
+| 1 | `boo#1272188` | unclear | product | "terminates on signal 11" not a product phrase in the table |
+| 1 | `poo#209454` | unclear | test | "yast is no longer to be preinstalled" missed |
+| 2 | `poo#203226` | test | unclear | a `*.yaml` path in the log counted as test code although it is a product path |
+| 2 | `poo#210111` | unclear | product | kernel regression phrasing ("helper failed") missed |
+| 2 | `poo#210456` | unclear | test | "no longer to detect the expected strings" missed |
+| 2 | `boo#1276489` | unclear | product | "requirement cannot be provided" missed |
+| 3 | `poo#209943` | product | test | "broken" in prose; the ticket says the failure is sporadic and upstream calls it not a kernel issue |
+| 3 | `bsc#1234398` | unclear | product | "TimeoutSec=5s" hardcoded in a product unit; the table has no phrase for it |
+| 3 | `poo#187110` | unclear | test | an upstream xfstests update fixes the test; not visible in the table |
+| 3 | `boo#1271391` | unclear | product | SELinux `allow` rules from `audit2allow`, not denials |
+
+The corrections the first two passes forced, all of them general rules rather than sample exceptions:
+
+- test evidence is a source file (`.pm`, `.py`) or a `schedule/`/`data/` path, never a bare `.yaml` path
+  taken from a log;
+- the adaptation rule covers "no longer supported / available / preinstalled / to detect" and "module
+  needs work";
+- a ticket that says the cause needs investigation is `unclear` before any class rule fires;
+- the product rule knows `signal N`, `helper failed`, `cannot be provided`, `failed to load`,
+  `audit denied` and `conflicts with`;
+- `RESOLVED/MOVED` is a redirect, so the row is unscored like a duplicate.
+
+What remains is not a policy disagreement but a detection limit: three of the four remaining
+disagreements are the tool answering `unclear` where a reader names a class, which costs sample size but
+never scores a wrong class, and one is the tool asserting `product` on a flaky-test ticket, which does.
+The written policy was stable across all three passes: no disagreement was about which rule applies, only
+about whether the table noticed the evidence.
+
+Consequence for plan 022: the labels are the tool's proposals with their confidence, not a human's
+verdict, and H4's bar is not met. A decision that hangs on a 12-point difference therefore needs the
+second instrument the plan names — a human spot-check of the disputed class — rather than this dataset
+alone.
