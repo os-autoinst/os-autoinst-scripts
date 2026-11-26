@@ -256,12 +256,23 @@ def test_handle_host_zombie_transient(mocker: MockerFixture, capsys: pytest.Capt
     mocker.patch("reaper.run_ssh", side_effect=["12345 8380780 Z", ""])
     mocker.patch("time.sleep")
     mock_health = mocker.patch("reaper.check_libvirt_health", return_value=True)
-    config = reaper.ReaperConfig(dry_run=False, verbose=True)
+    config = reaper.ReaperConfig(dry_run=False, verbose=False)
     reaper.handle_host("s390zl12.oqa.prg2.suse.org", config)
     captured = capsys.readouterr().out
     assert "Detected potential zombies on s390zl12.oqa.prg2.suse.org, waiting 10s to verify persistence..." in captured
-    assert "Zombies on s390zl12.oqa.prg2.suse.org were transient or PIDs were reused." in captured
+    assert "No persistent zombies found on s390zl12.oqa.prg2.suse.org." in captured
     mock_health.assert_called_once_with("s390zl12.oqa.prg2.suse.org", config)
+
+
+def test_restart_failed_jobs_logs_completion(mocker: MockerFixture, capsys: pytest.CaptureFixture[str]) -> None:
+    mocker.patch("reaper.should_restart_job", return_value=True)
+    mock_run_cmd = mocker.patch("reaper.run_cmd")
+    reaper.restart_failed_jobs([123, 456], reaper.ReaperConfig(dry_run=False))
+    captured = capsys.readouterr().out
+    assert "Retriggering job 123..." in captured
+    assert "Retriggering job 456..." in captured
+    assert "Job retriggering complete." in captured
+    mock_run_cmd.assert_any_call("openqa-cli api --osd -X POST jobs/123/restart", verbose=False, timeout=60)
 
 
 def test_handle_host_d_state_persistent(mocker: MockerFixture, capsys: pytest.CaptureFixture[str]) -> None:
