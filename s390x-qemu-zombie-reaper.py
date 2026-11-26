@@ -57,6 +57,10 @@ SSH_ERR_CONNECT = 255
 HMC_DEFAULT_PORT = 6794
 HMC_JOB_TIMEOUT = 900
 HMC_STATUS_TIMEOUT = 900
+DEFAULT_RESTART_TIMEOUT = 180
+DEFAULT_RESTART_DEADLINE_MINUTES = 15
+RESTART_VERIFY_TIMEOUT = 60
+RESTART_VERIFY_INTERVAL = 5
 HTTP_ACCEPTED = 202
 HTTP_NO_CONTENT = 204
 JOB_STATUS_OK = 204
@@ -104,6 +108,8 @@ class ReaperConfig:
     ssh_timeout: int = 10
     ssh_check_interval: int = 15
     cmd_timeout: int = 60
+    restart_timeout: int = DEFAULT_RESTART_TIMEOUT
+    restart_deadline_minutes: int = DEFAULT_RESTART_DEADLINE_MINUTES
     hmc_fallback: bool = True
     hmc_host: str | None = None
     hmc_port: int = HMC_DEFAULT_PORT
@@ -162,6 +168,19 @@ def file_lock(path: Path) -> Generator[bool, None, None]:
                     fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
 
+@dataclass(frozen=True)
+class CmdResult:
+    """Outcome of a shell command: exit code, stdout, and whether it timed out."""
+
+    returncode: int
+    stdout: str
+    timed_out: bool = False
+
+    @property
+    def ok(self) -> bool:
+        return self.returncode == 0 and not self.timed_out
+
+
 def run_cmd(
     cmd: str,
     *,
@@ -169,8 +188,8 @@ def run_cmd(
     verbose: bool = False,
     timeout: int = 60,
     cmd_input: str | None = None,
-) -> str:
-    """Run a shell command and return its output."""
+) -> CmdResult:
+    """Run a shell command and return its exit code, stdout and whether it timed out."""
     if verbose:
         print(f"Executing: {cmd}")
     try:
@@ -182,16 +201,16 @@ def run_cmd(
             check=check,
             timeout=timeout,
         )
-        return res.stdout.strip()
+        return CmdResult(res.returncode, res.stdout.strip())
     except subprocess.CalledProcessError as e:
         print(f"Error executing command: {cmd}\n{e.stderr}")
-        return ""
+        return CmdResult(e.returncode, e.stdout.strip())
     except subprocess.TimeoutExpired:
         print(f"Command timed out after {timeout}s: {cmd}")
-        return ""
+        return CmdResult(-1, "", timed_out=True)
     except OSError as e:
         print(f"Error executing command: {cmd}\n{e}")
-        return ""
+        return CmdResult(-1, "")
 
 
 def get_running_jobs(hypervisor_host: str, *, verbose: bool = False, timeout: int = 60) -> list[int]:
@@ -199,12 +218,12 @@ def get_running_jobs(hypervisor_host: str, *, verbose: bool = False, timeout: in
     # Extract the short name (e.g., s390zl12) from the FQDN
     short_name = hypervisor_host.split(".", maxsplit=1)[0]
 
-    output = run_cmd("openqa-cli api --osd -X GET workers", verbose=verbose, timeout=timeout)
-    if not output:
+    result = run_cmd("openqa-cli api --osd -X GET workers", verbose=verbose, timeout=timeout)
+    if not result.ok:
         return []
 
     try:
-        data: dict[str, Any] = json.loads(output)
+        data: dict[str, Any] = json.loads(result.stdout)
         workers_data = data.get("workers", [])
     except json.JSONDecodeError as e:
         print(f"Failed to fetch running jobs for {hypervisor_host}: {e}")
@@ -226,11 +245,11 @@ def get_running_jobs(hypervisor_host: str, *, verbose: bool = False, timeout: in
 
 def get_job_info(job_id: int, *, verbose: bool = False) -> dict[str, Any] | None:
     """Fetch job details from openQA."""
-    output = run_cmd(f"openqa-cli api --osd -X GET jobs/{job_id}", verbose=verbose)
-    if not output:
+    result = run_cmd(f"openqa-cli api --osd -X GET jobs/{job_id}", verbose=verbose)
+    if not result.ok:
         return None
     try:
-        data: dict[str, Any] = json.loads(output)
+        data: dict[str, Any] = json.loads(result.stdout)
         return data.get("job")
     except json.JSONDecodeError as e:
         print(f"Failed to fetch job info for {job_id}: {e}")
@@ -516,17 +535,97 @@ def recover_for_jobs(host: str, jobs: list[int], config: ReaperConfig, *, host_d
     return True
 
 
+def clone_of(response: str, job_id: int) -> str:
+    """Return the clone openQA reports for a restart request, empty string if it refused the restart.
+
+    openQA answers a refused restart, e.g. missing assets, with HTTP 200 and exit code 0, so the
+    errors field is the only place the refusal is visible.
+    """
+    if not response:
+        return ""
+    try:
+        body = json.loads(response)
+    except json.JSONDecodeError as e:
+        print(f"Unparsable restart response for job {job_id}: {e}")
+        return ""
+    errors = body.get("errors")
+    if errors:
+        print(f"Restart of job {job_id} refused: {'; '.join(errors)}")
+        return ""
+    clones = body.get("result") or []
+    clone_id = clones[0].get(str(job_id)) if clones else None
+    return "" if clone_id is None else str(clone_id)
+
+
+def wait_for_clone(job_id: int, config: ReaperConfig) -> str:
+    """Poll the job for a clone id, the server-side result of a restart whose request timed out."""
+    deadline = time.time() + RESTART_VERIFY_TIMEOUT
+    while True:
+        job = get_job_info(job_id, verbose=config.verbose)
+        if job and job.get("clone_id"):
+            return str(job["clone_id"])
+        if time.time() >= deadline:
+            return ""
+        time.sleep(RESTART_VERIFY_INTERVAL)
+
+
+def restart_command(job_id: int) -> str:
+    """Return the openQA API call that restarts the job."""
+    return f"openqa-cli api --osd -X POST jobs/{job_id}/restart"
+
+
+def restart_job(job_id: int, config: ReaperConfig) -> str:
+    """Restart one job and return its clone id, empty string if openQA refused the restart.
+
+    A client-side timeout is not a failed restart: openQA refuses to clone a job that already has a
+    clone, so the retry is safe and the outcome is read from the job.
+    """
+    result = run_cmd(restart_command(job_id), verbose=config.verbose, timeout=config.restart_timeout)
+    clone_id = clone_of(result.stdout, job_id) if result.ok else ""
+    if clone_id or not result.timed_out:
+        return clone_id
+    print(f"Restart request for job {job_id} timed out, checking the job for a clone...")
+    clone_id = wait_for_clone(job_id, config)
+    if clone_id:
+        return clone_id
+    print(f"Job {job_id} has no clone, retrying the restart...")
+    retry = run_cmd(restart_command(job_id), verbose=config.verbose, timeout=config.restart_timeout)
+    clone_id = clone_of(retry.stdout, job_id)
+    if clone_id:
+        return clone_id
+    job = get_job_info(job_id, verbose=config.verbose)
+    return str(job["clone_id"]) if job and job.get("clone_id") else ""
+
+
 def restart_failed_jobs(jobs: list[int], config: ReaperConfig) -> None:
-    """Restart jobs that have failed."""
-    for job_id in jobs:
+    """Restart jobs that have failed, reporting the outcome per job and in total."""
+    restarted = skipped = failed = deferred = 0
+    deadline = time.time() + config.restart_deadline_minutes * 60
+    for index, job_id in enumerate(jobs):
+        if time.time() >= deadline:
+            left = jobs[index:]
+            deferred += len(left)
+            print(
+                f"Restart deadline of {config.restart_deadline_minutes} minutes reached, jobs left for a "
+                f"manual retrigger: {', '.join(map(str, left))}."
+            )
+            break
         if not should_restart_job(job_id, verbose=config.verbose):
+            skipped += 1
             continue
-        retrigger_cmd = f"openqa-cli api --osd -X POST jobs/{job_id}/restart"
         if config.dry_run:
-            print(f"[DRY-RUN] Would execute: {retrigger_cmd}")
+            print(f"[DRY-RUN] Would execute: {restart_command(job_id)}")
+            deferred += 1
+            continue
+        print(f"Retriggering job {job_id}...")
+        clone_id = restart_job(job_id, config)
+        if clone_id:
+            restarted += 1
+            print(f"Job {job_id} restarted as {clone_id}.")
         else:
-            print(f"Retriggering job {job_id}...")
-            run_cmd(retrigger_cmd, verbose=config.verbose, timeout=config.cmd_timeout)
+            failed += 1
+            print(f"Could not restart job {job_id}.")
+    print(f"Restarted {restarted} job(s), skipped {skipped}, failed {failed}, deferred {deferred}.")
 
 
 def trigger_actions(
@@ -729,6 +828,21 @@ def reap(  # ruff: ignore[too-many-arguments]
         int,
         typer.Option("--cmd-timeout", help="Default timeout in seconds for shell commands"),
     ] = 60,
+    restart_timeout: Annotated[
+        int,
+        typer.Option(
+            "--restart-timeout",
+            help="Timeout in seconds for a restart request; openQA clones the job's dependency cluster inside it.",
+        ),
+    ] = DEFAULT_RESTART_TIMEOUT,
+    restart_deadline_minutes: Annotated[
+        int,
+        typer.Option(
+            "--restart-deadline-minutes",
+            help="Total time in minutes for the restart phase. Jobs left when it passes are listed for a "
+            "manual retrigger.",
+        ),
+    ] = DEFAULT_RESTART_DEADLINE_MINUTES,
     hmc_fallback: Annotated[
         bool,
         typer.Option(
@@ -823,6 +937,8 @@ def reap(  # ruff: ignore[too-many-arguments]
         max_wait_minutes=max_wait_minutes,
         stability_delay_minutes=stability_delay_minutes,
         cmd_timeout=cmd_timeout,
+        restart_timeout=restart_timeout,
+        restart_deadline_minutes=restart_deadline_minutes,
         hmc_fallback=hmc_fallback,
         hmc_host=hmc_host,
         hmc_port=hmc_port,
