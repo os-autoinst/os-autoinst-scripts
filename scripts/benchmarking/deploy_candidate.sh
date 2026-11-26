@@ -12,7 +12,7 @@ DEFAULT_THREADS=64
 DEFAULT_CTX=65536
 
 usage() {
-	cat <<'USAGE'
+    cat << 'USAGE'
 Usage:
   deploy_candidate.sh start [--worker NAME] [--image IMAGE] [--draft <repo@file>]
       [--spec-type TYPE] [--spec-draft-n-max N] <hf_model[:quant]|repo@file> [port] [threads] [ctx]
@@ -34,7 +34,7 @@ Examples:
   deploy_candidate.sh status 8082
   deploy_candidate.sh stop 8082
 USAGE
-	exit 1
+    exit 1
 }
 
 ACTION="${1:-}"
@@ -49,85 +49,87 @@ SPEC_DRAFT_N_MAX=""
 POSITIONAL=()
 
 while [ $# -gt 0 ]; do
-	case "$1" in
-	--worker)
-		[ $# -ge 2 ] || usage
-		WORKER="$2"
-		shift 2
-		;;
-	--image)
-		[ $# -ge 2 ] || usage
-		IMAGE="$2"
-		shift 2
-		;;
-	--draft)
-		[ $# -ge 2 ] || usage
-		DRAFT="$2"
-		shift 2
-		;;
-	--spec-type)
-		[ $# -ge 2 ] || usage
-		SPEC_TYPE="$2"
-		shift 2
-		;;
-	--spec-draft-n-max)
-		[ $# -ge 2 ] || usage
-		SPEC_DRAFT_N_MAX="$2"
-		shift 2
-		;;
-	-h | --help)
-		usage
-		;;
-	--*)
-		echo "[ERROR] Unknown option: $1" >&2
-		usage
-		;;
-	*)
-		POSITIONAL+=("$1")
-		shift
-		;;
-	esac
+    case "$1" in
+        --worker)
+            [ $# -ge 2 ] || usage
+            WORKER="$2"
+            shift 2
+            ;;
+        --image)
+            [ $# -ge 2 ] || usage
+            IMAGE="$2"
+            shift 2
+            ;;
+        --draft)
+            [ $# -ge 2 ] || usage
+            DRAFT="$2"
+            shift 2
+            ;;
+        --spec-type)
+            [ $# -ge 2 ] || usage
+            SPEC_TYPE="$2"
+            shift 2
+            ;;
+        --spec-draft-n-max)
+            [ $# -ge 2 ] || usage
+            SPEC_DRAFT_N_MAX="$2"
+            shift 2
+            ;;
+        -h | --help)
+            usage
+            ;;
+        --*)
+            echo "[ERROR] Unknown option: $1" >&2
+            usage
+            ;;
+        *)
+            POSITIONAL+=("$1")
+            shift
+            ;;
+    esac
 done
 
 SPEC_ARGS=""
 if [ -n "$SPEC_TYPE" ]; then
-	SPEC_ARGS=" --spec-type '${SPEC_TYPE}'"
+    SPEC_ARGS=" --spec-type '${SPEC_TYPE}'"
 fi
 if [ -n "$SPEC_DRAFT_N_MAX" ]; then
-	SPEC_ARGS="${SPEC_ARGS} --spec-draft-n-max '${SPEC_DRAFT_N_MAX}'"
+    SPEC_ARGS="${SPEC_ARGS} --spec-draft-n-max '${SPEC_DRAFT_N_MAX}'"
 fi
 if [ -n "$DRAFT" ]; then
-	if [[ "$DRAFT" == *"@"* ]]; then
-		SPEC_ARGS="${SPEC_ARGS} --spec-draft-hf '${DRAFT%%@*}' --spec-draft-model '${DRAFT##*@}'"
-	else
-		SPEC_ARGS="${SPEC_ARGS} --spec-draft-model '${DRAFT}'"
-	fi
+    if [[ "$DRAFT" == *"@"* ]]; then
+        SPEC_ARGS="${SPEC_ARGS} --spec-draft-hf '${DRAFT%%@*}' --spec-draft-model '${DRAFT##*@}'"
+    else
+        SPEC_ARGS="${SPEC_ARGS} --spec-draft-model '${DRAFT}'"
+    fi
 fi
 
 echo "[INFO] Target worker: ${WORKER}, image: ${IMAGE}"
 if [ -n "$DRAFT" ]; then
-	echo "[INFO] Speculative decoding: draft ${DRAFT}, spec-type ${SPEC_TYPE:-unset}, n-max ${SPEC_DRAFT_N_MAX:-unset}"
+    echo "[INFO] Speculative decoding: draft ${DRAFT}, spec-type ${SPEC_TYPE:-unset}, n-max ${SPEC_DRAFT_N_MAX:-unset}"
 fi
 
 case "$ACTION" in
-start)
-	MODEL="${POSITIONAL[0]:-}"
-	PORT="${POSITIONAL[1]:-$DEFAULT_PORT}"
-	THREADS="${POSITIONAL[2]:-$DEFAULT_THREADS}"
-	CTX="${POSITIONAL[3]:-$DEFAULT_CTX}"
-	[ -z "$MODEL" ] && usage
+    start)
+        MODEL="${POSITIONAL[0]:-}"
+        PORT="${POSITIONAL[1]:-$DEFAULT_PORT}"
+        THREADS="${POSITIONAL[2]:-$DEFAULT_THREADS}"
+        CTX="${POSITIONAL[3]:-$DEFAULT_CTX}"
+        [ -z "$MODEL" ] && usage
 
-	# Support repo@file syntax to pin exact GGUF file
-	if [[ "$MODEL" == *"@"* ]]; then
-		HF_ARGS="-hf '${MODEL%%@*}' --hf-file '${MODEL##*@}'"
-	else
-		HF_ARGS="-hf '${MODEL}'"
-	fi
+        # Support repo@file syntax to pin exact GGUF file
+        if [[ "$MODEL" == *"@"* ]]; then
+            HF_ARGS="-hf '${MODEL%%@*}' --hf-file '${MODEL##*@}'"
+        else
+            HF_ARGS="-hf '${MODEL}'"
+        fi
 
-	CONTAINER_NAME="llama-bench-${PORT}"
-	echo "[INFO] Deploying candidate $MODEL on $WORKER:$PORT (container: $CONTAINER_NAME)..."
+        CONTAINER_NAME="llama-bench-${PORT}"
+        echo "[INFO] Deploying candidate $MODEL on $WORKER:$PORT (container: $CONTAINER_NAME)..."
 
-	ssh -o BatchMode=yes "$BASTION" ssh -o BatchMode=yes "$WORKER" bash -s <<EOF
+        # the remote command needs the local values of ${PORT} and ${CONTAINER_NAME}
+        # shellcheck disable=SC2087
+        ssh -o BatchMode=yes "$BASTION" ssh -o BatchMode=yes "$WORKER" bash -s << EOF
 set -e
 # Check if port is already in use
 if ss -tulpn | grep -q ":${PORT} "; then
@@ -169,23 +171,27 @@ echo "[ERROR] Timed out waiting for ${CONTAINER_NAME} to become healthy."
 su - llama -c "podman logs --tail 50 ${CONTAINER_NAME}"
 exit 1
 EOF
-	;;
+        ;;
 
-stop)
-	PORT="${POSITIONAL[0]:-$DEFAULT_PORT}"
-	CONTAINER_NAME="llama-bench-${PORT}"
-	echo "[INFO] Stopping container $CONTAINER_NAME on $WORKER..."
-	ssh -o BatchMode=yes "$BASTION" ssh -o BatchMode=yes "$WORKER" bash -s <<EOF
+    stop)
+        PORT="${POSITIONAL[0]:-$DEFAULT_PORT}"
+        CONTAINER_NAME="llama-bench-${PORT}"
+        echo "[INFO] Stopping container $CONTAINER_NAME on $WORKER..."
+        # the remote command needs the local values of ${PORT} and ${CONTAINER_NAME}
+        # shellcheck disable=SC2087
+        ssh -o BatchMode=yes "$BASTION" ssh -o BatchMode=yes "$WORKER" bash -s << EOF
 su - llama -c "podman rm -f ${CONTAINER_NAME} 2>/dev/null || true"
 echo "[INFO] Container ${CONTAINER_NAME} removed."
 EOF
-	;;
+        ;;
 
-status)
-	PORT="${POSITIONAL[0]:-$DEFAULT_PORT}"
-	CONTAINER_NAME="llama-bench-${PORT}"
-	echo "[INFO] Checking status of $CONTAINER_NAME on $WORKER:$PORT..."
-	ssh -o BatchMode=yes "$BASTION" ssh -o BatchMode=yes "$WORKER" bash -s <<EOF
+    status)
+        PORT="${POSITIONAL[0]:-$DEFAULT_PORT}"
+        CONTAINER_NAME="llama-bench-${PORT}"
+        echo "[INFO] Checking status of $CONTAINER_NAME on $WORKER:$PORT..."
+        # the remote command needs the local values of ${PORT} and ${CONTAINER_NAME}
+        # shellcheck disable=SC2087
+        ssh -o BatchMode=yes "$BASTION" ssh -o BatchMode=yes "$WORKER" bash -s << EOF
 if ss -tulpn | grep -q ":${PORT} "; then
     echo "[INFO] Port ${PORT} is listening."
     curl -s "http://127.0.0.1:${PORT}/health" || true
@@ -197,9 +203,9 @@ else
 fi
 su - llama -c "podman ps -a --filter name=${CONTAINER_NAME}"
 EOF
-	;;
+        ;;
 
-*)
-	usage
-	;;
+    *)
+        usage
+        ;;
 esac
