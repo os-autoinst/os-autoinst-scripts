@@ -1,10 +1,10 @@
 {
  "metadata": {
   "rows": 409,
-  "scored_rows": 180,
-  "unscored_rows": 229,
+  "scored_rows": 197,
+  "unscored_rows": 212,
   "tickets": 191,
-  "scored_tickets": 75,
+  "scored_tickets": 82,
   "max_per_ticket": 5,
   "force_unclear": [
    "boo#1289464",
@@ -12,14 +12,14 @@
   ],
   "label_counts": {
    "infra": 7,
-   "product": 69,
-   "test": 104
+   "product": 81,
+   "test": 109
   },
   "confidence_counts": {
-   "certain": 92,
-   "plausible": 88
+   "certain": 102,
+   "plausible": 95
   },
-  "all_product_ceiling_pct": 38.3,
+  "all_product_ceiling_pct": 41.1,
   "rows_per_ticket": {
    "boo#1170723": 5,
    "boo#1230849": 5,
@@ -270,50 +270,50 @@
    "test_name": "jeos@aarch32-HD20G",
    "reference": "boo#1230849",
    "ticket_state": "NEW",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "product",
+   "confidence": "certain",
+   "rationale": "names a product defect: Failed to load (state NEW)",
+   "scored": true
   },
   {
    "job_id": 6243159,
    "test_name": "jeos@aarch32-HD20G",
    "reference": "boo#1230849",
    "ticket_state": "NEW",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "product",
+   "confidence": "certain",
+   "rationale": "names a product defect: Failed to load (state NEW)",
+   "scored": true
   },
   {
    "job_id": 6274951,
    "test_name": "jeos@aarch32-HD20G",
    "reference": "boo#1230849",
    "ticket_state": "NEW",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "product",
+   "confidence": "certain",
+   "rationale": "names a product defect: Failed to load (state NEW)",
+   "scored": true
   },
   {
    "job_id": 6323687,
    "test_name": "jeos@aarch32-HD20G",
    "reference": "boo#1230849",
    "ticket_state": "NEW",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "product",
+   "confidence": "certain",
+   "rationale": "names a product defect: Failed to load (state NEW)",
+   "scored": true
   },
   {
    "job_id": 6346830,
    "test_name": "jeos@aarch32-HD20G",
    "reference": "boo#1230849",
    "ticket_state": "NEW",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "product",
+   "confidence": "certain",
+   "rationale": "names a product defect: Failed to load (state NEW)",
+   "scored": true
   },
   {
    "job_id": 6044239,
@@ -380,40 +380,40 @@
    "test_name": "jeos-selinux@aarch64_armv9-HD20G",
    "reference": "boo#1252993",
    "ticket_state": "NEW",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "product",
+   "confidence": "certain",
+   "rationale": "names a product defect: audit denied (state NEW)",
+   "scored": true
   },
   {
    "job_id": 6080304,
    "test_name": "jeos-selinux@aarch64-HD20G",
    "reference": "boo#1252993",
    "ticket_state": "NEW",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "product",
+   "confidence": "certain",
+   "rationale": "names a product defect: audit denied (state NEW)",
+   "scored": true
   },
   {
    "job_id": 6141462,
    "test_name": "jeos-selinux@aarch64-HD20G",
    "reference": "boo#1252993",
    "ticket_state": "NEW",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "product",
+   "confidence": "certain",
+   "rationale": "names a product defect: audit denied (state NEW)",
+   "scored": true
   },
   {
    "job_id": 6210358,
    "test_name": "jeos-selinux@aarch64-HD20G",
    "reference": "boo#1252993",
    "ticket_state": "NEW",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "product",
+   "confidence": "certain",
+   "rationale": "names a product defect: audit denied (state NEW)",
+   "scored": true
   },
   {
    "job_id": 6148544,
@@ -510,10 +510,10 @@
    "test_name": "bci_ruby_podman@uefi",
    "reference": "boo#1268241",
    "ticket_state": "NEW",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "product",
+   "confidence": "certain",
+   "rationale": "names a product defect: conflicts with (state NEW)",
+   "scored": true
   },
   {
    "job_id": 6048642,
@@ -770,10 +770,10 @@
    "test_name": "install_only@64bit-multipath",
    "reference": "boo#1272188",
    "ticket_state": "RESOLVED/FIXED",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "product",
+   "confidence": "certain",
+   "rationale": "names a product defect: terminates on (state RESOLVED/FIXED)",
+   "scored": true
   },
   {
    "job_id": 6117864,
@@ -850,30 +850,30 @@
    "test_name": "zdup_in_x_tw2twnext_kde@uefi-3G",
    "reference": "boo#1276489",
    "ticket_state": "NEW",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "product",
+   "confidence": "certain",
+   "rationale": "names a product defect: cannot be provided (state NEW)",
+   "scored": true
   },
   {
    "job_id": 6184151,
    "test_name": "zdup_tw2twnext_kde@uefi-3G",
    "reference": "boo#1276489",
    "ticket_state": "NEW",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "product",
+   "confidence": "certain",
+   "rationale": "names a product defect: cannot be provided (state NEW)",
+   "scored": true
   },
   {
    "job_id": 6184337,
    "test_name": "update_tw2twnext_kde@uefi-3G",
    "reference": "boo#1276489",
    "ticket_state": "NEW",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "product",
+   "confidence": "certain",
+   "rationale": "names a product defect: cannot be provided (state NEW)",
+   "scored": true
   },
   {
    "job_id": 6196937,
@@ -890,10 +890,10 @@
    "test_name": "microos@uefi-3G",
    "reference": "boo#1277929",
    "ticket_state": "RESOLVED/FIXED",
-   "label": "test",
-   "confidence": "certain",
-   "rationale": "names test code or test data: d/tumbleweed.yaml",
-   "scored": true
+   "label": "unclear",
+   "confidence": "unclear",
+   "rationale": "ticket content names neither a product nor a test defect",
+   "scored": false
   },
   {
    "job_id": 6198395,
@@ -990,70 +990,70 @@
    "test_name": "selinux@uefi",
    "reference": "boo#1283075",
    "ticket_state": "RESOLVED/FIXED",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "product",
+   "confidence": "certain",
+   "rationale": "names a product defect: AVC denied (state RESOLVED/FIXED)",
+   "scored": true
   },
   {
    "job_id": 6243033,
    "test_name": "selinux@aarch64",
    "reference": "boo#1283075",
    "ticket_state": "RESOLVED/FIXED",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "product",
+   "confidence": "certain",
+   "rationale": "names a product defect: AVC denied (state RESOLVED/FIXED)",
+   "scored": true
   },
   {
    "job_id": 6255312,
    "test_name": "extra_tests_textmode@ppc64le",
    "reference": "boo#1283446",
    "ticket_state": "NEW",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "product",
+   "confidence": "certain",
+   "rationale": "names a product defect: conflicts with (state NEW)",
+   "scored": true
   },
   {
    "job_id": 6263779,
    "test_name": "extra_tests_textmode@ppc64le",
    "reference": "boo#1283446",
    "ticket_state": "NEW",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "product",
+   "confidence": "certain",
+   "rationale": "names a product defect: conflicts with (state NEW)",
+   "scored": true
   },
   {
    "job_id": 6266623,
    "test_name": "extra_tests_textmode@ppc64le",
    "reference": "boo#1283446",
    "ticket_state": "NEW",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "product",
+   "confidence": "certain",
+   "rationale": "names a product defect: conflicts with (state NEW)",
+   "scored": true
   },
   {
    "job_id": 6269525,
    "test_name": "extra_tests_textmode@ppc64le",
    "reference": "boo#1283446",
    "ticket_state": "NEW",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "product",
+   "confidence": "certain",
+   "rationale": "names a product defect: conflicts with (state NEW)",
+   "scored": true
   },
   {
    "job_id": 6282586,
    "test_name": "extra_tests_textmode@ppc64le",
    "reference": "boo#1283446",
    "ticket_state": "NEW",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "product",
+   "confidence": "certain",
+   "rationale": "names a product defect: conflicts with (state NEW)",
+   "scored": true
   },
   {
    "job_id": 6256539,
@@ -1061,8 +1061,8 @@
    "reference": "boo#1284511",
    "ticket_state": "NEW",
    "label": "test",
-   "confidence": "certain",
-   "rationale": "names test code or test data: config.yaml",
+   "confidence": "plausible",
+   "rationale": "names test code or test data: os-autoinst-distri",
    "scored": true
   },
   {
@@ -1071,8 +1071,8 @@
    "reference": "boo#1284511",
    "ticket_state": "NEW",
    "label": "test",
-   "confidence": "certain",
-   "rationale": "names test code or test data: config.yaml",
+   "confidence": "plausible",
+   "rationale": "names test code or test data: os-autoinst-distri",
    "scored": true
   },
   {
@@ -1081,8 +1081,8 @@
    "reference": "boo#1284511",
    "ticket_state": "NEW",
    "label": "test",
-   "confidence": "certain",
-   "rationale": "names test code or test data: config.yaml",
+   "confidence": "plausible",
+   "rationale": "names test code or test data: os-autoinst-distri",
    "scored": true
   },
   {
@@ -2190,40 +2190,40 @@
    "test_name": "upgrade_boot-into_snapshot_rollback_Leap_15.1_gnome@64bit",
    "reference": "poo#195551",
    "ticket_state": "New",
-   "label": "test",
-   "confidence": "plausible",
-   "rationale": "product behaviour change the test suite must absorb",
-   "scored": true
+   "label": "unclear",
+   "confidence": "unclear",
+   "rationale": "the ticket leaves the cause open: unclear",
+   "scored": false
   },
   {
    "job_id": 6041337,
    "test_name": "upgrade_boot-into_snapshot_rollback_Leap_15.1_gnome@64bit",
    "reference": "poo#195551",
    "ticket_state": "New",
-   "label": "test",
-   "confidence": "plausible",
-   "rationale": "product behaviour change the test suite must absorb",
-   "scored": true
+   "label": "unclear",
+   "confidence": "unclear",
+   "rationale": "the ticket leaves the cause open: unclear",
+   "scored": false
   },
   {
    "job_id": 6047444,
    "test_name": "upgrade_boot-into_snapshot_rollback_Leap_15.1_gnome@64bit",
    "reference": "poo#195551",
    "ticket_state": "New",
-   "label": "test",
-   "confidence": "plausible",
-   "rationale": "product behaviour change the test suite must absorb",
-   "scored": true
+   "label": "unclear",
+   "confidence": "unclear",
+   "rationale": "the ticket leaves the cause open: unclear",
+   "scored": false
   },
   {
    "job_id": 6101417,
    "test_name": "upgrade_boot-into_snapshot_rollback_Leap_15.1_gnome@64bit",
    "reference": "poo#195551",
    "ticket_state": "New",
-   "label": "test",
-   "confidence": "plausible",
-   "rationale": "product behaviour change the test suite must absorb",
-   "scored": true
+   "label": "unclear",
+   "confidence": "unclear",
+   "rationale": "the ticket leaves the cause open: unclear",
+   "scored": false
   },
   {
    "job_id": 6100313,
@@ -2530,9 +2530,9 @@
    "test_name": "jeos-apparmor@aarch64-HD20G",
    "reference": "poo#201084",
    "ticket_state": "Resolved",
-   "label": "product",
+   "label": "test",
    "confidence": "plausible",
-   "rationale": "names a product defect: denials (state Resolved)",
+   "rationale": "product behaviour change the test suite must absorb: no longer match",
    "scored": true
   },
   {
@@ -2540,9 +2540,9 @@
    "test_name": "jeos-apparmor@aarch64-HD20G",
    "reference": "poo#201084",
    "ticket_state": "Resolved",
-   "label": "product",
+   "label": "test",
    "confidence": "plausible",
-   "rationale": "names a product defect: denials (state Resolved)",
+   "rationale": "product behaviour change the test suite must absorb: no longer match",
    "scored": true
   },
   {
@@ -2550,9 +2550,9 @@
    "test_name": "jeos-apparmor@aarch64-HD20G",
    "reference": "poo#201084",
    "ticket_state": "Resolved",
-   "label": "product",
+   "label": "test",
    "confidence": "plausible",
-   "rationale": "names a product defect: denials (state Resolved)",
+   "rationale": "product behaviour change the test suite must absorb: no longer match",
    "scored": true
   },
   {
@@ -2560,9 +2560,9 @@
    "test_name": "apparmor@aarch64",
    "reference": "poo#201084",
    "ticket_state": "Resolved",
-   "label": "product",
+   "label": "test",
    "confidence": "plausible",
-   "rationale": "names a product defect: denials (state Resolved)",
+   "rationale": "product behaviour change the test suite must absorb: no longer match",
    "scored": true
   },
   {
@@ -2790,50 +2790,50 @@
    "test_name": "minimalvm-cloud-init@aarch64",
    "reference": "poo#202767",
    "ticket_state": "New",
-   "label": "product",
-   "confidence": "certain",
-   "rationale": "names a product defect: fails to (state New)",
-   "scored": true
+   "label": "unclear",
+   "confidence": "unclear",
+   "rationale": "the ticket leaves the cause open: may be a product",
+   "scored": false
   },
   {
    "job_id": 6033437,
    "test_name": "minimalvm-main@64bit_virtio-vga",
    "reference": "poo#202767",
    "ticket_state": "New",
-   "label": "product",
-   "confidence": "certain",
-   "rationale": "names a product defect: fails to (state New)",
-   "scored": true
+   "label": "unclear",
+   "confidence": "unclear",
+   "rationale": "the ticket leaves the cause open: may be a product",
+   "scored": false
   },
   {
    "job_id": 6234455,
    "test_name": "minimalvm-extratest@uefi_virtio-vga",
    "reference": "poo#202767",
    "ticket_state": "New",
-   "label": "product",
-   "confidence": "certain",
-   "rationale": "names a product defect: fails to (state New)",
-   "scored": true
+   "label": "unclear",
+   "confidence": "unclear",
+   "rationale": "the ticket leaves the cause open: may be a product",
+   "scored": false
   },
   {
    "job_id": 6234459,
    "test_name": "minimalvm-wizard@aarch64",
    "reference": "poo#202767",
    "ticket_state": "New",
-   "label": "product",
-   "confidence": "certain",
-   "rationale": "names a product defect: fails to (state New)",
-   "scored": true
+   "label": "unclear",
+   "confidence": "unclear",
+   "rationale": "the ticket leaves the cause open: may be a product",
+   "scored": false
   },
   {
    "job_id": 6234460,
    "test_name": "minimalvm-cloud-init@uefi_virtio-vga",
    "reference": "poo#202767",
    "ticket_state": "New",
-   "label": "product",
-   "confidence": "certain",
-   "rationale": "names a product defect: fails to (state New)",
-   "scored": true
+   "label": "unclear",
+   "confidence": "unclear",
+   "rationale": "the ticket leaves the cause open: may be a product",
+   "scored": false
   },
   {
    "job_id": 6032090,
@@ -2880,20 +2880,20 @@
    "test_name": "jeos-containers-kubevirt-smoketest@64bit_virtio-4G",
    "reference": "poo#203226",
    "ticket_state": "Closed",
-   "label": "test",
-   "confidence": "certain",
-   "rationale": "names test code or test data: usr/share/kube-virt/manifests/release/kubevirt-operator.yaml",
-   "scored": true
+   "label": "unclear",
+   "confidence": "unclear",
+   "rationale": "ticket content names neither a product nor a test defect",
+   "scored": false
   },
   {
    "job_id": 6047400,
    "test_name": "jeos-containers-kubevirt-smoketest@uefi",
    "reference": "poo#203226",
    "ticket_state": "Closed",
-   "label": "test",
-   "confidence": "certain",
-   "rationale": "names test code or test data: usr/share/kube-virt/manifests/release/kubevirt-operator.yaml",
-   "scored": true
+   "label": "unclear",
+   "confidence": "unclear",
+   "rationale": "ticket content names neither a product nor a test defect",
+   "scored": false
   },
   {
    "job_id": 6051781,
@@ -2980,40 +2980,40 @@
    "test_name": "ltp_net_stress_ipsec_dccp@64bit",
    "reference": "poo#203538",
    "ticket_state": "Resolved",
-   "label": "product",
-   "confidence": "plausible",
-   "rationale": "names a product defect: timeout (state Resolved)",
-   "scored": true
+   "label": "unclear",
+   "confidence": "unclear",
+   "rationale": "the ticket leaves the cause open: unclear",
+   "scored": false
   },
   {
    "job_id": 6073500,
    "test_name": "bci_python_3.11_podman@uefi",
    "reference": "poo#203544",
    "ticket_state": "Resolved",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "test",
+   "confidence": "plausible",
+   "rationale": "product behaviour change the test suite must absorb: no longer supported",
+   "scored": true
   },
   {
    "job_id": 6081135,
    "test_name": "bci_python_3.11_podman@uefi",
    "reference": "poo#203544",
    "ticket_state": "Resolved",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "test",
+   "confidence": "plausible",
+   "rationale": "product behaviour change the test suite must absorb: no longer supported",
+   "scored": true
   },
   {
    "job_id": 6081201,
    "test_name": "bci_python_3.11_podman@aarch64",
    "reference": "poo#203544",
    "ticket_state": "Resolved",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "test",
+   "confidence": "plausible",
+   "rationale": "product behaviour change the test suite must absorb: no longer supported",
+   "scored": true
   },
   {
    "job_id": 6073171,
@@ -3290,10 +3290,10 @@
    "test_name": "kde-live-wayland@64bit_virtio-4G",
    "reference": "poo#205569",
    "ticket_state": "Resolved",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "test",
+   "confidence": "plausible",
+   "rationale": "product behaviour change the test suite must absorb: is no longer pre-installed",
+   "scored": true
   },
   {
    "job_id": 6172844,
@@ -3890,10 +3890,10 @@
    "test_name": "extra_tests_gnome@uefi-3G",
    "reference": "poo#209454",
    "ticket_state": "New",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "test",
+   "confidence": "plausible",
+   "rationale": "product behaviour change the test suite must absorb: is no longer pre-installed",
+   "scored": true
   },
   {
    "job_id": 6302407,
@@ -3990,10 +3990,10 @@
    "test_name": "jeos-containers-kubevirt-smoketest@uefi",
    "reference": "poo#209913",
    "ticket_state": "New",
-   "label": "test",
-   "confidence": "certain",
-   "rationale": "names test code or test data: kubevirt_operator.yaml",
-   "scored": true
+   "label": "unclear",
+   "confidence": "unclear",
+   "rationale": "ticket content names neither a product nor a test defect",
+   "scored": false
   },
   {
    "job_id": 6323697,
@@ -4050,10 +4050,10 @@
    "test_name": "blktests_block@64bit",
    "reference": "poo#210111",
    "ticket_state": "New",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "product",
+   "confidence": "certain",
+   "rationale": "names a product defect: helper failed (state New)",
+   "scored": true
   },
   {
    "job_id": 6336063,
@@ -4160,20 +4160,20 @@
    "test_name": "nvme@uefi",
    "reference": "poo#210456",
    "ticket_state": "New",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "test",
+   "confidence": "plausible",
+   "rationale": "product behaviour change the test suite must absorb: no longer to detect",
+   "scored": true
   },
   {
    "job_id": 6346625,
    "test_name": "nvme@aarch64",
    "reference": "poo#210456",
    "ticket_state": "New",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "test",
+   "confidence": "plausible",
+   "rationale": "product behaviour change the test suite must absorb: no longer to detect",
+   "scored": true
   },
   {
    "job_id": 6345502,
@@ -4280,20 +4280,20 @@
    "test_name": "bci_openjdk_26_devel_podman@uefi",
    "reference": "poo#210705",
    "ticket_state": "Feedback",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "test",
+   "confidence": "plausible",
+   "rationale": "product behaviour change the test suite must absorb: no longer available",
+   "scored": true
   },
   {
    "job_id": 6361141,
    "test_name": "bci_openjdk_27_devel_podman@uefi",
    "reference": "poo#210705",
    "ticket_state": "Feedback",
-   "label": "unclear",
-   "confidence": "unclear",
-   "rationale": "ticket content names neither a product nor a test defect",
-   "scored": false
+   "label": "test",
+   "confidence": "plausible",
+   "rationale": "product behaviour change the test suite must absorb: no longer available",
+   "scored": true
   },
   {
    "job_id": 6363029,

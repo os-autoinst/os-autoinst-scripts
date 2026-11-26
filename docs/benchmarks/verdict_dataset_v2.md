@@ -50,28 +50,29 @@ plus its state. Scored rows only:
 
 | Label | Rows | Tickets |
 |---|---|---|
-| `test` | 104 | 44 |
-| `product` | 69 | 29 |
+| `test` | 109 | 46 |
+| `product` | 81 | 34 |
 | `infra` | 7 | 2 |
-| **Scored total** | **180** | **75** |
+| **Scored total** | **197** | **82** |
 
-By confidence: 92 rows `certain`, 88 `plausible`. All-`product` ceiling of the scored rows:
-**38.3% (69/180)** — lower than the v1 ceiling of 64.0%, because the `test` class now dominates.
+By confidence: 102 rows `certain`, 95 `plausible`. All-`product` ceiling of the scored rows:
+**41.1% (81/197)** — lower than the v1 ceiling of 64.0%, because the `test` class now dominates.
 
-Scored rows by tracker: `poo` 133, `boo` 44, `bsc` 3. The tracker no longer decides the class: 58 of the
-75 scored tickets carry a `poo` reference, and the `poo` tickets labelled `product` are the openQA jobs
+Scored rows by tracker: `poo` 130, `boo` 64, `bsc` 3. The tracker no longer decides the class: 59 of the
+82 scored tickets carry a `poo` reference, and the `poo` tickets labelled `product` are the openQA jobs
 whose product under test is openQA itself.
 
 ## Unscored rows
 
-229 of the 409 rows are `unclear` and stay in the file with their rationale; the scoring tool must skip
+212 of the 409 rows are `unclear` and stay in the file with their rationale; the scoring tool must skip
 them (`scored: false`). Their reasons:
 
 | Reason | Rows |
 |---|---|
-| Ticket content names neither a product nor a test defect | 138 |
+| Ticket content names neither a product nor a test defect | 111 |
 | GitHub issue, while the audit reads Bugzilla and Redmine only | 40 |
 | Closed `RESOLVED/INVALID` without a conclusion | 12 |
+| The ticket leaves the cause open ("needs to be investigated") | 10 |
 | Reference is not a ticket (`kde#…`, `bootloader_uefi#…`) | 10 |
 | Closed `Rejected` without a conclusion | 10 |
 | Contradiction pending a human ruling (`boo#1289464`, `poo#209751`) | 7 |
@@ -80,8 +81,8 @@ them (`scored: false`). Their reasons:
 | Closed `RESOLVED/WONTFIX` without a conclusion | 3 |
 
 The dominant reason is the honest one: the majority of referenced tickets say only "openQA test fails in
-`<module>`" plus the job link, which names a symptom and not the class. 116 of the 191 tickets therefore
-do not decide their label, and the dataset's scorable size is 75 tickets, not 191.
+`<module>`" plus the job link, which names a symptom and not the class. 109 of the 191 tickets therefore
+do not decide their label, and the dataset's scorable size is 82 tickets, not 191.
 
 ## Per-ticket rows
 
@@ -90,19 +91,19 @@ The 12 tickets that contribute five scored rows each:
 | Ticket | Rows | Label | Confidence | State | Rationale |
 |---|---|---|---|---|---|
 | `boo#1170723` | 5 | product | certain | NEW | names a product defect: crash |
+| `boo#1230849` | 5 | product | certain | NEW | names a product defect: Failed to load |
 | `boo#1246013` | 5 | product | certain | IN_PROGRESS | names a product defect: incomplete |
 | `boo#1263652` | 5 | product | certain | RESOLVED/FIXED | names a product defect: crash |
+| `boo#1283446` | 5 | product | certain | NEW | names a product defect: conflicts with |
 | `boo#1288770` | 5 | product | certain | NEW | names a product defect: fails to |
 | `poo#199868` | 5 | test | certain | In Progress | names test code or test data: `opensuse/lib/utils.pm` |
 | `poo#202368` | 5 | test | plausible | Resolved | names test code or test data: `os-autoinst-distri` |
-| `poo#202767` | 5 | product | certain | New | names a product defect: fails to |
 | `poo#203406` | 5 | test | plausible | New | names test code or test data: `os-autoinst-distri` |
 | `poo#205077` | 5 | test | plausible | Feedback | names test code or test data: `os-autoinst-distri` |
 | `poo#208527` | 5 | infra | plausible | Resolved | names only an infrastructure fault: worker |
 | `poo#208620` | 5 | test | plausible | New | names test code or test data: needle |
-| `poo#208758` | 5 | test | certain | New | names test code or test data: `usr/lib/os-autoinst/autotest.pm` |
 
-38 of the 75 scored tickets contribute exactly one row, so a row-level percentage still overstates the
+40 of the 82 scored tickets contribute exactly one row, so a row-level percentage still overstates the
 independent sample: the unit for any interval is the ticket.
 
 ## What the audit does to the v1 rows

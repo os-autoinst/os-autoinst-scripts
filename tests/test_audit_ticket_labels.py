@@ -198,6 +198,44 @@ LABEL_CASES = [
         "expected": ("unclear", "unclear"),
     },
     {
+        "desc": "a ticket that asks for investigation leaves the cause open",
+        "ticket": ticket_facts(summary="chrony fails to synchronize, needs to be investigated"),
+        "expected": ("unclear", "unclear"),
+    },
+    {
+        "desc": "an unsupported product version is a test issue",
+        "ticket": ticket_facts(state="Resolved", summary="python 3.11 modules are no longer supported"),
+        "expected": ("test", "plausible"),
+    },
+    {
+        "desc": "a crash by signal is a product bug",
+        "ticket": ticket_facts(
+            reference="boo#1272188",
+            tracker="bugzilla",
+            state="RESOLVED/FIXED",
+            summary="multipath terminates on signal 11 during installation",
+        ),
+        "expected": ("product", "certain"),
+    },
+    {
+        "desc": "an unfulfillable package requirement is a product bug",
+        "ticket": ticket_facts(
+            tracker="bugzilla",
+            state="NEW",
+            summary="requires kmime >= 26.04.3, but this requirement cannot be provided",
+        ),
+        "expected": ("product", "certain"),
+    },
+    {
+        "desc": "a yaml path from a product log is not test-code evidence",
+        "ticket": ticket_facts(
+            tracker="bugzilla",
+            state="NEW",
+            summary='error: the path "usr/share/kube-virt/manifests/kubevirt-operator.yaml" does not exist',
+        ),
+        "expected": ("unclear", "unclear"),
+    },
+    {
         "desc": "GitHub issue beyond this audit's trackers is unscored",
         "ticket": ticket_facts(reference="gh#os-autoinst/openQA#1", tracker="github"),
         "expected": ("unclear", "unclear"),

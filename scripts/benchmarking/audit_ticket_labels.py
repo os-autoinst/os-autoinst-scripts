@@ -66,20 +66,32 @@ INFRA_PATTERN = re.compile(
     r"external (?:server|service)|power supply|infrastructure)\b",
     re.IGNORECASE,
 )
-TEST_FILE_PATTERN = re.compile(r"\b[\w/-]+\.(?:pm|py|yaml)\b", re.IGNORECASE)
+TEST_FILE_PATTERN = re.compile(r"\b[\w/-]+\.(?:pm|py)\b|\b(?:schedule|data)/[\w./-]+\.yaml\b", re.IGNORECASE)
 TEST_CODE_PATTERN = re.compile(
-    r"(?:\b[\w/-]+\.(?:pm|py|yaml)\b|\bneedles?\b|\bmatch_has_tag\b|test code|test data|"
-    r"wait_screen_change|send_key|os-autoinst-distri|bootloader_setup|\bschedule/[a-z0-9_/]+)",
+    r"(?:\b[\w/-]+\.(?:pm|py)\b|\b(?:schedule|data)/[\w./-]+\.yaml\b|\bneedles?\b|\bmatch_has_tag\b|"
+    r"test code|test data|wait_screen_change|send_key|os-autoinst-distri|bootloader_setup)",
     re.IGNORECASE,
 )
 ADAPT_PATTERN = re.compile(
     r"(?:the test (?:needs|must|has) to|test needs to|needs to (?:press|click|adapt)|"
-    r"test has to (?:press|click|adapt)|press (?:it|the key) differently)",
+    r"test has to (?:press|click|adapt)|press (?:it|the key) differently|"
+    r"(?:test )?module needs work|needs work to|adapt (?:the )?(?:test|code)|"
+    r"test module needs|update the test|test needs (?:updating|adjusting)|"
+    r"(?:is|are) no longer (?:to )?(?:be )?(?:pre-?installed|available|shipped|the default)|"
+    r"no longer (?:to )?(?:be )?(?:pre-?installed|preinstalled|available|shipped|supported)|"
+    r"no longer (?:to )?(?:detect|find|match|detects|finds|matches))",
+    re.IGNORECASE,
+)
+UNCERTAINTY_PATTERN = re.compile(
+    r"(?:needs? to be investigated|not (?:yet )?clear|unclear|no idea|unknown cause|"
+    r"may be a (?:product|worker|infra)|could be (?:a )?(?:product|worker|infra))",
     re.IGNORECASE,
 )
 PRODUCT_PATTERN = re.compile(
     r"\b(?:kernel panic|panic(?:s|ked)?|segfault|crash(?:es|ed)?|regression|broken|corrupt(?:ed)?|"
-    r"fails? to|does not (?:work|exit|boot|start)|incomplete|denials?|timeout|hang(?:s)?)\b",
+    r"fails? to|does not (?:work|exit|boot|start)|incomplete|denials?|timeout|hang(?:s)?|"
+    r"signal \d+|terminates on|failed to load|avc denied|audit denied|conflicts? with|"
+    r"helper failed|cannot be provided)\b",
     re.IGNORECASE,
 )
 
@@ -171,6 +183,18 @@ def _unclear_reason(ticket: Ticket) -> str | None:
     return None
 
 
+def _test_verdict(evidence: str) -> tuple[str, str, str] | None:
+    """Return the test issue verdict when the ticket names test code or a behaviour the test must absorb."""
+    test_code = TEST_CODE_PATTERN.search(evidence)
+    if test_code:
+        confidence = "certain" if TEST_FILE_PATTERN.search(evidence) else "plausible"
+        return "test", confidence, f"names test code or test data: {test_code.group(0)}"
+    adapt = ADAPT_PATTERN.search(evidence)
+    if adapt:
+        return "test", "plausible", f"product behaviour change the test suite must absorb: {adapt.group(0)}"
+    return None
+
+
 def _classify(ticket: Ticket) -> tuple[str, str, str]:
     """Decide label, confidence and rationale by the policy's rule order."""
     if reason := _unclear_reason(ticket):
@@ -179,17 +203,14 @@ def _classify(ticket: Ticket) -> tuple[str, str, str]:
     state = ticket.state.upper()
     evidence = " ".join((ticket.summary, ticket.description, *ticket.comments))
     infra = INFRA_PATTERN.search(evidence)
-    test_code = TEST_CODE_PATTERN.search(evidence)
-    adapt = ADAPT_PATTERN.search(evidence)
+    test_verdict = _test_verdict(evidence)
     product = PRODUCT_PATTERN.search(evidence)
-
-    if infra and not (test_code or adapt or product):
+    if uncertainty := UNCERTAINTY_PATTERN.search(evidence):
+        return "unclear", "unclear", f"the ticket leaves the cause open: {uncertainty.group(0)}"
+    if infra and not (test_verdict or product):
         return "infra", "plausible", f"names only an infrastructure fault: {infra.group(0)}"
-    if test_code:
-        confidence = "certain" if TEST_FILE_PATTERN.search(evidence) else "plausible"
-        return "test", confidence, f"names test code or test data: {test_code.group(0)}"
-    if adapt:
-        return "test", "plausible", "product behaviour change the test suite must absorb"
+    if test_verdict:
+        return test_verdict
     if product:
         confidence = "certain" if state in CONFIRMED_STATES else "plausible"
         return "product", confidence, f"names a product defect: {product.group(0)} (state {ticket.state})"
@@ -320,7 +341,8 @@ def request_json(
 ) -> dict[str, Any]:
     """Get a URL as JSON, backing off on the tracker's rate-limit and busy answers."""
     delay = RETRY_DELAY
-    for attempt in range(1, MAX_ATTEMPTS + 1):
+    attempt = 1
+    while True:
         response = client.get(url, params=params, headers=headers, timeout=REQUEST_TIMEOUT)
         if response.status_code not in RETRY_STATUS:
             response.raise_for_status()
@@ -331,8 +353,7 @@ def request_json(
         logger.warning("%s answered %d, retrying in %.0f s", url, response.status_code, delay)
         time.sleep(delay)
         delay = min(delay * 2, MAX_RETRY_DELAY)
-    msg = "unreachable"
-    raise RuntimeError(msg)
+        attempt += 1
 
 
 def _redmine_headers(token: str | None) -> dict[str, str]:
