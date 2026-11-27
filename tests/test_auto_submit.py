@@ -63,14 +63,15 @@ def test_get_obs_sr_id_empty(mocker: MockerFixture) -> None:
 
 
 @pytest.mark.parametrize(
-    ("target", "days", "pr_json", "sr_stdout", "expected"),
+    ("target", "throttle_days", "throttle_days_leap_16", "pr_json", "sr_stdout", "expected"),
     [
-        ("openSUSE:Factory", 0, None, "", False),
-        ("openSUSE:Factory", 1, None, "openSUSE:Factory", True),
-        ("openSUSE:Factory", 1, None, "different_target", False),
-        ("openSUSE:Leap:16.0", 1, [], "", False),
+        ("openSUSE:Factory", 0, 0, None, "", False),
+        ("openSUSE:Factory", 1, 1, None, "openSUSE:Factory", True),
+        ("openSUSE:Factory", 1, 1, None, "different_target", False),
+        ("openSUSE:Leap:16.0", 1, 1, [], "", False),
         (
             "openSUSE:Leap:16.0",
+            1,
             3,
             [
                 {
@@ -88,6 +89,7 @@ def test_get_obs_sr_id_empty(mocker: MockerFixture) -> None:
         (
             "openSUSE:Leap:16.0",
             1,
+            1,
             [
                 {
                     "updated_at": (dt.datetime.now(dt.UTC) - dt.timedelta(days=2)).strftime(
@@ -101,12 +103,30 @@ def test_get_obs_sr_id_empty(mocker: MockerFixture) -> None:
             "",
             False,
         ),
+        (
+            "openSUSE:Leap:16.1",
+            2,
+            5,
+            [
+                {
+                    "updated_at": (dt.datetime.now(dt.UTC) - dt.timedelta(days=3)).strftime(
+                        "%Y-%m-%dT%H:%M:%SZ",
+                    ),
+                    "html_url": "https://foo/bar",
+                    "user": {"login": "os-autoinst-obs-workflow"},
+                    "base": {"ref": "leap-16.1"},
+                },
+            ],
+            "",
+            True,
+        ),
     ],
 )
 def test_has_pending_submission(
     mocker: MockerFixture,
     target: str,
-    days: int,
+    throttle_days: int,
+    throttle_days_leap_16: int,
     pr_json: list[dict[str, Any]] | None,
     sr_stdout: str,
     expected: bool,
@@ -119,8 +139,8 @@ def test_has_pending_submission(
 
     submitter = auto_submit.AutoSubmitter(
         dst_project="proj",
-        throttle_days=days,
-        throttle_days_leap_16=days,
+        throttle_days=throttle_days,
+        throttle_days_leap_16=throttle_days_leap_16,
         git_user="os-autoinst-obs-workflow",
         osc_cmd_str="osc",
         git_obs_cmd_str="git-obs",
