@@ -63,14 +63,15 @@ def test_get_obs_sr_id_empty(mocker: MockerFixture) -> None:
 
 
 @pytest.mark.parametrize(
-    ("target", "days", "pr_json", "sr_stdout", "expected"),
+    ("target", "throttle_days", "throttle_days_leap_16", "pr_json", "sr_stdout", "expected"),
     [
-        ("openSUSE:Factory", 0, None, "", False),
-        ("openSUSE:Factory", 1, None, "openSUSE:Factory", True),
-        ("openSUSE:Factory", 1, None, "different_target", False),
-        ("openSUSE:Leap:16.0", 1, [], "", False),
+        ("openSUSE:Factory", 0, 0, None, "", False),
+        ("openSUSE:Factory", 1, 1, None, "openSUSE:Factory", True),
+        ("openSUSE:Factory", 1, 1, None, "different_target", False),
+        ("openSUSE:Leap:16.0", 1, 1, [], "", False),
         (
             "openSUSE:Leap:16.0",
+            1,
             3,
             [
                 {
@@ -88,6 +89,7 @@ def test_get_obs_sr_id_empty(mocker: MockerFixture) -> None:
         (
             "openSUSE:Leap:16.0",
             1,
+            1,
             [
                 {
                     "updated_at": (dt.datetime.now(dt.UTC) - dt.timedelta(days=2)).strftime(
@@ -101,12 +103,30 @@ def test_get_obs_sr_id_empty(mocker: MockerFixture) -> None:
             "",
             False,
         ),
+        (
+            "openSUSE:Leap:16.1",
+            2,
+            5,
+            [
+                {
+                    "updated_at": (dt.datetime.now(dt.UTC) - dt.timedelta(days=3)).strftime(
+                        "%Y-%m-%dT%H:%M:%SZ",
+                    ),
+                    "html_url": "https://foo/bar",
+                    "user": {"login": "os-autoinst-obs-workflow"},
+                    "base": {"ref": "leap-16.1"},
+                },
+            ],
+            "",
+            True,
+        ),
     ],
 )
 def test_has_pending_submission(
     mocker: MockerFixture,
     target: str,
-    days: int,
+    throttle_days: int,
+    throttle_days_leap_16: int,
     pr_json: list[dict[str, Any]] | None,
     sr_stdout: str,
     expected: bool,
@@ -119,8 +139,8 @@ def test_has_pending_submission(
 
     submitter = auto_submit.AutoSubmitter(
         dst_project="proj",
-        throttle_days=days,
-        throttle_days_leap_16=days,
+        throttle_days=throttle_days,
+        throttle_days_leap_16=throttle_days_leap_16,
         git_user="os-autoinst-obs-workflow",
         osc_cmd_str="osc",
         git_obs_cmd_str="git-obs",
@@ -354,6 +374,44 @@ def test_copy_files_to_clone(
     assert (clonedir / ".gitattributes").exists()
     assert not (clonedir / "node_modules.spec.inc").exists()
     assert not (clonedir / ".osc").exists()
+
+
+def test_copy_files_to_clone_with_package_obscpio(
+    mocker: MockerFixture,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_extract_pkg = mocker.patch("auto_submit.extract_package_obscpio", return_value=None)
+    sourcedir = tmp_path / "dst" / "os-autoinst"
+    clonedir = tmp_path / "git" / "os-autoinst"
+    sourcedir.mkdir(parents=True)
+    clonedir.mkdir(parents=True)
+    (sourcedir / "os-autoinst-5.1.obscpio").touch()
+    (sourcedir / "os-autoinst.obsinfo").touch()
+    (sourcedir / "os-autoinst.changes").touch()
+    (sourcedir / "os-autoinst.spec").write_text("Source0:        %{name}-%{version}.tar.xz\n")
+    (sourcedir / "os-autoinst-test.spec").write_text("BuildRequires:  os-autoinst == %{version}\n")
+
+    monkeypatch.chdir(clonedir)
+    submitter = auto_submit.AutoSubmitter(
+        dir=tmp_path,
+        dst_project="dst",
+    )
+    submitter._copy_files_to_clone("os-autoinst")
+
+    mock_extract_pkg.assert_called_once_with(
+        sourcedir / "os-autoinst-5.1.obscpio",
+        target_dir=pathlib.Path("os-autoinst"),
+    )
+    assert not (clonedir / "os-autoinst-5.1.obscpio").exists()
+    assert (clonedir / "os-autoinst.obsinfo").exists()
+    assert (clonedir / "os-autoinst.changes").exists()
+
+    spec_content = (clonedir / "os-autoinst.spec").read_text()
+    assert spec_content == "#!CreateArchive: os-autoinst\nSource0:        %{name}-%{version}.tar.xz\n"
+
+    test_spec_content = (clonedir / "os-autoinst-test.spec").read_text()
+    assert test_spec_content == "BuildRequires:  os-autoinst == %{version}\n"
 
 
 def test_make_obs_submit_request_success(mocker: MockerFixture) -> None:
@@ -789,6 +847,89 @@ BuildRequires:  fdupes
     assert (
         caplog.records[0].getMessage() == "openQA.spec does not contain node_modules specific sources; no changes made."
     )
+
+
+def test_extract_package_obscpio(tmp_path: pathlib.Path) -> None:
+    cpio = pathlib.Path() / "tests" / "data" / "test.cpio"
+    target = tmp_path / "os-autoinst"
+
+    auto_submit.extract_package_obscpio(cpio, target_dir=target)
+    assert target.exists()
+    assert (target / "file1").exists()
+    assert (target / "subdir" / "file2").exists()
+
+
+def test_extract_package_obscpio_flat(mocker: MockerFixture, tmp_path: pathlib.Path) -> None:
+    def fake_extract(_archive: pathlib.Path, target_dir: pathlib.Path) -> None:
+        (target_dir / "fileA").touch()
+        (target_dir / "fileB").touch()
+
+    mocker.patch("auto_submit.extract_obscpio", side_effect=fake_extract)
+    target = tmp_path / "flat-pkg"
+
+    auto_submit.extract_package_obscpio(pathlib.Path("dummy.obscpio"), target_dir=target)
+    assert target.exists()
+    assert (target / "fileA").exists()
+    assert (target / "fileB").exists()
+
+
+def test_add_create_archive_directive(
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: pathlib.Path,
+) -> None:
+    caplog.set_level(logging.INFO)
+
+    specfile = tmp_path / "os-autoinst.spec"
+    content = """
+Source0:        %{name}-%{version}.tar.xz
+BuildRequires:  ninja
+"""
+    specfile.write_text(content)
+    expected = """
+#!CreateArchive: os-autoinst
+Source0:        %{name}-%{version}.tar.xz
+BuildRequires:  ninja
+"""
+    auto_submit.add_create_archive_directive(specfile, "os-autoinst")
+    assert specfile.read_text() == expected
+    assert caplog.records[0].getMessage() == "Successfully updated os-autoinst.spec with #!CreateArchive: os-autoinst"
+
+    caplog.clear()
+
+    # Already has matching #!CreateArchive: os-autoinst
+    auto_submit.add_create_archive_directive(specfile, "os-autoinst")
+    assert specfile.read_text() == expected
+    assert (
+        caplog.records[0].getMessage()
+        == "os-autoinst.spec already contains #!CreateArchive: os-autoinst; no changes made."
+    )
+
+    caplog.clear()
+
+    # Replaces bare #!CreateArchive before Source0
+    specfile.write_text("""
+#!CreateArchive
+Source0:        %{name}-%{version}.tar.xz
+""")
+    auto_submit.add_create_archive_directive(specfile, "os-autoinst")
+    assert (
+        specfile.read_text()
+        == """
+#!CreateArchive: os-autoinst
+Source0:        %{name}-%{version}.tar.xz
+"""
+    )
+
+    caplog.clear()
+
+    # Spec without Source / Source0
+    specfile.write_text("""
+Name:           test-spec
+BuildRequires:  fdupes
+""")
+    auto_submit.add_create_archive_directive(specfile, "test-pkg")
+    assert "test-pkg" not in specfile.read_text()
+    assert caplog.records[0].getMessage() == "os-autoinst.spec does not contain Source/Source0; no changes made."
 
 
 def test_diff_text_has_single_added_block() -> None:
