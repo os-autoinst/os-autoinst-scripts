@@ -368,6 +368,32 @@ The sequence is as follows:
 This is meant to provide an overview. Check out the help text of the individual
 scripts for details.
 
+### Testing os-autoinst-obs-auto-submit
+Sometimes unit tests are not enough to verify a change. You can use `--no-push`
+and `--work-dir` to test the submission preparation and whether the package can
+be built from the prepared repository, e.g.:
+
+```
+$ ./os-autoinst-obs-auto-submit \
+    --packages os-autoinst \
+    --submit-target none \
+    --submit-target-extra openSUSE:Leap:16.0 \
+    --staging-project none \
+    --no-push \
+    --force \
+    --work-dir /tmp/test-autosubmit
+…
+INFO: [no-push] Skipping git push to origin leap-16.0
+INFO: [no-push] Would execute: git-obs pr create …
+$ cd /tmp/test-autosubmit/git-repos/os-autoinst
+$ # check whether prepared checkout looks good and attempt to build it
+$ obs build --alternative-project openSUSE:Leap:16.0 x86_64
+…
+[   72s]  8 packages and 0 specfiles checked; 9 errors, 1 warnings, …
+…
+…/home/abuild/rpmbuild/SRPMS/os-autoinst-5.1793797288.07b5ebe-0.src.rpm
+```
+
 ## Contribute
 
 This project lives in https://github.com/os-autoinst/os-autoinst-scripts
