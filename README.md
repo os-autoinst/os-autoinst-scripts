@@ -394,6 +394,40 @@ $ obs build --alternative-project openSUSE:Leap:16.0 x86_64
 …/home/abuild/rpmbuild/SRPMS/os-autoinst-5.1793797288.07b5ebe-0.src.rpm
 ```
 
+### Creating a customized/manual Git-based submission
+If a manual one-time change need to be submitted, you can still use
+`os-autoinst-obs-auto-submit` to prepare the Git check out for the submission as
+usual and then do the manual changes on top of that.
+
+To avoid submitting anything that has not been tested, you can use
+`devel:openQA:tested` as *source* and *destination* project like this:
+
+```
+$ ./os-autoinst-obs-auto-submit \
+    --packages openQA \
+    --src-project devel:openQA:tested \
+    --dst-project devel:openQA:tested \
+    --submit-target none \
+    --submit-target-extra openSUSE:Leap:16.1 \
+    --staging-project none \
+    --no-push \
+    --force \
+    --work-dir /tmp/manual-submission
+```
+
+Then you can do further changes to the prepared Git repository under e.g.
+`/tmp/manual-submission/git-repos/…`. To do the submission, you'll need to add
+your fork as remote and push changes (possibly requiring
+`lfs.allowincompletepush=true`), e.g.:
+
+```
+$ user=… package=openQA target=leap-16.1
+$ git -C "/tmp/manual-submission/git-repos/$package" remote add "$user" "gitea@src.opensuse.org:$user/$package.git"
+$ git -c lfs.allowincompletepush=true -C "/tmp/manual-submission/git-repos/$package" push -u "$user" "$target"
+```
+
+Follow the link from the `git … push …` output to create the submission/PR.
+
 ## Contribute
 
 This project lives in https://github.com/os-autoinst/os-autoinst-scripts
