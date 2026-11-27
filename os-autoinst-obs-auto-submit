@@ -55,7 +55,7 @@ git_branches = {
 
 throttle_variables = {
     "openSUSE:Leap:16.0": "throttle_days_leap_16",
-    "openSUSE:Leap:16.1": "throttle_days_leap_16_1",
+    "openSUSE:Leap:16.1": "throttle_days_leap_16",
 }
 
 
