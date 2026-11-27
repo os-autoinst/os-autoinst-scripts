@@ -23,7 +23,6 @@ osc=${osc:-retry -e -- osc}
 src_project=${src_project:-devel:openQA}
 staging_project=${staging_project:-${src_project}:testing}
 dst_project=${dst_project:-${src_project}:tested}
-submit_target=${submit_target:-openSUSE:Factory}
 scenario_definitions="${scenario_definitions:-"scenario-definitions.yaml"}"
 XMLSTARLET=$(command -v xmlstarlet || true)
 [[ -n $XMLSTARLET ]] || (echo "Need xmlstarlet" >&2 && exit 1)
