@@ -340,6 +340,34 @@ $ sudo systemctl --machine=osc@.host --user start os-autoinst-scripts-update-cer
 $ sudo journalctl _UID="$(id -u osc)" _SYSTEMD_USER_UNIT=os-autoinst-scripts-update-cert-from-obs@factory-staging.service
 ```
 
+## Automatic openQA-in-openQA tests and package submissions
+The sequence is as follows:
+
+1. `trigger-openqa_in_openqa`: Triggers openQA-in-openQA tests:
+    1. Sync changelog and revision baseline from `devel:openQA:tested` (the
+       destination project) back to `devel:openQA` so OBS generates a
+       consolidated changelog entry for new commits.
+    2. Release packages from `devel:openQA` (the source project) to
+       `devel:openQA:testing` (the staging project) so we have a frozen copy of
+       packages to test and submit. (Skipped if `devel:openQA:testing` is not
+       empty, indicating pending tests.)
+    3. Schedule openQA jobs to test packages in `devel:openQA:testing` (or
+       `devel:openQA` if the previous step was skipped).
+2. `monitor-openqa_job`: Monitors tests triggered by `trigger-openqa_in_openqa`.
+    1. Wait until tests have finished.
+    2. Delete staged packages from `devel:openQA:testing` if tests failed and
+       abort further steps.
+3. `os-autoinst-obs-auto-submit`: Submits packages tested in previous steps to
+   openSUSE Tumbleweed and Leap.
+    1. Update packages in `devel:openQA:tested` based on `devel:openQA:testing`.
+    2. Do further processing like changelog generation.
+    3. Submit packages to each target (`openSUSE:Factory`, `openSUSE:Leap:…`).
+        * Check out and update the corresponding Git repository if the target
+          is managed in Git.
+
+This is meant to provide an overview. Check out the help text of the individual
+scripts for details.
+
 ## Contribute
 
 This project lives in https://github.com/os-autoinst/os-autoinst-scripts
