@@ -1222,3 +1222,84 @@ def test_make_git_submit_request_diff_not_ok(mocker: MockerFixture) -> None:
     mock_prepare.assert_called_once_with("pkg", "leap-16.0")
     assert mock_commit_and_push.call_count == 0
     assert mock_create_pr.call_count == 0
+
+
+def test_is_package_up_to_date_submit_target_none() -> None:
+    submitter = auto_submit.AutoSubmitter(submit_target="none")
+    assert submitter._is_package_up_to_date("openQA") is False
+
+
+def test_commit_local_changes_same_src_dst_project(mocker: MockerFixture) -> None:
+    mock_run = mocker.patch("auto_submit.run_osc_cmd")
+    submitter = auto_submit.AutoSubmitter(
+        src_project="devel:openQA:tested",
+        dst_project="devel:openQA:tested",
+    )
+    res = submitter._commit_local_changes("openQA", "1.0")
+    assert res == auto_submit.CommitResult.SUCCESS
+    assert mock_run.call_count == 0
+
+
+def test_handle_auto_submit_same_src_dst_project(
+    mocker: MockerFixture,
+    tmp_path: pathlib.Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    mock_osc_co = mocker.patch("auto_submit.AutoSubmitter._osc_co")
+    mock_update = mocker.patch("auto_submit.AutoSubmitter.update_package", return_value=True)
+
+    pkg_dir = tmp_path / "devel:openQA:tested" / "openQA"
+    pkg_dir.mkdir(parents=True)
+    spec_file = pkg_dir / "openQA.spec"
+    spec_file.write_text("Name: openQA\nVersion: 1.0\n")
+
+    monkeypatch.chdir(tmp_path)
+    submitter = auto_submit.AutoSubmitter(
+        dir=tmp_path,
+        src_project="devel:openQA:tested",
+        dst_project="devel:openQA:tested",
+        force=True,
+    )
+    res = submitter.handle_auto_submit("openQA")
+
+    assert res is True
+    # _osc_co should be called only once for src_project, not redundantly for dst_project
+    mock_osc_co.assert_called_once_with("devel:openQA:tested", "openQA", server_side=True)
+    # File should NOT be deleted
+    assert spec_file.exists()
+    mock_update.assert_called_once_with(package="openQA")
+
+
+def test_run_submissions_defaults_for_tested_src_project(
+    mocker: MockerFixture, tmp_path: pathlib.Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    mock_submitter = mocker.patch("auto_submit.AutoSubmitter")
+    instance = mock_submitter.return_value
+    instance.handle_auto_submit.return_value = True
+    instance.failed_packages = []
+
+    auto_submit._run_submissions(
+        src_project="devel:openQA:tested",
+        dst_project="",
+        staging_project="",
+        submit_target="none",
+        dry_run=False,
+        force=False,
+        work_dir=tmp_path,
+        osc_poll_interval=2,
+        osc_build_start_poll_tries=90,
+        throttle_days=2,
+        throttle_days_leap_16=7,
+        git_user="test",
+        submit_target_extra="openSUSE:Leap:16.1",
+        packages="openQA",
+        skip_wait_for_build=False,
+        cleanup_dir=True,
+    )
+
+    mock_submitter.assert_called_once()
+    _, kwargs = mock_submitter.call_args
+    assert kwargs["src_project"] == "devel:openQA:tested"
+    assert kwargs["dst_project"] == "devel:openQA:tested"
+    assert kwargs["staging_project"] == "none"
